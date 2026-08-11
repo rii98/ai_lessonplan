@@ -67,6 +67,8 @@ class FakeVectorStore(VectorStore):
 
     def search(self, name, vector, top_k, where=None) -> list[ScoredRecord]:
         recs = self.data.get(name, [])
+        if where:
+            recs = [r for r in recs if all(r.payload.get(k) == v for k, v in where.items())]
         scored = [ScoredRecord(id=r.id, score=1.0 - i * 0.01, payload=r.payload)
                   for i, r in enumerate(recs)]
         return scored[:top_k]

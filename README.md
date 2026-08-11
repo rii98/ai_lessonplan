@@ -45,6 +45,8 @@ pip install -e ".[dev]"
 docker compose up -d qdrant          # vector store
 # Ollama runs on the host (ollama serve / desktop app)
 
+python -m lessonforge.rag.ingest --seed   # load the grounding corpus into Qdrant
+
 uvicorn lessonforge.api.main:app --reload
 # → http://localhost:8000/docs
 ```
@@ -86,6 +88,28 @@ Each artifact's default format is one line in `config/config.yaml` under
 `export:` (or `LF__EXPORT__SLIDES=…`); the `(kind, format)` registry resolves it,
 so adding a `pdf` renderer never touches the service or API. Nepali (Devanagari)
 text is embedded with a complex-script font hint so it renders in Word/PowerPoint.
+
+## Grounding (RAG)
+
+Enrichment retrieves from four collections — `curriculum`, `pedagogical`,
+`exemplar`, `local_context` — and stamps the **real retrieved sources** into the
+lesson's `quality.grounding_sources` (a model can't invent a citation; the
+retrieved provenance wins).
+
+```bash
+python -m lessonforge.rag.ingest --seed         # ingest corpus/seed/*.jsonl
+# or a single source into a chosen collection:
+python -m lessonforge.rag.ingest --source lessonplan_reference/lp1.md \
+    --collection exemplar --format markdown --grade 6 --subject Science
+```
+
+The shipped corpus under `corpus/seed/` is a small **authored seed — not official
+CDC/NEB text** (see [`corpus/README.md`](corpus/README.md)). Loaders are pluggable
+(`jsonl`, `markdown` today; a `pdf`/OCR loader is one `@register_loader` class
+away), and which collections enrichment queries, how much each contributes, and
+which brief fields become metadata filters are all set in the `grounding:` config
+block. With an empty corpus, retrieval degrades gracefully and generation still
+works — just less grounded.
 
 ## Full stack in Docker
 
@@ -138,7 +162,13 @@ src/lessonforge/
     base.py                     the four interfaces (ports)
     registry.py                 provider string → adapter class
     llm/ embedding/ reranking/ vectorstore/   adapters
-  rag/retriever.py              embed → search → rerank
+  rag/
+    documents.py                Collection enum, Document/Chunk, content-hash ids
+    loaders.py                  pluggable source loaders (jsonl, markdown)
+    chunkers.py                 deterministic paragraph chunker
+    ingest.py                   load→chunk→embed→upsert + ingest CLI
+    retriever.py                embed → search → rerank
+    grounding.py                multi-collection retrieval + provenance
   services/generation.py        brief → validated LDD (enrichment stage)
   export/
     base.py                     the Renderer port + ExportOptions
@@ -146,6 +176,7 @@ src/lessonforge/
     markdown.py docx_render.py pptx_render.py   the renderers
     service.py                  config-driven compile + one-click zip bundle
   api/                          FastAPI app + DI
+corpus/seed/                    authored seed grounding corpus (JSONL)
 tests/                          unit + contract
 tests/golden/                   byte-stable renderer fixtures
 ```
@@ -154,10 +185,13 @@ tests/golden/                   byte-stable renderer fixtures
 
 - **M1** — pluggable infrastructure + brief → validated LDD, verified end-to-end
   against `gemma4:31b-cloud`, Qdrant, and FastEmbed.
+- **M2** — grounding: pluggable ingestion (load→chunk→embed→upsert) fills four
+  collections from an authored seed corpus; enrichment retrieves across them with
+  grade/subject filters and stamps authoritative provenance into the LDD.
 - **M3** — full export bundle: LDD → Word 5E plan, hook-first PPTX deck,
   worksheet + answer key, quiz, one-click zip. Devanagari de-risked; timing
   surfaced. Renderers sit behind a `(kind, format)` registry, swappable from
   config just like the providers.
 
-Next per the roadmap (`roadmap.md`): M2 RAG ingestion of the CDC corpus and the
-M4 critique→revise loop.
+Next per the roadmap (`roadmap.md`): source/license the real CDC corpus to replace
+the seed, and the M4 critique→revise loop.

@@ -19,6 +19,7 @@ from .providers.registry import (
     build_reranker,
     build_vector_store,
 )
+from .rag.grounding import GroundingRetriever
 from .rag.retriever import Retriever
 from .services.generation import LessonGenerator
 
@@ -31,6 +32,7 @@ class Container:
     reranker: Reranker
     vector_store: VectorStore
     retriever: Retriever
+    grounding: GroundingRetriever
     generator: LessonGenerator
     exporter: ExportService
 
@@ -48,7 +50,8 @@ class Container:
             top_k=settings.retrieval.top_k,
             rerank_top_n=settings.retrieval.rerank_top_n,
         )
-        generator = LessonGenerator(llm=llm, retriever=retriever)
+        grounding = GroundingRetriever(retriever, settings.grounding)
+        generator = LessonGenerator(llm=llm, grounding=grounding)
         exporter = ExportService(settings.export)
         return cls(
             settings=settings,
@@ -57,6 +60,7 @@ class Container:
             reranker=reranker,
             vector_store=vector_store,
             retriever=retriever,
+            grounding=grounding,
             generator=generator,
             exporter=exporter,
         )

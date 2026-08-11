@@ -43,6 +43,13 @@ retrieval:
   top_k: 20                             # candidates pulled from vector search
   rerank_top_n: 5                       # kept after reranking
 
+grounding:
+  # Which corpora enrichment retrieves from, how much each contributes, and which
+  # brief fields become metadata filters. Ingest with: python -m lessonforge.rag.ingest --seed
+  collections: [curriculum, pedagogical, exemplar, local_context]
+  per_collection_top_n: 3
+  filter_fields: [grade, subject]       # grade/subject filter on search (lenient fallback if empty)
+
 export:
   # Which output format each teaching artifact defaults to. The registry maps
   # (artifact, format) -> renderer, so swapping a format is a one-line change.

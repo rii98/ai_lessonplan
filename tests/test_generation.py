@@ -12,7 +12,7 @@ from tests.conftest import FakeLLM
 
 def test_generate_returns_validated_ldd(valid_ldd_dict):
     llm = FakeLLM(response=valid_ldd_dict)
-    gen = LessonGenerator(llm=llm, retriever=None)
+    gen = LessonGenerator(llm=llm, grounding=None)
     brief = NormalizedBrief(topic="Environment", grade=6, subject="Science")
 
     ldd = gen.generate(brief)
@@ -26,7 +26,7 @@ def test_generate_returns_validated_ldd(valid_ldd_dict):
 def test_generate_rejects_structurally_bad_lesson(valid_ldd_dict):
     bad = dict(valid_ldd_dict)
     bad["formative_checks"] = []  # objective no longer assessed → must fail
-    gen = LessonGenerator(llm=FakeLLM(response=bad), retriever=None)
+    gen = LessonGenerator(llm=FakeLLM(response=bad), grounding=None)
     with pytest.raises(ValidationError):
         gen.generate(NormalizedBrief(topic="x", grade=6, subject="Science"))
 
@@ -37,6 +37,6 @@ def test_generate_raises_on_non_json():
             from lessonforge.providers.base import LLMResult
             return LLMResult(text="not json at all")
 
-    gen = LessonGenerator(llm=BadLLM(), retriever=None)
+    gen = LessonGenerator(llm=BadLLM(), grounding=None)
     with pytest.raises(ValueError, match="valid JSON"):
         gen.generate(NormalizedBrief(topic="x", grade=6, subject="Science"))

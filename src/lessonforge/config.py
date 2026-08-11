@@ -85,6 +85,17 @@ class RetrievalConfig(BaseModel):
     rerank_top_n: int = 5
 
 
+class GroundingConfig(BaseModel):
+    """Which collections enrichment retrieves from, how much each contributes,
+    and which brief fields become metadata filters. All swappable from config."""
+
+    collections: list[str] = Field(
+        default_factory=lambda: ["curriculum", "pedagogical", "exemplar", "local_context"]
+    )
+    per_collection_top_n: int = 3
+    filter_fields: list[str] = Field(default_factory=lambda: ["grade", "subject"])
+
+
 class ExportConfig(BaseModel):
     """Which output format each teaching artifact defaults to, plus fonts.
 
@@ -125,6 +136,7 @@ class Settings(BaseSettings):
     reranker: RerankerConfig
     vector_store: VectorStoreConfig
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    grounding: GroundingConfig = Field(default_factory=GroundingConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
 
     @classmethod

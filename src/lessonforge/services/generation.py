@@ -13,7 +13,7 @@ from typing import Any
 
 from ..domain.ldd import LessonDesignDocument, NormalizedBrief
 from ..providers.base import LLMClient
-from ..rag.retriever import Retriever
+from ..rag.grounding import GroundingBundle, GroundingRetriever
 from ..util import extract_json
 
 # A concrete, minimal, structurally-valid example. Cloud models that ignore
@@ -91,26 +91,26 @@ Return JSON only, no prose, no markdown fences.
 
 
 class LessonGenerator:
-    def __init__(self, *, llm: LLMClient, retriever: Retriever | None = None) -> None:
+    def __init__(
+        self, *, llm: LLMClient, grounding: GroundingRetriever | None = None
+    ) -> None:
         self.llm = llm
-        self.retriever = retriever
+        self.grounding = grounding
 
-    def _grounding(self, brief: NormalizedBrief) -> str:
-        if self.retriever is None:
-            return "No retrieved context available; rely on curriculum knowledge."
+    def _ground(self, brief: NormalizedBrief) -> GroundingBundle:
+        if self.grounding is None:
+            return GroundingBundle()
         try:
-            chunks = self.retriever.retrieve(
-                collection="pedagogical",
+            return self.grounding.ground(
                 query=f"{brief.topic} grade {brief.grade} {brief.subject}",
+                grade=brief.grade,
+                subject=brief.subject,
             )
         except Exception:
-            return "No retrieved context available; rely on curriculum knowledge."
-        if not chunks:
-            return "No retrieved context available; rely on curriculum knowledge."
-        joined = "\n".join(f"- {c.text}" for c in chunks)
-        return f"Grounding context (use it, cite sources in quality.grounding_sources):\n{joined}"
+            return GroundingBundle()
 
     def generate(self, brief: NormalizedBrief) -> LessonDesignDocument:
+        bundle = self._ground(brief)
         schema: dict[str, Any] = LessonDesignDocument.model_json_schema()
         prompt = _PROMPT_TEMPLATE.format(
             duration=brief.duration_min,
@@ -119,7 +119,7 @@ class LessonGenerator:
             subject=brief.subject,
             topic=brief.topic,
             language=brief.language,
-            grounding=self._grounding(brief),
+            grounding=bundle.as_prompt_context(),
             example=json.dumps(_EXAMPLE_LDD, ensure_ascii=False, indent=2),
         )
         result = self.llm.complete(prompt, system=_SYSTEM, json_schema=schema)
@@ -129,4 +129,9 @@ class LessonGenerator:
             raise ValueError(f"LLM did not return valid JSON: {exc}") from exc
         # Pydantic validation IS the anti-generic guardrail — a structurally
         # deficient lesson raises here rather than reaching the user.
-        return LessonDesignDocument.model_validate(data)
+        ldd = LessonDesignDocument.model_validate(data)
+        # Provenance is authoritative: overwrite whatever the model claimed with
+        # the sources we actually retrieved, so citations are trustworthy.
+        if bundle.sources:
+            ldd.quality.grounding_sources = bundle.sources
+        return ldd

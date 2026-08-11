@@ -16,6 +16,7 @@ from lessonforge.api.main import create_app
 from lessonforge.config import Settings
 from lessonforge.container import Container
 from lessonforge.export import ExportService
+from lessonforge.rag.grounding import GroundingRetriever
 from lessonforge.rag.retriever import Retriever
 from lessonforge.services.generation import LessonGenerator
 from tests.conftest import FakeEmbedder, FakeLLM, FakeReranker, FakeVectorStore
@@ -27,10 +28,11 @@ def client(base_settings_dict) -> TestClient:
     embedder, store, reranker = FakeEmbedder(), FakeVectorStore(), FakeReranker()
     retriever = Retriever(embedder=embedder, vector_store=store, reranker=reranker)
     settings = Settings(**base_settings_dict)
+    grounding = GroundingRetriever(retriever, settings.grounding)
     container = Container(
         settings=settings, llm=llm, embedder=embedder, reranker=reranker,
-        vector_store=store, retriever=retriever,
-        generator=LessonGenerator(llm=llm, retriever=retriever),
+        vector_store=store, retriever=retriever, grounding=grounding,
+        generator=LessonGenerator(llm=llm, grounding=grounding),
         exporter=ExportService(settings.export),
     )
     app = create_app()

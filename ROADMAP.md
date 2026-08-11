@@ -23,8 +23,12 @@ Devanagari de-risked (complex-script font hint verified in the DOCX/PPTX XML);
 timing surfaced per phase. **68 unit tests + 1 live contract test green; ruff
 clean; 99% coverage on the export module.**
 
-> M2 (real RAG grounding) is still open — retrieval degrades gracefully today, so
-> export works on any validated LDD regardless.
+**Milestone M2 — grounding: real ingestion + retrieval feeding enrichment — ✅ done
+& verified.** A pluggable ingestion pipeline (load → chunk → embed → upsert) fills
+four collections (curriculum, pedagogical, exemplar, local_context) from an authored
+seed corpus; enrichment retrieves across them with grade/subject filters and stamps
+**authoritative provenance** into the LDD. Loaders and grounding strategy are both
+config-swappable. **101 unit tests + 2 live contract tests green; ruff clean.**
 
 ---
 
@@ -62,12 +66,22 @@ clean; 99% coverage on the export module.**
 
 ## Remaining ⬜
 
-### M2 — Grounding (make retrieval real)
-- ⬜ Ingestion pipeline: chunk → embed → upsert into Qdrant collections
-- ⬜ Collections: `curriculum` (CDC/NEB), `pedagogical`, `exemplar`, `local_context`
-- ⬜ Source & license the CDC/NEB corpus (machine-readable? OCR from PDFs?) — **decision needed**
-- ⬜ Wire enrichment to real retrieval + record `grounding_sources` provenance
-- ⬜ Metadata filters (grade/subject/standard) on search
+### M2 — Grounding (make retrieval real) — ✅ done & verified
+- ✅ Ingestion pipeline: load → chunk → embed → upsert; idempotent (content-hash ids)
+- ✅ Collections: `curriculum` (CDC/NEB), `pedagogical`, `exemplar`, `local_context`
+- ✅ Pluggable loaders (`jsonl`, `markdown`) behind a registry — CDC PDFs/OCR = one new
+  class later (options 2/3), zero downstream change
+- ✅ Authored **seed corpus** (`corpus/seed/*.jsonl`), clearly labeled *not* official CDC
+  text; derived from the reference lesson + Grade-6 science pedagogy. `SEED-` codes only.
+  *(Sourcing/licensing the real CDC corpus remains an open decision — see below — but no
+  longer blocks the pipeline.)*
+- ✅ Enrichment wired to real multi-collection retrieval; **provenance is authoritative** —
+  the retrieved sources overwrite any the model invents in `quality.grounding_sources`
+- ✅ Metadata filters (grade/subject) on search, with a lenient fallback (broaden before
+  returning nothing). Config-driven via the `grounding:` block.
+- ✅ `python -m lessonforge.rag.ingest --seed` (and `--source … --collection …`)
+- ✅ Live ingest+retrieve contract test (Qdrant + FastEmbed) gated by `RUN_INTEGRATION`;
+  101 unit tests green, ruff clean, 97% coverage on the RAG module
 
 ### M3 — Full export bundle — ✅ done & verified
 - ✅ DOCX lesson plan renderer (reproduces `lp1.md` layout: 5E table, differentiation, homework)
@@ -104,7 +118,8 @@ clean; 99% coverage on the export module.**
 ---
 
 ## Open decisions
-- CDC/NEB corpus: source, format, licensing → gates M2
+- CDC/NEB corpus: source, format, licensing — *pipeline no longer blocked (seed corpus
+  ships); still need the real corpus sourced/licensed to replace the seed for production*
 - v1 grade/subject focus (reference is secondary science — start there?)
 - Default language mode: EN body + NE terms, or full bilingual?
 - Hosting & data residency for Nepal schools
