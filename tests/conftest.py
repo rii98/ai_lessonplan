@@ -150,6 +150,80 @@ def valid_ldd_dict() -> dict[str, Any]:
 
 
 @pytest.fixture
+def export_ldd_dict() -> dict[str, Any]:
+    """A fuller LDD that exercises every renderer branch: two objectives, all
+    three question types, bilingual phases, differentiation, grounding sources,
+    and phase minutes that sum exactly to the target duration (balanced timing).
+    Kept fixed so the golden-file tests are stable."""
+    return {
+        "topic": "Components of Environment: Biotic and Abiotic",
+        "curriculum_ref": {"board": "CDC", "grade": 6, "subject": "Science", "code": "SC6.2.1"},
+        "duration_min": 45,
+        "language": "en-ne",
+        "framework": "5E",
+        "objectives": [
+            {"id": "O1", "statement": "Classify components into biotic and abiotic",
+             "bloom": "understand"},
+            {"id": "O2", "statement": "Identify producers, consumers, and decomposers",
+             "bloom": "apply"},
+        ],
+        "prior_knowledge": ["Living vs non-living things", "Examples from surroundings"],
+        "misconceptions": [
+            {"statement": "Clouds move so they are living",
+             "correction": "Movement is not life; clouds are abiotic",
+             "source": "CDC Science 6, misconception bank"},
+        ],
+        "engagement_hook": {
+            "prompt": "What did you see on your way to school today?",
+            "kind": "question",
+        },
+        "local_context": ["paddy field", "goat", "mushroom", "river water", "sunlight"],
+        "phases": [
+            {"name_en": "Engage", "name_ne": "संलग्न गराउनु",
+             "teacher_activities": ["Ask what students saw on the way to school"],
+             "student_activities": ["Share one observation"],
+             "minutes": 10, "objective_ids": ["O1"]},
+            {"name_en": "Explore", "name_ne": "अन्वेषण गर्नु",
+             "teacher_activities": ["Give groups component cards to sort"],
+             "student_activities": ["Sort cards and justify choices"],
+             "minutes": 15, "objective_ids": ["O1", "O2"]},
+            {"name_en": "Explain", "name_ne": "व्याख्या गर्नु",
+             "teacher_activities": ["Introduce producers, consumers, decomposers"],
+             "student_activities": ["Copy the concept map"],
+             "minutes": 20, "objective_ids": ["O2"]},
+        ],
+        "materials": ["Component cards", "Board and marker", "Textbook"],
+        "differentiation": {
+            "struggling": ["Provide labelled picture cards"],
+            "on_level": ["Sort mixed cards"],
+            "advanced": ["Build a food chain from the cards"],
+        },
+        "formative_checks": [
+            {"id": "Q1", "type": "mcq",
+             "prompt": "Which of these is a biotic component?",
+             "answer": "goat", "objective_ids": ["O1"],
+             "options": ["soil", "goat", "river water", "sunlight"]},
+            {"id": "Q2", "type": "true_false",
+             "prompt": "A mushroom is a decomposer.",
+             "answer": "True", "objective_ids": ["O2"], "options": None},
+            {"id": "Q3", "type": "short_answer",
+             "prompt": "Name one producer found near your school.",
+             "answer": "rice plant", "objective_ids": ["O1", "O2"], "options": None},
+        ],
+        "homework": {"instructions": ["Draw four things and label B/A",
+                                      "Mark producers, consumers, decomposers"],
+                     "objective_ids": ["O1", "O2"]},
+        "quality": {"grounding_sources": ["CDC Science Grade 6, Unit 2"], "notes": ""},
+    }
+
+
+@pytest.fixture
+def export_ldd(export_ldd_dict):
+    from lessonforge.domain.ldd import LessonDesignDocument
+    return LessonDesignDocument.model_validate(export_ldd_dict)
+
+
+@pytest.fixture
 def base_settings_dict() -> dict[str, Any]:
     return {
         "llm": {"provider": "ollama", "model": "gemma4:31b-cloud"},

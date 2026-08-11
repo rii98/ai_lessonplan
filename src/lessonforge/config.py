@@ -14,9 +14,12 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from .export.base import ArtifactKind
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
@@ -82,6 +85,31 @@ class RetrievalConfig(BaseModel):
     rerank_top_n: int = 5
 
 
+class ExportConfig(BaseModel):
+    """Which output format each teaching artifact defaults to, plus fonts.
+
+    Swap ``slides: pptx`` for a future ``slides: pdf`` in one line; the registry
+    resolves ``(kind, format)`` to a renderer at request time. ``devanagari_font``
+    is embedded as the complex-script font hint so Nepali text renders in Word/
+    PowerPoint. ``bundle`` lists which artifacts the one-click zip contains.
+    """
+
+    lesson_plan: str = "docx"
+    slides: str = "pptx"
+    worksheet: str = "docx"
+    quiz: str = "docx"
+    bundle: list[str] = Field(default_factory=lambda: ["lesson_plan", "slides", "worksheet", "quiz"])
+    body_font: str = "Calibri"
+    devanagari_font: str = "Noto Sans Devanagari"
+    author: str = "LessonForge"
+
+    def bundle_kinds(self) -> list[ArtifactKind]:
+        # imported lazily to avoid a config→export import cycle
+        from .export.base import ArtifactKind
+
+        return [ArtifactKind(k) for k in self.bundle]
+
+
 class Settings(BaseSettings):
     """Root settings object. Built by :func:`load_settings`."""
 
@@ -97,6 +125,7 @@ class Settings(BaseSettings):
     reranker: RerankerConfig
     vector_store: VectorStoreConfig
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    export: ExportConfig = Field(default_factory=ExportConfig)
 
     @classmethod
     def settings_customise_sources(

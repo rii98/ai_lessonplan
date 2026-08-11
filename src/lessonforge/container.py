@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from . import providers  # noqa: F401  (import triggers adapter registration)
 from .config import Settings, load_settings
+from .export import ExportService
 from .providers.base import Embedder, LLMClient, Reranker, VectorStore
 from .providers.registry import (
     build_embedder,
@@ -31,6 +32,7 @@ class Container:
     vector_store: VectorStore
     retriever: Retriever
     generator: LessonGenerator
+    exporter: ExportService
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> Container:
@@ -47,6 +49,7 @@ class Container:
             rerank_top_n=settings.retrieval.rerank_top_n,
         )
         generator = LessonGenerator(llm=llm, retriever=retriever)
+        exporter = ExportService(settings.export)
         return cls(
             settings=settings,
             llm=llm,
@@ -55,4 +58,5 @@ class Container:
             vector_store=vector_store,
             retriever=retriever,
             generator=generator,
+            exporter=exporter,
         )

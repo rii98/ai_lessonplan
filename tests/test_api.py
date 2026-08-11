@@ -9,6 +9,7 @@ from lessonforge.api.deps import get_container
 from lessonforge.api.main import create_app
 from lessonforge.config import Settings
 from lessonforge.container import Container
+from lessonforge.export import ExportService
 from lessonforge.rag.retriever import Retriever
 from lessonforge.services.generation import LessonGenerator
 from tests.conftest import FakeEmbedder, FakeLLM, FakeReranker, FakeVectorStore
@@ -19,14 +20,16 @@ def client(base_settings_dict, valid_ldd_dict) -> TestClient:
     llm = FakeLLM(response=valid_ldd_dict)
     embedder, store, reranker = FakeEmbedder(), FakeVectorStore(), FakeReranker()
     retriever = Retriever(embedder=embedder, vector_store=store, reranker=reranker)
+    settings = Settings(**base_settings_dict)
     container = Container(
-        settings=Settings(**base_settings_dict),
+        settings=settings,
         llm=llm,
         embedder=embedder,
         reranker=reranker,
         vector_store=store,
         retriever=retriever,
         generator=LessonGenerator(llm=llm, retriever=retriever),
+        exporter=ExportService(settings.export),
     )
     app = create_app()
     app.dependency_overrides[get_container] = lambda: container

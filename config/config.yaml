@@ -42,3 +42,16 @@ vector_store:
 retrieval:
   top_k: 20                             # candidates pulled from vector search
   rerank_top_n: 5                       # kept after reranking
+
+export:
+  # Which output format each teaching artifact defaults to. The registry maps
+  # (artifact, format) -> renderer, so swapping a format is a one-line change.
+  lesson_plan: docx                     # ← swap: docx | md
+  slides: pptx                          # ← swap: pptx
+  worksheet: docx                       # ← swap: docx | md
+  quiz: docx                            # ← swap: docx | md
+  bundle: [lesson_plan, slides, worksheet, quiz]   # one-click zip contents
+  # Devanagari-capable font embedded as the complex-script hint so Nepali text
+  # renders in Word/PowerPoint (not tofu boxes).
+  body_font: Calibri
+  devanagari_font: Noto Sans Devanagari

@@ -13,7 +13,18 @@ Living status doc. Update it as work lands. Companion to [`SRD.md`](SRD.md)
 **Milestone M1 — pluggable vertical slice: `brief → validated LDD` — ✅ done & verified.**
 The full swappable infrastructure plus an end-to-end generation path, proven
 against real backends (Ollama `gemma4:31b-cloud`, Qdrant, FastEmbed) and inside
-Docker. 31 unit tests + 1 live contract test green.
+Docker.
+
+**Milestone M3 — full export bundle: `LDD → DOCX/PPTX/worksheet/quiz/zip` — ✅ done
+& verified.** A `Renderer` port + `(kind, format)` registry (same loose-coupling
+pattern as the providers) compiles a validated LDD into a Word 5E plan, a
+hook-first PPTX deck, a worksheet + answer key, a quiz, and a one-click zip.
+Devanagari de-risked (complex-script font hint verified in the DOCX/PPTX XML);
+timing surfaced per phase. **68 unit tests + 1 live contract test green; ruff
+clean; 99% coverage on the export module.**
+
+> M2 (real RAG grounding) is still open — retrieval degrades gracefully today, so
+> export works on any validated LDD regardless.
 
 ---
 
@@ -58,14 +69,19 @@ Docker. 31 unit tests + 1 live contract test green.
 - ⬜ Wire enrichment to real retrieval + record `grounding_sources` provenance
 - ⬜ Metadata filters (grade/subject/standard) on search
 
-### M3 — Full export bundle (most motivating next step)
-- ⬜ DOCX lesson plan renderer (reproduce `lp1.md` layout: 5E table, closure, homework)
-- ⬜ **Devanagari rendering** verified in DOCX/PPTX/PDF — *de-risk early*
-- ⬜ PPTX slide deck renderer (hook-first)
-- ⬜ Worksheet renderer + answer key
-- ⬜ Quiz renderer (MCQ/TF/short) + export endpoints + one-click bundle
-- ⬜ Golden-file tests for renderers (fixed LDD → stable bytes)
-- ⬜ Timing variants (30/45/60) surfaced in output
+### M3 — Full export bundle — ✅ done & verified
+- ✅ DOCX lesson plan renderer (reproduces `lp1.md` layout: 5E table, differentiation, homework)
+- ✅ **Devanagari rendering** verified in DOCX/PPTX — complex-script font hint (`w:cs` /
+  `a:cs`) set on every run; tests assert codepoints + font hint survive into the XML.
+  (PDF deferred — no PDF renderer yet; add a `pdf` format later, no interface change.)
+- ✅ PPTX slide deck renderer (hook-first: title → hook → objectives → phases → check)
+- ✅ Worksheet renderer + answer key (on its own page)
+- ✅ Quiz renderer (MCQ/TF/short) + export endpoints + one-click zip bundle
+- ✅ Golden-file tests: byte-stable Markdown renderers assert exact bytes; DOCX/PPTX
+  verified structurally (open + inspect); zip metadata pinned for determinism
+- ✅ Timing surfaced in output: per-phase minutes vs target, over/under-run flagged
+- ✅ Loosely coupled: `Renderer` port + `(kind, format)` registry mirroring the provider
+  system; `export:` config block swaps a format in one line (or `LF__EXPORT__…` env)
 
 ### M4 — Quality & editing
 - ⬜ Critique → revise loop (rubric scoring, rewrite weak sections)

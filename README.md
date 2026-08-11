@@ -64,6 +64,29 @@ Check which backends are wired and reachable:
 curl -s http://localhost:8000/health/providers | jq .
 ```
 
+Export the generated LDD into teaching artifacts (Word plan, PPTX deck,
+worksheet, quiz) — post an LDD back to an export endpoint, or grab the
+one-click zip of everything:
+
+```bash
+# generate once, then compile every artifact into a zip bundle
+curl -s http://localhost:8000/lessons/generate -H 'content-type: application/json' \
+  -d '{"topic":"Components of Environment","grade":6,"subject":"Science"}' \
+| curl -s http://localhost:8000/lessons/export/bundle/zip \
+    -H 'content-type: application/json' --data-binary @- -o lesson_bundle.zip
+
+# or one artifact, overriding the configured format
+curl -s http://localhost:8000/lessons/export/lesson_plan?fmt=md \
+  -H 'content-type: application/json' --data-binary @ldd.json
+
+curl -s http://localhost:8000/export/manifest | jq .   # what can be produced
+```
+
+Each artifact's default format is one line in `config/config.yaml` under
+`export:` (or `LF__EXPORT__SLIDES=…`); the `(kind, format)` registry resolves it,
+so adding a `pdf` renderer never touches the service or API. Nepali (Devanagari)
+text is embedded with a complex-script font hint so it renders in Word/PowerPoint.
+
 ## Full stack in Docker
 
 ```bash
@@ -117,13 +140,24 @@ src/lessonforge/
     llm/ embedding/ reranking/ vectorstore/   adapters
   rag/retriever.py              embed → search → rerank
   services/generation.py        brief → validated LDD (enrichment stage)
+  export/
+    base.py                     the Renderer port + ExportOptions
+    registry.py                 (artifact, format) → renderer class
+    markdown.py docx_render.py pptx_render.py   the renderers
+    service.py                  config-driven compile + one-click zip bundle
   api/                          FastAPI app + DI
 tests/                          unit + contract
+tests/golden/                   byte-stable renderer fixtures
 ```
 
 ## Status
 
-M1 vertical slice: pluggable infrastructure + brief → validated LDD, verified
-end-to-end against `gemma4:31b-cloud`, Qdrant, and FastEmbed. Next per the
-roadmap in `SRD.md`: RAG ingestion of the CDC corpus, the critique→revise loop,
-and the DOCX/PPTX/quiz renderers.
+- **M1** — pluggable infrastructure + brief → validated LDD, verified end-to-end
+  against `gemma4:31b-cloud`, Qdrant, and FastEmbed.
+- **M3** — full export bundle: LDD → Word 5E plan, hook-first PPTX deck,
+  worksheet + answer key, quiz, one-click zip. Devanagari de-risked; timing
+  surfaced. Renderers sit behind a `(kind, format)` registry, swappable from
+  config just like the providers.
+
+Next per the roadmap (`roadmap.md`): M2 RAG ingestion of the CDC corpus and the
+M4 critique→revise loop.
