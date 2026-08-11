@@ -1,0 +1,44 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  LessonForge — single source of truth for swappable components.
+#
+#  To swap ANY component, change its `provider:` key here (and, if needed, the
+#  provider-specific fields below it). No code changes. The registry resolves
+#  `provider` -> adapter class at startup; every consumer depends only on the
+#  abstract interface, never the concrete class.
+#
+#  Env vars override any value: LF__LLM__MODEL=... , LF__VECTOR_STORE__URL=...
+#  (double-underscore = nesting). ${VAR:-default} interpolation also works below.
+# ─────────────────────────────────────────────────────────────────────────────
+
+app:
+  name: LessonForge
+  env: ${LF_ENV:-local}
+
+llm:
+  provider: ollama                      # ← swap: ollama | openai | ...
+  model: gemma4:31b-cloud               # ← swap the model in one line
+  base_url: ${OLLAMA_BASE_URL:-http://localhost:11434}
+  temperature: 0.7
+  timeout_s: 180
+  max_retries: 2
+
+embedding:
+  provider: fastembed                   # ← swap: fastembed | ...
+  model: BAAI/bge-small-en-v1.5
+  # dim is auto-detected from the model; override only if using a custom impl.
+
+reranker:
+  provider: fastembed                   # ← swap: fastembed | http | noop
+  model: Xenova/ms-marco-MiniLM-L-6-v2
+  # For provider: http (a standalone FastAPI reranker service), set:
+  # endpoint: http://reranker:8100/rerank
+
+vector_store:
+  provider: qdrant                      # ← swap: qdrant | ...
+  url: ${QDRANT_URL:-http://localhost:6333}
+  api_key: ${QDRANT_API_KEY:-}
+  collection_prefix: lf                 # collections become lf_<name>
+
+retrieval:
+  top_k: 20                             # candidates pulled from vector search
+  rerank_top_n: 5                       # kept after reranking

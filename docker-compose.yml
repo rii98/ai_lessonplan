@@ -1,0 +1,45 @@
+# LessonForge local stack.
+#
+#   docker compose up --build
+#
+# The reranker + embedder run in-process (FastEmbed), so the only external
+# service is Qdrant. The LLM (Ollama) runs on the HOST — set it up with:
+#   ollama serve            # or the desktop app
+#   ollama signin           # for :cloud models
+# The api container reaches it via host.docker.internal.
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"   # REST/gRPC
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # These env vars override config/config.yaml (LF__SECTION__KEY).
+      LF_CONFIG: /app/config/config.yaml
+      QDRANT_URL: http://qdrant:6333
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      LF_ENV: docker
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach host Ollama on Linux
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    volumes:
+      - fastembed_cache:/app/.cache/fastembed
+
+volumes:
+  qdrant_data:
+  fastembed_cache:
