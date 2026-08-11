@@ -20,7 +20,8 @@ config/config.yaml ─► Settings ─► Container (DI) ─► FastAPI
    concrete adapter  └─── VectorStore (qdrant)      ─┘  never the concrete class
 
 Pipeline:  input ─► [intake] ─► brief ─► [enrich + retrieve] ─► draft LDD
-                 ─► [critique + revise] ─► validated LDD ─► artifacts
+                 ─► [critique + revise] ─► validated LDD ─► edit ─► artifacts
+                    ▲ TeacherProfile: defaults + voice + local anchors
 ```
 
 Every stage — intake, critic, reranker, renderer — is a port resolved by config,
@@ -158,6 +159,50 @@ RUN_INTEGRATION=1 python -m lessonforge.eval --generate   # live: golden topics 
 strong reasoning model — add an optional `llm_fast:` block to `config/config.yaml`
 (same shape as `llm:`); omit it to reuse `llm` everywhere.
 
+## Edit before export & teacher profile (web UI)
+
+The plan you export is the plan you *see*. A single self-contained, low-bandwidth
+page (vanilla JS, no build step) lets a teacher generate a lesson, **edit every
+part of the LDD**, check the guardrails, and export — served straight off the API:
+
+```bash
+uvicorn lessonforge.api.main:app --reload
+# → http://localhost:8000/   (the editor)   ·   /docs (the API)
+```
+
+Flow: enter a topic (or paste a plan) → **Generate** → edit objectives, hook,
+misconceptions, phases, checks, homework in place → **Check guardrails** → export
+each artifact or the zip. The edited LDD is the source of truth for every export.
+
+**`POST /lessons/validate`** backs the guardrail check: it validates an edited LDD
+against the anti-generic guardrails and returns `{valid, errors:[{loc, msg}]}` —
+with **HTTP 200 even when invalid**, so the editor pins each violation (missing
+hook, an objective never assessed, …) to its field instead of failing the request.
+
+**`TeacherProfile`** — stored preferences injected into *every* build (SRD §11):
+
+- **Defaults** (grade/subject/duration/language/framework) fill only the request
+  fields you leave unset — an explicit choice always wins.
+- **Personalization** — a teaching `style_notes` voice and favourite
+  `local_anchors` — flavour the generated lesson so it feels like *yours*.
+
+The profile is applied by the pipeline (`run(request, profile=…)`), so intake and
+generation stay profile-agnostic. It lives behind a pluggable `ProfileStore` port —
+`memory` (default) or `file` (one JSON per teacher, survives restarts) — swapped in
+the `profile:` config block, the real multi-tenant DB store being a later provider,
+not a rewrite.
+
+```bash
+curl -s -X PUT http://localhost:8000/profile -H 'content-type: application/json' \
+  -d '{"default_grade":6,"default_subject":"Science",
+       "style_notes":"warm, storytelling, lots of pair work",
+       "local_anchors":["Phewa lake","millet farming"]}'
+curl -s http://localhost:8000/profile | jq .
+# now a bare topic inherits grade/subject and the voice + anchors:
+curl -s http://localhost:8000/lessons/generate -H 'content-type: application/json' \
+  -d '{"topic":"The Water Cycle"}' | jq '.curriculum_ref, .local_context'
+```
+
 ## Full stack in Docker
 
 ```bash
@@ -193,8 +238,9 @@ RUN_INTEGRATION=1 pytest     # + live contract tests (needs Qdrant + Ollama)
 ```
 
 - **Unit** — config precedence, registry swapping, LDD guardrails, retriever,
-  generation, intake, critique, revise loop, pipeline, eval harness, API. All run
-  in-process via in-memory fakes (148 tests; 93% coverage).
+  generation, intake, critique, revise loop, pipeline, eval harness, teacher
+  profile + store, edit/validate + profile API, and the served editor page. All
+  run in-process via in-memory fakes (172 tests; 93% coverage).
 - **Contract** (`tests/contract/`) — verify a real adapter honors its interface;
   gated behind `RUN_INTEGRATION=1`.
 - **Eval gate** — `python -m lessonforge.eval` scores the golden set and exits
@@ -208,6 +254,7 @@ src/lessonforge/
   config.py                     Settings loader (YAML + env override)
   container.py                  composition root (DI)
   domain/ldd.py                 the LDD + anti-generic validators
+  domain/profile.py             TeacherProfile: defaults + voice/anchors, applied to a build
   providers/
     base.py                     the four interfaces (ports)
     registry.py                 provider string → adapter class
@@ -225,8 +272,9 @@ src/lessonforge/
     generation.py               brief → draft LDD (enrichment stage)
     critique.py                 Critic port + structural/llm/composite/noop scorers
     revise.py                   critique → rewrite weak sections → validated LDD
-    pipeline.py                 composes intake → enrich → critique/revise
-    registry.py                 stage provider string → intake/critic class
+    pipeline.py                 composes intake → enrich → critique/revise (+ profile)
+    profile.py                  ProfileStore port (memory | file) for teacher prefs
+    registry.py                 stage provider string → intake/critic/profile-store class
   eval/                         golden-set scoring + `python -m lessonforge.eval` gate
   export/
     base.py                     the Renderer port + ExportOptions
@@ -234,6 +282,7 @@ src/lessonforge/
     markdown.py docx_render.py pptx_render.py   the renderers
     service.py                  config-driven compile + one-click zip bundle
   api/                          FastAPI app + DI
+    static/index.html           the self-contained edit-before-export web editor
 corpus/seed/                    authored seed grounding corpus (JSONL)
 tests/                          unit + contract
 tests/golden/                   byte-stable renderer fixtures
@@ -252,8 +301,12 @@ tests/golden/                   byte-stable renderer fixtures
   config just like the providers.
 - **M4 (backend core)** — quality & editing pipeline: intake (US-3 paste-a-plan),
   critique→revise loop on the anti-generic rubric, eval harness + CI gate, and
-  per-stage model selection. Every stage a config-swappable port. *(Web UI +
-  TeacherProfile deferred to M4.5.)*
+  per-stage model selection. Every stage a config-swappable port.
+- **M4.5 (edit-before-export UI + `TeacherProfile`)** — a self-contained web editor
+  at `/` (generate → edit the whole LDD → check guardrails → export), a
+  `POST /lessons/validate` guardrail check, and stored teacher preferences
+  (defaults + voice + local anchors) injected into every build behind a pluggable
+  `ProfileStore` (`memory` | `file`). Browser-verified end-to-end.
 
 Next per the roadmap (`ROADMAP.md`): source/license the real CDC corpus to replace
-the seed, and the M4.5 web edit-before-export UI + `TeacherProfile`.
+the seed, then M5 (school-ready: multi-tenancy + personal/shared corpora).

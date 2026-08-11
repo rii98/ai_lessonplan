@@ -4,7 +4,7 @@ Living status doc. Update it as work lands. Companion to [`SRD.md`](SRD.md)
 (the design) and [`README.md`](README.md) (how to run).
 
 - **Legend:** ✅ done & verified · 🟡 in progress · ⬜ not started
-- **Last updated:** 2026-08-11 (M4 backend core)
+- **Last updated:** 2026-08-11 (M4.5 edit-before-export UI + TeacherProfile)
 
 ---
 
@@ -41,7 +41,21 @@ enrichment *enrich* it rather than replace it. An **eval harness** scores a fixe
 golden set (structural + rubric) and gates CI on it. Per-stage model selection
 (fast model for intake, reasoning model for enrichment/critique) is wired.
 **148 unit tests + 2 live contract tests green; ruff clean; 93% total coverage
-(97–100% on the new M4 modules).** *(Web UI + TeacherProfile deferred — see below.)*
+(97–100% on the new M4 modules).**
+
+**Milestone M4.5 — edit-before-export UI + `TeacherProfile` — ✅ done & verified.**
+A single self-contained, low-bandwidth web editor served at `/` (vanilla JS, no
+build): generate → **edit the whole LDD in place** → check guardrails → export.
+`POST /lessons/validate` validates an edited LDD and returns field-level errors
+with HTTP 200 (a normal editing state, not a failed request), so violations pin
+to their field. **`TeacherProfile`** carries stored preferences — defaults that
+fill only unset request fields (explicit always wins) plus a teaching voice +
+local anchors — injected into every build by the pipeline, so intake and
+generation stay profile-agnostic. Preferences persist behind a pluggable
+`ProfileStore` port (`memory` default, `file` for JSON-per-teacher). **172 unit
+tests + 2 live contract tests green; ruff clean; eval gate PASS; 99% coverage on
+the new modules. Browser-verified end-to-end (render → generate → edit → validate
+→ DOCX download).**
 
 ---
 
@@ -121,7 +135,25 @@ golden set (structural + rubric) and gates CI on it. Per-stage model selection
 - ✅ Per-stage model selection: optional `llm_fast` (cheap model for intake) vs `llm`
   (reasoning model for enrichment/critique) — one config block, no code change.
 - ✅ CI workflow: ruff + unit tests + eval gate on every push/PR.
-- ⬜ Web UI for edit-before-export; `TeacherProfile` preferences *(deferred to M4.5)*
+
+### M4.5 — Edit-before-export UI + teacher profile — ✅ done & verified
+- ✅ Self-contained web editor at `GET /` (`api/static/index.html`): generate →
+  edit the full LDD (objectives, hook, misconceptions, phases, checks, homework,
+  differentiation) → check guardrails → export. Vanilla JS, no build step, one
+  request; low-bandwidth first. Devanagari renders in the editor.
+- ✅ `POST /lessons/validate`: validates an edited LDD against the anti-generic
+  guardrails, returns `{valid, errors:[{loc, msg}]}` with **HTTP 200 even when
+  invalid** so the UI shows field-level errors inline, not as a request failure.
+- ✅ `TeacherProfile` (`domain/profile.py`): defaults fill only unset request
+  fields (explicit wins); voice (`style_notes`) + `local_anchors` flavour every
+  build. Applied by the pipeline (`run(request, profile=…)`) — intake/generation
+  stay profile-agnostic. Multi-tenant-ready (`owner_id`).
+- ✅ Pluggable `ProfileStore` port (`services/profile.py`): `memory` (default) |
+  `file` (JSON-per-teacher, path-traversal-safe), behind the registry pattern;
+  `profile:` config block. Real multi-tenant DB store = a later provider, no rewrite.
+- ✅ `GET`/`PUT /profile` endpoints; `/generate` + `/intake` load & apply the profile.
+- ✅ 24 new tests (`test_profile.py`, `test_profile_api.py`); 172 total green, ruff
+  clean, eval gate PASS, 99% coverage on new modules; browser-verified end-to-end.
 
 ### M5 — School-ready
 - ⬜ Data model & multi-tenancy (`org_id`/`owner_id` scoping)
