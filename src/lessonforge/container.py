@@ -25,7 +25,8 @@ from .services.critique import Critic
 from .services.generation import LessonGenerator
 from .services.intake import Intake
 from .services.pipeline import LessonPipeline
-from .services.registry import build_critic, build_intake
+from .services.profile import ProfileStore
+from .services.registry import build_critic, build_intake, build_profile_store
 from .services.revise import Reviser
 
 
@@ -47,10 +48,13 @@ class Container:
     critic: Critic | None = None
     reviser: Reviser | None = None
     pipeline: LessonPipeline | None = field(default=None)
+    profile_store: ProfileStore | None = None
 
     def __post_init__(self) -> None:
         # intake uses the cheap fast model; critique/revise use the reasoning model.
         self.llm_fast = self.llm_fast or self.llm
+        if self.profile_store is None:
+            self.profile_store = build_profile_store(self.settings.profile)
         if self.intake is None:
             self.intake = build_intake(self.settings.intake, llm=self.llm_fast)
         if self.critic is None:

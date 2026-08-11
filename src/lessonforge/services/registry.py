@@ -14,17 +14,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, TypeVar
 
-from ..config import CritiqueConfig, IntakeConfig
+from ..config import CritiqueConfig, IntakeConfig, ProfileConfig
 
 if TYPE_CHECKING:
     from ..providers.base import LLMClient
     from .critique import Critic
     from .intake import Intake
+    from .profile import ProfileStore
 
 T = TypeVar("T")
 
 INTAKE_REGISTRY: dict[str, type[Intake]] = {}
 CRITIC_REGISTRY: dict[str, type[Critic]] = {}
+PROFILE_STORE_REGISTRY: dict[str, type[ProfileStore]] = {}
 
 
 def _register(registry: dict[str, type[T]], name: str) -> Callable[[type[T]], type[T]]:
@@ -43,6 +45,10 @@ def register_intake(name: str):
 
 def register_critic(name: str):
     return _register(CRITIC_REGISTRY, name)
+
+
+def register_profile_store(name: str):
+    return _register(PROFILE_STORE_REGISTRY, name)
 
 
 def _lookup(registry: dict[str, type[T]], provider: str, kind: str) -> type[T]:
@@ -66,3 +72,9 @@ def build_critic(cfg: CritiqueConfig, *, llm: LLMClient) -> Critic:
     from . import critique as _  # noqa: F401  (import triggers stage registration)
 
     return _lookup(CRITIC_REGISTRY, cfg.provider, "critic").from_config(cfg, llm=llm)  # type: ignore[attr-defined]
+
+
+def build_profile_store(cfg: ProfileConfig) -> ProfileStore:
+    from . import profile as _  # noqa: F401  (import triggers store registration)
+
+    return _lookup(PROFILE_STORE_REGISTRY, cfg.provider, "profile store").from_config(cfg)  # type: ignore[attr-defined]

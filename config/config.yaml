@@ -72,6 +72,12 @@ critique:
   # weights: { engagement: 1.0, alignment: 1.0, misconception_coverage: 1.0,
   #            specificity: 1.0, local_relevance: 1.0 }   # empty = equal weighting
 
+profile:
+  # Where a teacher's stored preferences (defaults + voice + local anchors) live.
+  # They fill unset request fields and flavour every generated lesson (US-1/US-5).
+  provider: memory                      # ← swap: memory (non-persistent) | file
+  # path: .lessonforge/profiles         # directory for provider: file
+
 export:
   # Which output format each teaching artifact defaults to. The registry maps
   # (artifact, format) -> renderer, so swapping a format is a one-line change.

@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LessonForge — edit before export</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1a2230; --muted: #667085;
+    --line: #e3e7ee; --brand: #2f6f4f; --brand-ink: #ffffff; --accent: #1f6feb;
+    --warn: #b42318; --warn-bg: #fef3f2; --ok: #05803e; --ok-bg: #ecfdf3;
+    --chip: #eef2f7; --radius: 10px; --shadow: 0 1px 2px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1a1f27; --ink: #e6eaf0; --muted: #9aa4b2;
+      --line: #2a313c; --brand: #4c9e75; --brand-ink: #08130d; --accent: #6ea8fe;
+      --warn: #ff9a8f; --warn-bg: #2a1512; --ok: #6ee7a8; --ok-bg: #0f2318;
+      --chip: #232a34; --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Devanagari", sans-serif;
+  }
+  header.top {
+    padding: 18px 20px; border-bottom: 1px solid var(--line);
+    background: var(--panel); position: sticky; top: 0; z-index: 5;
+  }
+  header.top h1 { margin: 0; font-size: 19px; letter-spacing: -.01em; }
+  header.top p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 20px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); margin-bottom: 18px; overflow: hidden;
+  }
+  .card > h2 {
+    margin: 0; padding: 14px 16px; font-size: 15px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card .body { padding: 16px; }
+  details.card > summary {
+    list-style: none; cursor: pointer; padding: 14px 16px; font-weight: 600; font-size: 15px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::before { content: "▸"; color: var(--muted); }
+  details.card[open] > summary::before { content: "▾"; }
+  details.card[open] > summary { border-bottom: 1px solid var(--line); }
+  label.f { display: block; margin-bottom: 12px; }
+  label.f > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input, select, textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit;
+  }
+  textarea { resize: vertical; min-height: 64px; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0 14px; }
+  button {
+    font: inherit; font-weight: 600; padding: 9px 15px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); }
+  button.ghost { background: transparent; }
+  button.small { padding: 4px 9px; font-size: 12px; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+  .item {
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 10px;
+    background: var(--bg);
+  }
+  .item .item-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .item .item-head strong { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .sub { font-size: 13px; color: var(--muted); margin: 0 0 10px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; background: var(--chip);
+    border-radius: 999px; padding: 4px 10px; font-size: 13px; margin: 0 6px 6px 0;
+  }
+  .chip button { border: none; background: none; padding: 0; color: var(--muted); font-weight: 700; }
+  .listrow { display: flex; gap: 8px; margin-bottom: 6px; }
+  .listrow input { flex: 1; }
+  .listrow button { flex: 0 0 auto; }
+  .status { font-size: 13px; padding: 8px 0; min-height: 20px; }
+  .status.err { color: var(--warn); }
+  .banner { border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+  .banner.err { background: var(--warn-bg); color: var(--warn); }
+  .banner.ok { background: var(--ok-bg); color: var(--ok); }
+  .banner ul { margin: 6px 0 0; padding-left: 18px; }
+  .quality { display: grid; grid-template-columns: 140px 1fr auto; gap: 8px 12px; align-items: center; }
+  .meter { height: 8px; border-radius: 999px; background: var(--chip); overflow: hidden; }
+  .meter > span { display: block; height: 100%; background: var(--brand); }
+  .q-name { font-size: 13px; color: var(--muted); }
+  .q-val { font-variant-numeric: tabular-nums; font-size: 13px; }
+  h3.section { margin: 20px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .hidden { display: none !important; }
+  .spinner {
+    width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent);
+    border-radius: 50%; display: inline-block; animation: spin .7s linear infinite; vertical-align: -2px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>🪔 LessonForge</h1>
+  <p>Generate a CDC-grounded lesson, edit every part, then export — the plan you export is the plan you see.</p>
+</header>
+
+<div class="wrap">
+
+  <!-- ── Teacher profile ─────────────────────────────────────────────── -->
+  <details class="card" id="profileCard">
+    <summary>Teacher profile <span class="q-name" id="profileHint"></span></summary>
+    <div class="body">
+      <p class="sub">Stored preferences. Defaults fill anything you leave blank below; the voice &amp; local anchors flavour every lesson so it feels like yours.</p>
+      <div class="grid">
+        <label class="f"><span>Your name</span><input id="p_teacher_name" /></label>
+        <label class="f"><span>School</span><input id="p_school" /></label>
+      </div>
+      <h3 class="section">Defaults</h3>
+      <div class="grid">
+        <label class="f"><span>Grade</span><input id="p_default_grade" type="number" min="1" max="12" /></label>
+        <label class="f"><span>Subject</span><input id="p_default_subject" /></label>
+        <label class="f"><span>Duration</span>
+          <select id="p_default_duration_min"><option value="">—</option><option>30</option><option>45</option><option>60</option></select>
+        </label>
+        <label class="f"><span>Language</span>
+          <select id="p_default_language"><option value="">—</option><option value="en">en</option><option value="ne">ne</option><option value="en-ne">en-ne</option></select>
+        </label>
+        <label class="f"><span>Framework</span>
+          <select id="p_default_framework"><option value="">—</option><option value="5E">5E</option><option value="gradual_release">gradual_release</option><option value="inquiry">inquiry</option></select>
+        </label>
+      </div>
+      <h3 class="section">Voice &amp; local flavour</h3>
+      <label class="f"><span>Teaching voice / style notes</span>
+        <textarea id="p_style_notes" placeholder="e.g. warm, lots of storytelling and pair work, connect to daily life"></textarea>
+      </label>
+      <label class="f"><span>Favourite local anchors</span>
+        <div id="p_local_anchors"></div>
+      </label>
+      <div class="row">
+        <button class="primary" id="saveProfile">Save profile</button>
+        <span class="status" id="profileStatus"></span>
+      </div>
+    </div>
+  </details>
+
+  <!-- ── Create ──────────────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>Create a lesson</h2>
+    <div class="body">
+      <div class="grid">
+        <label class="f"><span>Topic</span><input id="b_topic" placeholder="e.g. Components of Environment" /></label>
+        <label class="f"><span>Grade</span><input id="b_grade" type="number" min="1" max="12" placeholder="profile default" /></label>
+        <label class="f"><span>Subject</span><input id="b_subject" placeholder="profile default" /></label>
+        <label class="f"><span>Duration</span>
+          <select id="b_duration_min"><option value="">default</option><option>30</option><option>45</option><option>60</option></select>
+        </label>
+        <label class="f"><span>Language</span>
+          <select id="b_language"><option value="">default</option><option value="en">en</option><option value="ne">ne</option><option value="en-ne">en-ne</option></select>
+        </label>
+        <label class="f"><span>Framework</span>
+          <select id="b_framework"><option value="">default</option><option value="5E">5E</option><option value="gradual_release">gradual_release</option><option value="inquiry">inquiry</option></select>
+        </label>
+      </div>
+      <label class="f"><span>Or paste an existing rough plan to enrich (optional — US-3)</span>
+        <textarea id="b_existing_plan" placeholder="Paste your draft. The tool keeps your intent and adds a hook, misconceptions, active learning, and aligned assessment."></textarea>
+      </label>
+      <div class="row">
+        <button class="primary" id="generate">Generate lesson</button>
+        <span class="status" id="genStatus"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Review & edit ───────────────────────────────────────────────── -->
+  <div class="card hidden" id="reviewCard">
+    <h2>Review &amp; edit <span class="q-name">— the source of truth for every export</span></h2>
+    <div class="body">
+      <div id="validationBanner"></div>
+      <div id="editor"></div>
+
+      <h3 class="section">Quality signal</h3>
+      <div class="quality" id="quality"></div>
+      <p class="sub" id="qualityNotes" style="margin-top:10px"></p>
+      <p class="sub" id="groundingSources"></p>
+
+      <h3 class="section">Export</h3>
+      <div class="toolbar">
+        <button id="validate">Check guardrails</button>
+        <button class="ghost" data-export="lesson_plan">Lesson plan</button>
+        <button class="ghost" data-export="slides">Slides</button>
+        <button class="ghost" data-export="worksheet">Worksheet</button>
+        <button class="ghost" data-export="quiz">Quiz</button>
+        <button class="primary" id="exportZip">Download all (.zip)</button>
+      </div>
+      <div class="status" id="exportStatus"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const api = async (method, url, body) => {
+  const opt = { method, headers: {} };
+  if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  const res = await fetch(url, opt);
+  return res;
+};
+const BLOOM = ["remember","understand","apply","analyze","evaluate","create"];
+const HOOK_KINDS = ["scenario","question","prediction","demonstration"];
+const Q_TYPES = ["mcq","true_false","short_answer"];
+
+// ── small DOM helpers ───────────────────────────────────────────────────────
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const k in (attrs || {})) {
+    if (k === "class") e.className = attrs[k];
+    else if (k === "html") e.innerHTML = attrs[k];
+    else if (k.startsWith("on")) e.addEventListener(k.slice(2), attrs[k]);
+    else if (attrs[k] != null) e.setAttribute(k, attrs[k]);
+  }
+  for (const kid of kids.flat()) if (kid != null) e.append(kid.nodeType ? kid : document.createTextNode(kid));
+  return e;
+}
+// bind a text/number/textarea input to obj[key], mutating in place (no re-render)
+function bound(obj, key, { type = "text", placeholder = "", area = false } = {}) {
+  const el = area ? h("textarea", { placeholder }) : h("input", { type, placeholder });
+  el.value = obj[key] ?? "";
+  el.addEventListener("input", () => {
+    if (type === "number") { const n = el.value.trim(); obj[key] = n === "" ? null : Number(n); }
+    else obj[key] = el.value;
+  });
+  return el;
+}
+function boundSelect(obj, key, options) {
+  const el = h("select", {}, ...options.map((o) => h("option", { value: o }, o)));
+  el.value = obj[key];
+  el.addEventListener("change", () => { obj[key] = el.value; });
+  return el;
+}
+function field(labelText, control) { return h("label", { class: "f" }, h("span", {}, labelText), control); }
+
+// editable list of strings; mutates `arr` in place; `onchange` re-renders parent when structure changes
+function stringList(arr, placeholder, rerender) {
+  const box = h("div", {});
+  arr.forEach((_, i) => {
+    const inp = h("input", { placeholder });
+    inp.value = arr[i];
+    inp.addEventListener("input", () => { arr[i] = inp.value; });
+    box.append(h("div", { class: "listrow" }, inp,
+      h("button", { class: "small ghost", onclick: () => { arr.splice(i, 1); rerender(); } }, "✕")));
+  });
+  box.append(h("button", { class: "small", onclick: () => { arr.push(""); rerender(); } }, "+ add"));
+  return box;
+}
+// comma-separated <-> array of ids
+function csvField(labelText, obj, key) {
+  const el = h("input", { placeholder: "e.g. O1, O2" });
+  el.value = (obj[key] || []).join(", ");
+  el.addEventListener("input", () => {
+    obj[key] = el.value.split(",").map((s) => s.trim()).filter(Boolean);
+  });
+  return field(labelText, el);
+}
+
+// ── profile ─────────────────────────────────────────────────────────────────
+let profile = null;
+const PROFILE_FIELDS = ["teacher_name","school","default_grade","default_subject",
+  "default_duration_min","default_language","default_framework","style_notes"];
+
+function fillProfileForm() {
+  for (const f of PROFILE_FIELDS) { const el = $("p_" + f); if (el) el.value = profile[f] ?? ""; }
+  renderAnchors();
+  const named = profile.teacher_name ? `— ${profile.teacher_name}` : "";
+  $("profileHint").textContent = named;
+}
+function renderAnchors() {
+  const box = $("p_local_anchors"); box.textContent = "";
+  box.append(stringList(profile.local_anchors, "e.g. Phewa lake", renderAnchors));
+}
+function readProfileForm() {
+  const p = { owner_id: profile.owner_id || "default", local_anchors: profile.local_anchors };
+  for (const f of PROFILE_FIELDS) {
+    const v = $("p_" + f).value.trim();
+    if (f === "default_grade") p[f] = v === "" ? null : Number(v);
+    else if (["default_duration_min","default_subject","default_language","default_framework"].includes(f))
+      p[f] = v === "" ? null : v;
+    else p[f] = v;
+  }
+  return p;
+}
+async function loadProfile() {
+  const res = await api("GET", "/profile");
+  profile = res.ok ? await res.json() : { owner_id: "default", local_anchors: [] };
+  profile.local_anchors = profile.local_anchors || [];
+  fillProfileForm();
+}
+$("saveProfile").addEventListener("click", async () => {
+  const st = $("profileStatus"); st.className = "status"; st.textContent = "Saving…";
+  const res = await api("PUT", "/profile", readProfileForm());
+  if (res.ok) { profile = await res.json(); profile.local_anchors = profile.local_anchors || []; fillProfileForm();
+    st.textContent = "Saved ✓"; }
+  else { st.className = "status err"; st.textContent = "Could not save profile."; }
+});
+
+// ── generate ────────────────────────────────────────────────────────────────
+let ldd = null;
+function readBrief() {
+  const num = (id) => { const v = $(id).value.trim(); return v === "" ? null : Number(v); };
+  const str = (id) => { const v = $(id).value.trim(); return v === "" ? null : v; };
+  return {
+    topic: str("b_topic"), grade: num("b_grade"), subject: str("b_subject"),
+    duration_min: num("b_duration_min"), language: str("b_language"),
+    framework: str("b_framework"), existing_plan: str("b_existing_plan"),
+  };
+}
+$("generate").addEventListener("click", async () => {
+  const st = $("genStatus"); st.className = "status";
+  st.innerHTML = '<span class="spinner"></span> Designing the lesson (intake → grounding → critique)…';
+  $("generate").disabled = true;
+  try {
+    const res = await api("POST", "/lessons/generate", readBrief());
+    if (!res.ok) { const e = await res.json().catch(() => ({}));
+      st.className = "status err"; st.textContent = "Generate failed: " + (e.detail || res.status); return; }
+    ldd = await res.json();
+    st.textContent = "Draft ready — review and edit below.";
+    $("reviewCard").classList.remove("hidden");
+    renderEditor(); renderQuality();
+    $("validationBanner").textContent = "";
+    $("reviewCard").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (err) { st.className = "status err"; st.textContent = "Network error: " + err.message; }
+  finally { $("generate").disabled = false; }
+});
+
+// ── LDD editor (source of truth = `ldd`) ─────────────────────────────────────
+function itemCard(label, onRemove, ...body) {
+  return h("div", { class: "item" },
+    h("div", { class: "item-head" }, h("strong", {}, label),
+      h("button", { class: "small ghost", onclick: onRemove }, "Remove")),
+    ...body);
+}
+function listSection(title, hint, arr, factory, template, rerender) {
+  const wrap = h("div", {});
+  wrap.append(h("h3", { class: "section" }, title));
+  if (hint) wrap.append(h("p", { class: "sub" }, hint));
+  arr.forEach((it, i) => wrap.append(factory(it, i)));
+  wrap.append(h("button", { class: "small", onclick: () => { arr.push(structuredClone(template)); rerender(); } }, "+ add"));
+  return wrap;
+}
+
+function renderEditor() {
+  const root = $("editor"); root.textContent = "";
+  const rr = renderEditor;
+
+  // framing — duration is an int Literal, so its select round-trips through String
+  const durSel = h("select", {}, ...["30","45","60"].map((o) => h("option", { value: o }, o)));
+  durSel.value = String(ldd.duration_min);
+  durSel.addEventListener("change", () => { ldd.duration_min = Number(durSel.value); });
+  root.append(h("div", { class: "grid" },
+    field("Topic", bound(ldd, "topic")),
+    field("Grade", bound(ldd.curriculum_ref, "grade", { type: "number" })),
+    field("Subject", bound(ldd.curriculum_ref, "subject")),
+    field("Duration", durSel),
+    field("Language", boundSelect(ldd, "language", ["en","ne","en-ne"])),
+    field("Framework", boundSelect(ldd, "framework", ["5E","gradual_release","inquiry"])),
+  ));
+
+  // engagement hook
+  root.append(h("h3", { class: "section" }, "Engagement hook"));
+  root.append(h("p", { class: "sub" }, "Must open with curiosity — a scenario, question, prediction or demonstration, never a definition."));
+  root.append(h("div", {},
+    field("Prompt", bound(ldd.engagement_hook, "prompt", { area: true })),
+    field("Kind", boundSelect(ldd.engagement_hook, "kind", HOOK_KINDS)),
+  ));
+
+  // objectives
+  root.append(listSection("Objectives", "Every objective must be taught in a phase AND assessed by a check.",
+    ldd.objectives,
+    (o) => itemCard(o.id || "objective", () => { ldd.objectives.splice(ldd.objectives.indexOf(o), 1); rr(); },
+      h("div", { class: "grid" }, field("ID", bound(o, "id")), field("Bloom", boundSelect(o, "bloom", BLOOM))),
+      field("Statement", bound(o, "statement", { area: true }))),
+    { id: "", statement: "", bloom: "understand" }, rr));
+
+  // prior knowledge & local context & materials (string lists)
+  root.append(h("h3", { class: "section" }, "Prior knowledge"));
+  root.append(stringList(ldd.prior_knowledge, "what students already know", rr));
+  root.append(h("h3", { class: "section" }, "Local context"));
+  root.append(h("p", { class: "sub" }, "Local anchors students recognize — the anti-generic signal."));
+  root.append(stringList(ldd.local_context, "e.g. temple bell, millet field", rr));
+  root.append(h("h3", { class: "section" }, "Materials"));
+  root.append(stringList(ldd.materials, "e.g. rubber band", rr));
+
+  // misconceptions
+  root.append(listSection("Misconceptions", "Grade-specific wrong ideas and how to correct them.",
+    ldd.misconceptions,
+    (m) => itemCard("misconception", () => { ldd.misconceptions.splice(ldd.misconceptions.indexOf(m), 1); rr(); },
+      field("Misconception", bound(m, "statement", { area: true })),
+      field("Correction", bound(m, "correction", { area: true }))),
+    { statement: "", correction: "", source: null }, rr));
+
+  // phases
+  root.append(listSection("Phases", "The teaching sequence. objective_ids tie each phase to what it teaches.",
+    ldd.phases,
+    (p) => itemCard(p.name_en || "phase", () => { ldd.phases.splice(ldd.phases.indexOf(p), 1); rr(); },
+      h("div", { class: "grid" },
+        field("Name (EN)", bound(p, "name_en")),
+        field("Name (NE)", bound(p, "name_ne")),
+        field("Minutes", bound(p, "minutes", { type: "number" }))),
+      csvField("Objective IDs", p, "objective_ids"),
+      h("p", { class: "sub" }, "Teacher activities"), stringList(p.teacher_activities, "what the teacher does", rr),
+      h("p", { class: "sub" }, "Student activities"), stringList(p.student_activities, "what students do", rr)),
+    { name_en: "", name_ne: "", teacher_activities: [""], student_activities: [""], minutes: 5, objective_ids: [] }, rr));
+
+  // differentiation
+  root.append(h("h3", { class: "section" }, "Differentiation"));
+  root.append(h("div", {},
+    h("p", { class: "sub" }, "Struggling"), stringList(ldd.differentiation.struggling, "support", rr),
+    h("p", { class: "sub" }, "On level"), stringList(ldd.differentiation.on_level, "core task", rr),
+    h("p", { class: "sub" }, "Advanced"), stringList(ldd.differentiation.advanced, "extension", rr)));
+
+  // formative checks
+  root.append(listSection("Formative checks", "Every objective needs at least one. MCQ requires options.",
+    ldd.formative_checks,
+    (q) => itemCard(q.id || "question", () => { ldd.formative_checks.splice(ldd.formative_checks.indexOf(q), 1); rr(); },
+      h("div", { class: "grid" },
+        field("ID", bound(q, "id")),
+        field("Type", (() => { const s = boundSelect(q, "type", Q_TYPES); s.addEventListener("change", rr); return s; })())),
+      field("Prompt", bound(q, "prompt", { area: true })),
+      field("Answer", bound(q, "answer")),
+      csvField("Objective IDs", q, "objective_ids"),
+      q.type === "mcq" ? (() => { q.options = q.options || [""]; return h("div", {},
+        h("p", { class: "sub" }, "Options (MCQ)"), stringList(q.options, "option", rr)); })() : null),
+    { id: "", type: "short_answer", prompt: "", answer: "", objective_ids: [], options: null }, rr));
+
+  // homework (optional)
+  root.append(h("h3", { class: "section" }, "Homework"));
+  if (ldd.homework) {
+    root.append(h("div", {},
+      h("p", { class: "sub" }, "Instructions"), stringList(ldd.homework.instructions, "task", rr),
+      csvField("Objective IDs", ldd.homework, "objective_ids"),
+      h("button", { class: "small ghost", onclick: () => { ldd.homework = null; rr(); } }, "Remove homework")));
+  } else {
+    root.append(h("button", { class: "small", onclick: () => { ldd.homework = { instructions: [""], objective_ids: [] }; rr(); } }, "+ add homework"));
+  }
+}
+
+function renderQuality() {
+  const q = ldd.quality || {}; const box = $("quality"); box.textContent = "";
+  const dims = ["engagement","alignment","misconception_coverage","specificity","local_relevance"];
+  for (const d of dims) {
+    const v = Number(q[d] || 0);
+    box.append(h("div", { class: "q-name" }, d.replace(/_/g, " ")),
+      h("div", { class: "meter" }, h("span", { style: `width:${Math.round(v * 100)}%` })),
+      h("div", { class: "q-val" }, v.toFixed(2)));
+  }
+  $("qualityNotes").textContent = q.notes || "";
+  const src = q.grounding_sources || [];
+  $("groundingSources").textContent = src.length ? "Grounded in: " + src.join(" · ") : "";
+}
+
+// ── validate ────────────────────────────────────────────────────────────────
+$("validate").addEventListener("click", async () => {
+  const banner = $("validationBanner");
+  const res = await api("POST", "/lessons/validate", ldd);
+  const data = await res.json();
+  if (data.valid) {
+    banner.innerHTML = '<div class="banner ok">✓ Passes every guardrail — ready to export.</div>';
+  } else {
+    const items = data.errors.map((e) => `<li><code>${e.loc}</code> — ${e.msg}</li>`).join("");
+    banner.innerHTML = `<div class="banner err"><strong>${data.errors.length} guardrail issue(s)</strong> to fix before export:<ul>${items}</ul></div>`;
+  }
+  banner.scrollIntoView({ behavior: "smooth", block: "nearest" });
+});
+
+// ── export ──────────────────────────────────────────────────────────────────
+function filenameFrom(res, fallback) {
+  const cd = res.headers.get("Content-Disposition") || "";
+  const m = cd.match(/filename="?([^"]+)"?/);
+  return m ? m[1] : fallback;
+}
+async function download(url, fallback) {
+  const st = $("exportStatus"); st.className = "status";
+  st.innerHTML = '<span class="spinner"></span> Rendering…';
+  try {
+    const res = await api("POST", url, ldd);
+    if (!res.ok) { const e = await res.json().catch(() => ({}));
+      st.className = "status err";
+      st.textContent = "Export rejected: " + (typeof e.detail === "string" ? e.detail : "the lesson failed a guardrail — run Check guardrails.");
+      return; }
+    const blob = await res.blob();
+    const a = h("a", { href: URL.createObjectURL(blob), download: filenameFrom(res, fallback) });
+    document.body.append(a); a.click(); a.remove();
+    st.textContent = "Downloaded " + filenameFrom(res, fallback);
+  } catch (err) { st.className = "status err"; st.textContent = "Network error: " + err.message; }
+}
+document.querySelectorAll("[data-export]").forEach((btn) =>
+  btn.addEventListener("click", () => download("/lessons/export/" + btn.dataset.export, btn.dataset.export + ".docx")));
+$("exportZip").addEventListener("click", () => download("/lessons/export/bundle/zip", "lesson_bundle.zip"));
+
+// ── boot ────────────────────────────────────────────────────────────────────
+loadProfile();
+</script>
+</body>
+</html>

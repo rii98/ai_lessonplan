@@ -105,6 +105,17 @@ class CritiqueConfig(BaseModel):
     weights: dict[str, float] = Field(default_factory=dict)  # per-dimension; empty = equal
 
 
+class ProfileConfig(BaseModel):
+    """Where teacher preferences (:class:`TeacherProfile`) are stored.
+
+    ``memory`` is dependency-free but non-persistent (default); ``file`` writes
+    one JSON per teacher under ``path`` so preferences survive restarts. The
+    multi-tenant DB store is a future provider — a config swap, not a rewrite."""
+
+    provider: str = "memory"  # ← swap: memory | file
+    path: str | None = None  # directory for the file provider
+
+
 class RetrievalConfig(BaseModel):
     top_k: int = 20
     rerank_top_n: int = 5
@@ -168,6 +179,7 @@ class Settings(BaseSettings):
     grounding: GroundingConfig = Field(default_factory=GroundingConfig)
     intake: IntakeConfig = Field(default_factory=IntakeConfig)
     critique: CritiqueConfig = Field(default_factory=CritiqueConfig)
+    profile: ProfileConfig = Field(default_factory=ProfileConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
 
     @classmethod

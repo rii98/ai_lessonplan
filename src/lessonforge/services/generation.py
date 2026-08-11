@@ -69,7 +69,7 @@ _PROMPT_TEMPLATE = """\
 Design a {duration}-minute {framework} lesson for Grade {grade} {subject}.
 Topic: {topic}
 Language mode: {language} (English body, Nepali pedagogical phase labels).
-{existing_plan}
+{personalization}{existing_plan}
 {grounding}
 
 Return a single JSON object with EXACTLY the same keys and nesting as this
@@ -88,6 +88,24 @@ Hard requirements (the output is rejected otherwise):
 - For "mcq" questions include an "options" list; otherwise set "options": null.
 Return JSON only, no prose, no markdown fences.
 """
+
+
+def _personalization_block(brief: NormalizedBrief) -> str:
+    """Inject the teacher's stored voice + favourite local anchors (from their
+    TeacherProfile) so the lesson feels like *hers*, not generic."""
+    parts: list[str] = []
+    if brief.style_notes.strip():
+        parts.append(f"Teaching voice to emulate: {brief.style_notes.strip()}")
+    if brief.local_anchors:
+        parts.append(
+            "Prefer these local anchors the teacher's students recognize: "
+            + ", ".join(brief.local_anchors)
+        )
+    if not parts:
+        return ""
+    return "This teacher's stored preferences (honor them):\n" + "\n".join(
+        f"- {p}" for p in parts
+    ) + "\n"
 
 
 def _existing_plan_block(plan: str | None) -> str:
@@ -133,6 +151,7 @@ class LessonGenerator:
             subject=brief.subject,
             topic=brief.topic,
             language=brief.language,
+            personalization=_personalization_block(brief),
             existing_plan=_existing_plan_block(brief.existing_plan),
             grounding=bundle.as_prompt_context(),
             example=json.dumps(_EXAMPLE_LDD, ensure_ascii=False, indent=2),

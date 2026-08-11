@@ -185,6 +185,11 @@ class NormalizedBrief(BaseModel):
     framework: Literal["5E", "gradual_release", "inquiry"] = "5E"
     existing_plan: str | None = None
 
+    # personalization stamped by the TeacherProfile (see ``domain/profile.py``);
+    # enrichment reads these to match the teacher's voice and local examples.
+    style_notes: str = ""
+    local_anchors: list[str] = Field(default_factory=list)
+
 
 class IntakeRequest(BaseModel):
     """Raw input to the intake stage — every field optional so a teacher can
