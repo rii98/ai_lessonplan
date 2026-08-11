@@ -5,22 +5,32 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ..container import Container
-from ..domain.ldd import LessonDesignDocument, NormalizedBrief
+from ..domain.ldd import IntakeRequest, LessonDesignDocument, NormalizedBrief
+from ..domain.rubric import Critique
 from ..export import ArtifactKind, RenderedArtifact
 from .deps import get_container
 
 
 class GenerateRequest(BaseModel):
-    topic: str = Field(examples=["Components of Environment: Biotic and Abiotic"])
-    grade: int = Field(ge=1, le=12, examples=[6])
-    subject: str = Field(examples=["Science"])
-    duration_min: Literal[30, 45, 60] = 45
-    language: Literal["en", "ne", "en-ne"] = "en-ne"
-    framework: Literal["5E", "gradual_release", "inquiry"] = "5E"
+    """A generation request. ``topic`` may be omitted when ``existing_plan`` is
+    supplied — intake extracts it from the pasted plan (US-3)."""
+
+    topic: str | None = Field(default=None, examples=["Components of Environment: Biotic and Abiotic"])
+    grade: int | None = Field(default=None, ge=1, le=12, examples=[6])
+    subject: str | None = Field(default=None, examples=["Science"])
+    duration_min: Literal[30, 45, 60] | None = None
+    language: Literal["en", "ne", "en-ne"] | None = None
+    framework: Literal["5E", "gradual_release", "inquiry"] | None = None
     existing_plan: str | None = None
+
+    @model_validator(mode="after")
+    def _need_topic_or_plan(self) -> GenerateRequest:
+        if not self.topic and not self.existing_plan:
+            raise ValueError("provide `topic`, or `existing_plan` for intake to parse")
+        return self
 
 
 def create_app() -> FastAPI:
@@ -53,8 +63,29 @@ def create_app() -> FastAPI:
     def generate_lesson(
         req: GenerateRequest, c: Container = Depends(get_container)
     ) -> LessonDesignDocument:
-        brief = NormalizedBrief(**req.model_dump())
-        return c.generator.generate(brief)
+        """Full pipeline: intake → enrichment → critique & revise → validated LDD."""
+        try:
+            return c.pipeline.run(IntakeRequest(**req.model_dump()))
+        except ValueError as exc:  # intake couldn't determine topic/grade
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/lessons/intake", response_model=NormalizedBrief, tags=["lessons"])
+    def intake_lesson(
+        req: GenerateRequest, c: Container = Depends(get_container)
+    ) -> NormalizedBrief:
+        """US-3 preview: normalize a raw request / pasted plan into a brief,
+        without generating — so a teacher can confirm what was parsed."""
+        try:
+            return c.intake.normalize(IntakeRequest(**req.model_dump()))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/lessons/critique", response_model=Critique, tags=["lessons"])
+    def critique_lesson(
+        ldd: LessonDesignDocument, c: Container = Depends(get_container)
+    ) -> Critique:
+        """Score an already-generated LDD against the anti-generic rubric."""
+        return c.pipeline.critique(ldd)
 
     # ── export: LDD → downloadable artifacts ─────────────────────────────────
     def _file_response(art: RenderedArtifact) -> Response:

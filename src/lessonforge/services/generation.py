@@ -69,7 +69,7 @@ _PROMPT_TEMPLATE = """\
 Design a {duration}-minute {framework} lesson for Grade {grade} {subject}.
 Topic: {topic}
 Language mode: {language} (English body, Nepali pedagogical phase labels).
-
+{existing_plan}
 {grounding}
 
 Return a single JSON object with EXACTLY the same keys and nesting as this
@@ -88,6 +88,20 @@ Hard requirements (the output is rejected otherwise):
 - For "mcq" questions include an "options" list; otherwise set "options": null.
 Return JSON only, no prose, no markdown fences.
 """
+
+
+def _existing_plan_block(plan: str | None) -> str:
+    """US-3: when the teacher pasted a draft, tell the model to enrich it — add
+    the hook, misconceptions, and active learning it lacks — not discard it."""
+    if not plan or not plan.strip():
+        return ""
+    return (
+        "\nThe teacher pasted an existing draft below. ENRICH it — preserve their "
+        "intent and any good content, and add what a veteran would (a curiosity "
+        "hook, grade misconceptions, active-learning phases, aligned assessment). "
+        "Do not simply replace it wholesale.\n"
+        f"--- existing draft ---\n{plan.strip()}\n--- end draft ---\n"
+    )
 
 
 class LessonGenerator:
@@ -119,6 +133,7 @@ class LessonGenerator:
             subject=brief.subject,
             topic=brief.topic,
             language=brief.language,
+            existing_plan=_existing_plan_block(brief.existing_plan),
             grounding=bundle.as_prompt_context(),
             example=json.dumps(_EXAMPLE_LDD, ensure_ascii=False, indent=2),
         )

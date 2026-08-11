@@ -80,6 +80,31 @@ class VectorStoreConfig(_ProviderBlock):
     collection_prefix: str = "lf"
 
 
+class IntakeConfig(BaseModel):
+    """The intake stage: raw request (possibly a pasted plan) → NormalizedBrief.
+
+    ``llm`` uses the fast model to extract fields from a pasted plan and falls
+    back to the heuristic parser on any failure; ``heuristic`` is deterministic
+    (regex only, no model) — the default seam for tests and offline use.
+    """
+
+    provider: str = "llm"  # ← swap: llm | heuristic
+
+
+class CritiqueConfig(BaseModel):
+    """The critique→revise loop. ``provider`` picks the critic; the reviser loops
+    until the weighted overall clears ``threshold`` or ``max_iterations`` is hit.
+
+    ``structural`` scores deterministically (no LLM, no cost) — the default, so
+    generation stays cheap and tests stay deterministic. ``llm`` / ``composite``
+    add an LLM judge; ``noop`` disables scoring (always passes)."""
+
+    provider: str = "structural"  # ← swap: structural | llm | composite | noop
+    threshold: float = 0.7
+    max_iterations: int = 1
+    weights: dict[str, float] = Field(default_factory=dict)  # per-dimension; empty = equal
+
+
 class RetrievalConfig(BaseModel):
     top_k: int = 20
     rerank_top_n: int = 5
@@ -132,11 +157,17 @@ class Settings(BaseSettings):
 
     app: AppConfig = Field(default_factory=AppConfig)
     llm: LLMConfig
+    # Per-stage model selection (SRD §07): a cheap fast model for intake/extraction,
+    # the strong reasoning model (``llm``) for enrichment + critique. Optional —
+    # when absent, the fast stages reuse ``llm``. Same block shape as ``llm``.
+    llm_fast: LLMConfig | None = None
     embedding: EmbeddingConfig
     reranker: RerankerConfig
     vector_store: VectorStoreConfig
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     grounding: GroundingConfig = Field(default_factory=GroundingConfig)
+    intake: IntakeConfig = Field(default_factory=IntakeConfig)
+    critique: CritiqueConfig = Field(default_factory=CritiqueConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
 
     @classmethod

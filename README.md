@@ -19,8 +19,13 @@ config/config.yaml ─► Settings ─► Container (DI) ─► FastAPI
    registry to a     ├─── Reranker    (fastembed…)  ─┤  providers/base.py —
    concrete adapter  └─── VectorStore (qdrant)      ─┘  never the concrete class
 
-Pipeline:  brief ─► [enrich + retrieve] ─► LDD ─► (validate) ─► artifacts
+Pipeline:  input ─► [intake] ─► brief ─► [enrich + retrieve] ─► draft LDD
+                 ─► [critique + revise] ─► validated LDD ─► artifacts
 ```
+
+Every stage — intake, critic, reranker, renderer — is a port resolved by config,
+so a strategy swap (`critique.provider: structural → llm`, `intake.provider:
+llm → heuristic`) is a one-line change, never a code edit.
 
 | Concern       | Default        | Swap to (config `provider:`)      |
 |---------------|----------------|-----------------------------------|
@@ -111,6 +116,48 @@ which brief fields become metadata filters are all set in the `grounding:` confi
 block. With an empty corpus, retrieval degrades gracefully and generation still
 works — just less grounded.
 
+## Quality: intake, critique → revise, and the eval gate
+
+`POST /lessons/generate` runs the full pipeline: **intake → enrichment →
+critique & revise**. Each stage is a config-swappable port.
+
+**Intake (US-3).** Paste a rough existing plan and the tool *enriches* it instead
+of starting over — intake pulls out grade/subject/duration/topic and hands the
+draft to enrichment:
+
+```bash
+curl -s http://localhost:8000/lessons/generate -H 'content-type: application/json' \
+  -d '{"existing_plan":"Class 7 Science, 40 min. Topic: Sound. We read the book and copy notes."}'
+
+curl -s http://localhost:8000/lessons/intake -H 'content-type: application/json' \
+  -d '{"existing_plan":"..."}' | jq .   # preview what intake parsed, before generating
+```
+
+**Critique → revise.** A `Critic` scores the draft LDD on the anti-generic rubric
+(engagement, alignment, misconception coverage, specificity, local relevance); the
+reviser rewrites the weak sections until the weighted score clears `critique.threshold`
+or `critique.max_iterations` runs out, then stamps the scores into `quality`. The
+default critic is **`structural`** — deterministic, no LLM, no cost; switch to
+`llm` or `composite` for an LLM judge. Score any LDD directly:
+
+```bash
+curl -s http://localhost:8000/lessons/critique -H 'content-type: application/json' \
+  --data-binary @ldd.json | jq '{overall, scores}'
+```
+
+**Eval harness (quality as a number).** A fixed golden set is scored (structural +
+rubric) and turned into a pass/fail gate — the acceptance gate for a prompt/model
+change, run in CI:
+
+```bash
+python -m lessonforge.eval                    # deterministic gate over authored exemplars
+RUN_INTEGRATION=1 python -m lessonforge.eval --generate   # live: golden topics → pipeline → score
+```
+
+**Per-stage models.** Intake uses a cheap fast model, enrichment/critique the
+strong reasoning model — add an optional `llm_fast:` block to `config/config.yaml`
+(same shape as `llm:`); omit it to reuse `llm` everywhere.
+
 ## Full stack in Docker
 
 ```bash
@@ -146,9 +193,12 @@ RUN_INTEGRATION=1 pytest     # + live contract tests (needs Qdrant + Ollama)
 ```
 
 - **Unit** — config precedence, registry swapping, LDD guardrails, retriever,
-  generation, API. All run in-process via in-memory fakes.
+  generation, intake, critique, revise loop, pipeline, eval harness, API. All run
+  in-process via in-memory fakes (148 tests; 93% coverage).
 - **Contract** (`tests/contract/`) — verify a real adapter honors its interface;
   gated behind `RUN_INTEGRATION=1`.
+- **Eval gate** — `python -m lessonforge.eval` scores the golden set and exits
+  non-zero below threshold; runs in CI (`.github/workflows/ci.yml`) after lint + unit.
 
 ## Layout
 
@@ -169,7 +219,15 @@ src/lessonforge/
     ingest.py                   load→chunk→embed→upsert + ingest CLI
     retriever.py                embed → search → rerank
     grounding.py                multi-collection retrieval + provenance
-  services/generation.py        brief → validated LDD (enrichment stage)
+  domain/rubric.py              the critique rubric (scores) as data
+  services/
+    intake.py                   raw request / pasted plan → NormalizedBrief (US-3)
+    generation.py               brief → draft LDD (enrichment stage)
+    critique.py                 Critic port + structural/llm/composite/noop scorers
+    revise.py                   critique → rewrite weak sections → validated LDD
+    pipeline.py                 composes intake → enrich → critique/revise
+    registry.py                 stage provider string → intake/critic class
+  eval/                         golden-set scoring + `python -m lessonforge.eval` gate
   export/
     base.py                     the Renderer port + ExportOptions
     registry.py                 (artifact, format) → renderer class
@@ -192,6 +250,10 @@ tests/golden/                   byte-stable renderer fixtures
   worksheet + answer key, quiz, one-click zip. Devanagari de-risked; timing
   surfaced. Renderers sit behind a `(kind, format)` registry, swappable from
   config just like the providers.
+- **M4 (backend core)** — quality & editing pipeline: intake (US-3 paste-a-plan),
+  critique→revise loop on the anti-generic rubric, eval harness + CI gate, and
+  per-stage model selection. Every stage a config-swappable port. *(Web UI +
+  TeacherProfile deferred to M4.5.)*
 
-Next per the roadmap (`roadmap.md`): source/license the real CDC corpus to replace
-the seed, and the M4 critique→revise loop.
+Next per the roadmap (`ROADMAP.md`): source/license the real CDC corpus to replace
+the seed, and the M4.5 web edit-before-export UI + `TeacherProfile`.

@@ -22,6 +22,14 @@ llm:
   timeout_s: 180
   max_retries: 2
 
+# Optional per-stage model (SRD §07): a cheap fast model for intake/extraction,
+# while `llm` above is the strong reasoning model for enrichment + critique.
+# Omit this block to reuse `llm` everywhere. Same fields as `llm`.
+# llm_fast:
+#   provider: ollama
+#   model: gemma4:4b-cloud
+#   base_url: ${OLLAMA_BASE_URL:-http://localhost:11434}
+
 embedding:
   provider: fastembed                   # ← swap: fastembed | ...
   model: BAAI/bge-small-en-v1.5
@@ -49,6 +57,20 @@ grounding:
   collections: [curriculum, pedagogical, exemplar, local_context]
   per_collection_top_n: 3
   filter_fields: [grade, subject]       # grade/subject filter on search (lenient fallback if empty)
+
+intake:
+  # Turns a raw request (or a pasted existing plan, US-3) into a NormalizedBrief.
+  provider: llm                         # ← swap: llm | heuristic (deterministic, no model)
+
+critique:
+  # The critique→revise loop. The critic scores the draft LDD on the anti-generic
+  # rubric; the reviser rewrites weak sections until the weighted overall clears
+  # `threshold` or `max_iterations` is hit. `structural` is deterministic + free.
+  provider: structural                  # ← swap: structural | llm | composite | noop
+  threshold: 0.7
+  max_iterations: 1
+  # weights: { engagement: 1.0, alignment: 1.0, misconception_coverage: 1.0,
+  #            specificity: 1.0, local_relevance: 1.0 }   # empty = equal weighting
 
 export:
   # Which output format each teaching artifact defaults to. The registry maps

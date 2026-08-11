@@ -226,6 +226,39 @@ def export_ldd(export_ldd_dict):
 
 
 @pytest.fixture
+def weak_ldd_dict() -> dict[str, Any]:
+    """A structurally VALID but pedagogically generic LDD: bland hook, no
+    misconceptions, no local context, thin activities, no homework. Passes the
+    LDD guardrails yet scores low on the rubric — the reviser's raw material."""
+    return {
+        "topic": "Plants",
+        "curriculum_ref": {"board": "CDC", "grade": 6, "subject": "Science"},
+        "duration_min": 45,
+        "objectives": [
+            {"id": "O1", "statement": "Learn about plants today", "bloom": "remember"}
+        ],
+        "misconceptions": [],
+        "engagement_hook": {"prompt": "Let us learn about plants.", "kind": "question"},
+        "local_context": [],
+        "phases": [
+            {"name_en": "Engage", "teacher_activities": ["Explain"],
+             "student_activities": ["Listen"], "minutes": 45, "objective_ids": ["O1"]}
+        ],
+        "materials": [],
+        "formative_checks": [
+            {"id": "Q1", "type": "short_answer", "prompt": "What is a plant?",
+             "answer": "a living thing", "objective_ids": ["O1"]}
+        ],
+    }
+
+
+@pytest.fixture
+def weak_ldd(weak_ldd_dict):
+    from lessonforge.domain.ldd import LessonDesignDocument
+    return LessonDesignDocument.model_validate(weak_ldd_dict)
+
+
+@pytest.fixture
 def base_settings_dict() -> dict[str, Any]:
     return {
         "llm": {"provider": "ollama", "model": "gemma4:31b-cloud"},

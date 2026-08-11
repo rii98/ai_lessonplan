@@ -184,3 +184,17 @@ class NormalizedBrief(BaseModel):
     language: Literal["en", "ne", "en-ne"] = "en-ne"
     framework: Literal["5E", "gradual_release", "inquiry"] = "5E"
     existing_plan: str | None = None
+
+
+class IntakeRequest(BaseModel):
+    """Raw input to the intake stage — every field optional so a teacher can
+    paste an existing plan and let intake extract the rest (US-3). Explicit
+    fields always win over anything parsed from the pasted plan."""
+
+    topic: str | None = None
+    grade: int | None = None
+    subject: str | None = None
+    duration_min: Literal[30, 45, 60] | None = None
+    language: Literal["en", "ne", "en-ne"] | None = None
+    framework: Literal["5E", "gradual_release", "inquiry"] | None = None
+    existing_plan: str | None = None

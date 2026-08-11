@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 lessonforge-ingest = "lessonforge.rag.ingest:main"
+lessonforge-eval = "lessonforge.eval.__main__:main"
 
 [project.optional-dependencies]
 dev = [

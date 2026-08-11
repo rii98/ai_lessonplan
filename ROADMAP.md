@@ -4,7 +4,7 @@ Living status doc. Update it as work lands. Companion to [`SRD.md`](SRD.md)
 (the design) and [`README.md`](README.md) (how to run).
 
 - **Legend:** ✅ done & verified · 🟡 in progress · ⬜ not started
-- **Last updated:** 2026-08-11
+- **Last updated:** 2026-08-11 (M4 backend core)
 
 ---
 
@@ -29,6 +29,19 @@ four collections (curriculum, pedagogical, exemplar, local_context) from an auth
 seed corpus; enrichment retrieves across them with grade/subject filters and stamps
 **authoritative provenance** into the LDD. Loaders and grounding strategy are both
 config-swappable. **101 unit tests + 2 live contract tests green; ruff clean.**
+
+**Milestone M4 (backend core) — quality & editing pipeline — ✅ done & verified.**
+The pipeline is now `intake → enrich → critique & revise`, each stage a config-
+swappable port. A `Critic` scores the draft LDD on the anti-generic rubric
+(engagement, alignment, misconception coverage, specificity, local relevance);
+the reviser rewrites weak sections until the weighted score clears the threshold
+or the budget hits, then stamps the scores into `quality`. Intake normalizes a
+raw request — or a **pasted existing plan (US-3)** — into a brief and lets
+enrichment *enrich* it rather than replace it. An **eval harness** scores a fixed
+golden set (structural + rubric) and gates CI on it. Per-stage model selection
+(fast model for intake, reasoning model for enrichment/critique) is wired.
+**148 unit tests + 2 live contract tests green; ruff clean; 93% total coverage
+(97–100% on the new M4 modules).** *(Web UI + TeacherProfile deferred — see below.)*
 
 ---
 
@@ -98,10 +111,17 @@ config-swappable. **101 unit tests + 2 live contract tests green; ruff clean.**
   system; `export:` config block swaps a format in one line (or `LF__EXPORT__…` env)
 
 ### M4 — Quality & editing
-- ⬜ Critique → revise loop (rubric scoring, rewrite weak sections)
-- ⬜ Intake stage: parse pasted existing plan → NormalizedBrief (US-3)
-- ⬜ Eval harness: ~30-topic golden set, rubric + structural scoring in CI
-- ⬜ Web UI for edit-before-export; `TeacherProfile` preferences
+- ✅ Critique → revise loop: `Critic` port (`structural` | `llm` | `composite` | `noop`)
+  scores the rubric; reviser rewrites weak sections to threshold/budget, stamps scores.
+  Structural critic is deterministic (no LLM) — the default and the test seam.
+- ✅ Intake stage: `Intake` port (`llm` | `heuristic`) parses a pasted existing plan →
+  `NormalizedBrief` (US-3); enrichment enriches the draft rather than replacing it.
+- ✅ Eval harness: ~30-topic golden set (`corpus/golden/`), structural + rubric scoring,
+  `python -m lessonforge.eval` gate wired into CI (GitHub Actions).
+- ✅ Per-stage model selection: optional `llm_fast` (cheap model for intake) vs `llm`
+  (reasoning model for enrichment/critique) — one config block, no code change.
+- ✅ CI workflow: ruff + unit tests + eval gate on every push/PR.
+- ⬜ Web UI for edit-before-export; `TeacherProfile` preferences *(deferred to M4.5)*
 
 ### M5 — School-ready
 - ⬜ Data model & multi-tenancy (`org_id`/`owner_id` scoping)
@@ -112,7 +132,7 @@ config-swappable. **101 unit tests + 2 live contract tests green; ruff clean.**
 - ⬜ Streaming progress per pipeline stage
 - ⬜ Caching (retrieval + intermediate LDDs), token budgets
 - ⬜ Additional LLM adapters (prove the swap: e.g. OpenAI-compatible)
-- ⬜ CI workflow (lint + unit; integration on demand)
+- ✅ CI workflow (ruff + unit + eval gate; integration on demand via `RUN_INTEGRATION`)
 - ⬜ Persistence for generated lessons
 
 ---
