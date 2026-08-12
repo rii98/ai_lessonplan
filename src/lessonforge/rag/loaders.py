@@ -18,9 +18,45 @@ import json
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
 from .documents import Document
+
+# Recognized JSONL record fields (shared by the file loader and the in-memory
+# record path the corpus UI posts through). ``metadata`` fields may sit at the
+# top level or inside a nested ``metadata`` object; both are merged.
+_META_FIELDS: tuple[str, ...] = ("grade", "subject", "standard", "language", "topic")
+_KNOWN: set[str] = {"id", "text", "source", "collection", "metadata", *_META_FIELDS}
+
+
+def document_from_record(
+    obj: Any, *, source_default: str, id_default: str
+) -> Document:
+    """Convert one JSONL-style record dict into a :class:`Document`.
+
+    Shared by :class:`JsonlLoader` (reading a file) and the corpus UI endpoint
+    (records posted in-memory), so both apply identical field/metadata rules and
+    the same ``text`` validation. Unrecognized top-level scalars are preserved as
+    metadata (forward-compatible)."""
+    if not isinstance(obj, dict):
+        # ValueError (not TypeError) on purpose: a non-object line is bad *input*,
+        # so callers map it to a file-position error / HTTP 422, not a crash.
+        raise ValueError("record must be a JSON object")  # noqa: TRY004
+    if "text" not in obj or not str(obj["text"]).strip():
+        raise ValueError("record missing non-empty 'text'")
+    metadata: dict[str, Any] = dict(obj.get("metadata") or {})
+    for f in _META_FIELDS:
+        if f in obj:
+            metadata[f] = obj[f]
+    if "collection" in obj:
+        metadata.setdefault("collection", obj["collection"])
+    for k, v in obj.items():
+        if k not in _KNOWN and not isinstance(v, (dict, list)):
+            metadata[k] = v
+    source = obj.get("source") or source_default
+    doc_id = str(obj.get("id") or id_default)
+    return Document(id=doc_id, text=str(obj["text"]).strip(), source=source, metadata=metadata)
+
 
 LOADER_REGISTRY: dict[str, type[Loader]] = {}
 
@@ -66,9 +102,6 @@ class JsonlLoader(Loader):
     default sensibly so a minimal ``{"text": ...}`` line still loads.
     """
 
-    _META_FIELDS: ClassVar[tuple[str, ...]] = ("grade", "subject", "standard", "language", "topic")
-    _KNOWN: ClassVar[set[str]] = {"id", "text", "source", "collection", "metadata", *_META_FIELDS}
-
     def load(self, path: str | Path) -> Iterator[Document]:
         p = Path(path)
         with p.open(encoding="utf-8") as fh:
@@ -80,24 +113,12 @@ class JsonlLoader(Loader):
                     obj: dict[str, Any] = json.loads(line)
                 except json.JSONDecodeError as exc:
                     raise ValueError(f"{p}:{lineno}: invalid JSON: {exc}") from exc
-                if "text" not in obj or not str(obj["text"]).strip():
-                    raise ValueError(f"{p}:{lineno}: record missing non-empty 'text'")
-                yield self._to_doc(obj, p, lineno)
-
-    def _to_doc(self, obj: dict[str, Any], p: Path, lineno: int) -> Document:
-        metadata: dict[str, Any] = dict(obj.get("metadata") or {})
-        for f in self._META_FIELDS:
-            if f in obj:
-                metadata[f] = obj[f]
-        if "collection" in obj:
-            metadata.setdefault("collection", obj["collection"])
-        # keep any unrecognized top-level scalars as metadata too (forward-compatible)
-        for k, v in obj.items():
-            if k not in self._KNOWN and not isinstance(v, (dict, list)):
-                metadata[k] = v
-        source = obj.get("source") or f"{p.name}:{lineno}"
-        doc_id = str(obj.get("id") or f"{p.stem}:{lineno}")
-        return Document(id=doc_id, text=str(obj["text"]).strip(), source=source, metadata=metadata)
+                try:
+                    yield document_from_record(
+                        obj, source_default=f"{p.name}:{lineno}", id_default=f"{p.stem}:{lineno}"
+                    )
+                except ValueError as exc:
+                    raise ValueError(f"{p}:{lineno}: {exc}") from exc
 
 
 @register_loader("markdown")

@@ -28,6 +28,34 @@ class Collection(str, Enum):
     exemplar = "exemplar"            # hand-picked reference lessons (few-shot)
     local_context = "local_context"  # paddy field, goat, monsoon… local hooks
 
+    @property
+    def description(self) -> str:
+        """One-line, curator-facing explanation of what belongs here — surfaced
+        by the corpus-management UI so a non-technical author picks the right
+        collection without reading the SRD."""
+        return _COLLECTION_DESCRIPTIONS[self]
+
+
+_COLLECTION_DESCRIPTIONS: dict[Collection, str] = {
+    Collection.curriculum: (
+        "CDC/NEB standards and learning outcomes — what students must learn at "
+        "each grade. Add official curriculum statements and objectives here."
+    ),
+    Collection.pedagogical: (
+        "Teaching know-how — common misconceptions, 5E strategies, and concrete "
+        "teaching moves. This is the moat: the richer it is, the less generic "
+        "every generated lesson becomes."
+    ),
+    Collection.exemplar: (
+        "Hand-picked reference lessons used as few-shot examples of what a great "
+        "lesson looks like. Add whole strong lessons, not fragments."
+    ),
+    Collection.local_context: (
+        "Local hooks that make lessons concrete for Nepali classrooms — paddy "
+        "fields, goats, the monsoon, local festivals and places."
+    ),
+}
+
 
 # Payload keys the vector-store record carries. `text` is what gets reranked;
 # the rest are filterable metadata + provenance.

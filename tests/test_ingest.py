@@ -32,6 +32,28 @@ def test_ingest_documents_embeds_and_upserts(fake_embedder, fake_store):
     assert len(recs[0].vector) == fake_embedder.dim
 
 
+def test_ingest_records_in_memory(fake_embedder, fake_store):
+    """The corpus-UI path: dict records → Documents → chunks, same rules as a file."""
+    ing = _ingestor(fake_embedder, fake_store)
+    report = ing.ingest_records(
+        Collection.pedagogical,
+        [
+            {"text": "soil is abiotic", "grade": 6, "subject": "Science", "source": "bank"},
+            {"text": "a local goat", "collection": "local_context"},  # per-record override
+        ],
+    )
+    assert report.documents == 2
+    peda = fake_store.data["pedagogical"]
+    assert len(peda) == 1 and peda[0].payload["grade"] == 6 and peda[0].payload["source"] == "bank"
+    assert fake_store.data["local_context"], "per-record collection override should route here"
+
+
+def test_ingest_records_rejects_missing_text(fake_embedder, fake_store):
+    ing = _ingestor(fake_embedder, fake_store)
+    with pytest.raises(ValueError, match="text"):
+        ing.ingest_records(Collection.curriculum, [{"grade": 6}])
+
+
 def test_ingest_is_idempotent(fake_embedder, fake_store):
     ing = _ingestor(fake_embedder, fake_store)
     docs = [Document(id="d1", text="stable content", source="s", metadata={"grade": 6})]

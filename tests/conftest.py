@@ -20,6 +20,7 @@ from lessonforge.providers.base import (
     Reranker,
     RerankResult,
     ScoredRecord,
+    StoredRecord,
     VectorRecord,
     VectorStore,
 )
@@ -72,6 +73,25 @@ class FakeVectorStore(VectorStore):
         scored = [ScoredRecord(id=r.id, score=1.0 - i * 0.01, payload=r.payload)
                   for i, r in enumerate(recs)]
         return scored[:top_k]
+
+    def count(self, name: str) -> int:
+        return len(self.data.get(name, []))
+
+    def scroll(self, name, *, limit, offset=None):
+        recs = self.data.get(name, [])
+        start = int(offset) if offset else 0
+        page = recs[start:start + limit]
+        out = [StoredRecord(id=r.id, payload=r.payload) for r in page]
+        nxt = str(start + limit) if start + limit < len(recs) else None
+        return out, nxt
+
+    def delete(self, name: str, ids: list[str]) -> int:
+        recs = self.data.get(name)
+        if not recs:
+            return 0
+        drop = set(ids)
+        self.data[name] = [r for r in recs if r.id not in drop]
+        return len(recs) - len(self.data[name])
 
     def health(self) -> bool:
         return True

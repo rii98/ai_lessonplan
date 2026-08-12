@@ -109,6 +109,29 @@ python -m lessonforge.rag.ingest --source lessonplan_reference/lp1.md \
     --collection exemplar --format markdown --grade 6 --subject Science
 ```
 
+**Knowledge-base UI (`/corpus`).** The corpus is the moat, and it shouldn't need a
+shell to grow. A self-contained page — linked from the editor header — lets a
+curator **add** records (a guided single-record form, or bulk JSONL paste/upload),
+**browse** what's stored per collection, and **delete** bad records. Ingestion is
+idempotent (records key on their content hash), so re-submitting the same text
+updates in place rather than duplicating. It drives four endpoints:
+
+```bash
+# what's in each collection (name + curator description + live count)
+curl -s http://localhost:8000/corpus/overview | jq .
+
+# add/update records (same rules as a .jsonl file; a record may set its own collection)
+curl -s http://localhost:8000/corpus/ingest -H 'content-type: application/json' -d '{
+  "collection": "pedagogical",
+  "records": [{"text": "Soil is abiotic, though it teems with living things.", "grade": 6, "subject": "Science"}]
+}' | jq .
+
+# browse (paginated) and delete by id
+curl -s "http://localhost:8000/corpus/collections/pedagogical/records?limit=25" | jq .
+curl -s http://localhost:8000/corpus/collections/pedagogical/delete \
+  -H 'content-type: application/json' -d '{"ids": ["<record-id>"]}' | jq .
+```
+
 The shipped corpus under `corpus/seed/` is a small **authored seed — not official
 CDC/NEB text** (see [`corpus/README.md`](corpus/README.md)). Loaders are pluggable
 (`jsonl`, `markdown` today; a `pdf`/OCR loader is one `@register_loader` class
@@ -239,8 +262,9 @@ RUN_INTEGRATION=1 pytest     # + live contract tests (needs Qdrant + Ollama)
 
 - **Unit** — config precedence, registry swapping, LDD guardrails, retriever,
   generation, intake, critique, revise loop, pipeline, eval harness, teacher
-  profile + store, edit/validate + profile API, and the served editor page. All
-  run in-process via in-memory fakes (172 tests; 93% coverage).
+  profile + store, edit/validate + profile API, the served editor page, and the
+  corpus manager (ingest records → browse → delete). All run in-process via
+  in-memory fakes (179 tests).
 - **Contract** (`tests/contract/`) — verify a real adapter honors its interface;
   gated behind `RUN_INTEGRATION=1`.
 - **Eval gate** — `python -m lessonforge.eval` scores the golden set and exits
@@ -283,6 +307,7 @@ src/lessonforge/
     service.py                  config-driven compile + one-click zip bundle
   api/                          FastAPI app + DI
     static/index.html           the self-contained edit-before-export web editor
+    static/corpus.html          the self-contained knowledge-base manager (/corpus)
 corpus/seed/                    authored seed grounding corpus (JSONL)
 tests/                          unit + contract
 tests/golden/                   byte-stable renderer fixtures
@@ -307,6 +332,11 @@ tests/golden/                   byte-stable renderer fixtures
   `POST /lessons/validate` guardrail check, and stored teacher preferences
   (defaults + voice + local anchors) injected into every build behind a pluggable
   `ProfileStore` (`memory` | `file`). Browser-verified end-to-end.
+- **M4.6 (knowledge-base manager)** — a self-contained `/corpus` page to grow and
+  curate the grounding corpus without the CLI: add via a guided form or bulk JSONL,
+  browse records per collection, and delete bad ones. Adds read/curation methods
+  (`count`, `scroll`, `delete`) to the `VectorStore` port and a `/corpus/*` API;
+  ingestion stays idempotent, so add-vs-update needs no new logic.
 
 Next per the roadmap (`ROADMAP.md`): source/license the real CDC corpus to replace
 the seed, then M5 (school-ready: multi-tenancy + personal/shared corpora).

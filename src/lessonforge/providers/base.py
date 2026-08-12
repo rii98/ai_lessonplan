@@ -84,6 +84,14 @@ class ScoredRecord:
     payload: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(slots=True)
+class StoredRecord:
+    """A point read back from the store for browsing/curation (no score)."""
+
+    id: str
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
 class VectorStore(ABC):
     @abstractmethod
     def ensure_collection(self, name: str, dim: int) -> None:
@@ -102,6 +110,25 @@ class VectorStore(ABC):
         where: dict[str, Any] | None = None,
     ) -> list[ScoredRecord]:
         ...
+
+    # ── read-only browse / curation (admin surfaces, never the hot path) ──────
+    @abstractmethod
+    def count(self, name: str) -> int:
+        """Number of points in ``name``; ``0`` if the collection does not exist."""
+
+    @abstractmethod
+    def scroll(
+        self, name: str, *, limit: int, offset: str | None = None
+    ) -> tuple[list[StoredRecord], str | None]:
+        """Page through a collection. Returns ``(records, next_offset)``; pass
+        ``next_offset`` back to fetch the following page, ``None`` when exhausted.
+        ``offset`` is an opaque token (not a row number). Empty for a missing
+        collection."""
+
+    @abstractmethod
+    def delete(self, name: str, ids: list[str]) -> int:
+        """Delete points by their (source) id. Returns how many ids were
+        requested; a no-op for a missing collection."""
 
     @abstractmethod
     def health(self) -> bool:

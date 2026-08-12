@@ -4,7 +4,7 @@ Living status doc. Update it as work lands. Companion to [`SRD.md`](SRD.md)
 (the design) and [`README.md`](README.md) (how to run).
 
 - **Legend:** ✅ done & verified · 🟡 in progress · ⬜ not started
-- **Last updated:** 2026-08-11 (M4.5 edit-before-export UI + TeacherProfile)
+- **Last updated:** 2026-08-12 (M4.6 knowledge-base manager UI)
 
 ---
 
@@ -56,6 +56,18 @@ generation stay profile-agnostic. Preferences persist behind a pluggable
 tests + 2 live contract tests green; ruff clean; eval gate PASS; 99% coverage on
 the new modules. Browser-verified end-to-end (render → generate → edit → validate
 → DOCX download).**
+
+**Milestone M4.6 — knowledge-base manager UI — ✅ done.** The grounding corpus is
+the moat, but growing it required the CLI. A single self-contained page at
+`/corpus` (vanilla JS, no build; linked from the editor header) now lets a curator
+**add** records — a guided single-record form *or* bulk JSONL paste/upload —
+**browse** what's stored per collection, and **delete** bad records. The
+`VectorStore` port gained three read/curation methods (`count`, `scroll`,
+`delete`, implemented on Qdrant + the fake); a `/corpus/*` API exposes overview,
+ingest, browse, and delete. Record→`Document` conversion is shared with the file
+loader (identical field rules), and ingestion stays **idempotent** — re-submitting
+the same text updates in place — so add-vs-update needs no new logic. **179 unit
+tests + 2 live contract tests green; ruff clean.**
 
 ---
 
@@ -154,6 +166,21 @@ the new modules. Browser-verified end-to-end (render → generate → edit → v
 - ✅ `GET`/`PUT /profile` endpoints; `/generate` + `/intake` load & apply the profile.
 - ✅ 24 new tests (`test_profile.py`, `test_profile_api.py`); 172 total green, ruff
   clean, eval gate PASS, 99% coverage on new modules; browser-verified end-to-end.
+
+### M4.6 — Knowledge-base manager UI — ✅ done
+- ✅ Self-contained page at `GET /corpus` (`api/static/corpus.html`): guided
+  single-record form **or** bulk JSONL paste/upload to add/update; browse records
+  per collection; two-click inline delete. Vanilla JS, no build; help notes explain
+  the four collections, JSONL, and add-vs-update. Linked from the editor header.
+- ✅ `VectorStore` port gained read/curation methods `count`, `scroll` (opaque-token
+  pagination), `delete` — implemented on Qdrant + the in-memory fake.
+- ✅ `Ingestor.ingest_records(...)` + shared `document_from_record(...)`: the UI's
+  in-memory records apply **identical** field/metadata/`text` rules as a `.jsonl`
+  file and stay idempotent (re-submit = update in place).
+- ✅ `/corpus/*` API: `overview` (name + curator description + live count),
+  `ingest`, `records` (paginated browse), `delete`; bad records → HTTP 422.
+- ✅ Collections carry a curator-facing `description`; `Container` wires an `Ingestor`.
+- ✅ 7 new tests (ingest-records + corpus API roundtrip); 179 total green, ruff clean.
 
 ### M5 — School-ready
 - ⬜ Data model & multi-tenancy (`org_id`/`owner_id` scoping)

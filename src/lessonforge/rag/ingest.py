@@ -26,7 +26,7 @@ from typing import Any
 from ..providers.base import Embedder, VectorRecord, VectorStore
 from .chunkers import Chunker, ParagraphChunker
 from .documents import Chunk, Collection, Document
-from .loaders import build_loader
+from .loaders import build_loader, document_from_record
 
 
 @dataclass(slots=True)
@@ -103,6 +103,27 @@ class Ingestor:
         if extra_metadata:
             for d in docs:
                 d.metadata = {**extra_metadata, **d.metadata}
+        return self.ingest_documents(collection, docs)
+
+    def ingest_records(
+        self,
+        collection: Collection,
+        records: list[dict[str, Any]],
+        *,
+        source_label: str = "upload",
+    ) -> IngestReport:
+        """Ingest JSONL-style record dicts posted in-memory (the corpus UI path).
+
+        Reuses :func:`document_from_record`, so records validate and pick up
+        metadata exactly as if they had been read from a ``.jsonl`` file — and
+        stay idempotent (re-submitting the same content updates in place).
+        A record may set its own ``collection`` to override ``collection``."""
+        docs = [
+            document_from_record(
+                r, source_default=f"{source_label}:{i}", id_default=f"{source_label}:{i}"
+            )
+            for i, r in enumerate(records, 1)
+        ]
         return self.ingest_documents(collection, docs)
 
 

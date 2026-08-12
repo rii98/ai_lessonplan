@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LessonForge — knowledge base</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1a2230; --muted: #667085;
+    --line: #e3e7ee; --brand: #2f6f4f; --brand-ink: #ffffff; --accent: #1f6feb;
+    --warn: #b42318; --warn-bg: #fef3f2; --ok: #05803e; --ok-bg: #ecfdf3;
+    --chip: #eef2f7; --radius: 10px; --shadow: 0 1px 2px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1a1f27; --ink: #e6eaf0; --muted: #9aa4b2;
+      --line: #2a313c; --brand: #4c9e75; --brand-ink: #08130d; --accent: #6ea8fe;
+      --warn: #ff9a8f; --warn-bg: #2a1512; --ok: #6ee7a8; --ok-bg: #0f2318;
+      --chip: #232a34; --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Devanagari", sans-serif;
+  }
+  header.top {
+    padding: 18px 20px; border-bottom: 1px solid var(--line);
+    background: var(--panel); position: sticky; top: 0; z-index: 5;
+    display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  header.top h1 { margin: 0; font-size: 19px; letter-spacing: -.01em; }
+  header.top p { margin: 3px 0 0; color: var(--muted); font-size: 13px; }
+  header.top a { color: var(--accent); font-size: 13px; text-decoration: none; font-weight: 600; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 20px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); margin-bottom: 18px; overflow: hidden;
+  }
+  .card > h2 {
+    margin: 0; padding: 14px 16px; font-size: 15px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card .body { padding: 16px; }
+  details.card > summary {
+    list-style: none; cursor: pointer; padding: 14px 16px; font-weight: 600; font-size: 15px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::before { content: "▸"; color: var(--muted); }
+  details.card[open] > summary::before { content: "▾"; }
+  details.card[open] > summary { border-bottom: 1px solid var(--line); }
+  label.f { display: block; margin-bottom: 12px; }
+  label.f > span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  input, select, textarea {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--bg); color: var(--ink); font: inherit;
+  }
+  textarea { resize: vertical; min-height: 64px; }
+  textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; min-height: 150px; }
+  input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0 14px; }
+  button {
+    font: inherit; font-weight: 600; padding: 9px 15px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); }
+  button.ghost { background: transparent; }
+  button.small { padding: 4px 9px; font-size: 12px; }
+  button.danger { color: var(--warn); border-color: var(--warn); background: transparent; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .sub { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+  .status { font-size: 13px; padding: 8px 0; min-height: 20px; }
+  .status.err { color: var(--warn); }
+  .banner { border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-bottom: 12px; }
+  .banner.err { background: var(--warn-bg); color: var(--warn); }
+  .banner.ok { background: var(--ok-bg); color: var(--ok); }
+  .banner ul { margin: 6px 0 0; padding-left: 18px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; background: var(--chip);
+    border-radius: 999px; padding: 3px 9px; font-size: 12px; margin: 0 5px 5px 0;
+  }
+  code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  .hidden { display: none !important; }
+  .spinner {
+    width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent);
+    border-radius: 50%; display: inline-block; animation: spin .7s linear infinite; vertical-align: -2px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* collection overview cards */
+  .kb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+  .kb {
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: var(--bg);
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .kb .kb-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .kb .kb-name { font-weight: 700; font-size: 14px; }
+  .kb .kb-count { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--brand); }
+  .kb .kb-desc { font-size: 12px; color: var(--muted); margin: 0; flex: 1; }
+
+  /* tabs */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: -4px 0 14px; }
+  .tabs button {
+    border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none;
+    color: var(--muted); padding: 8px 12px;
+  }
+  .tabs button.active { color: var(--ink); border-bottom-color: var(--brand); }
+
+  /* record rows */
+  .rec {
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; background: var(--bg);
+  }
+  .rec .rec-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+  .rec .rec-text { margin: 0; white-space: pre-wrap; word-break: break-word; }
+  .rec .rec-src { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+  .rec .rec-meta { margin-top: 6px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>📚 Knowledge base</h1>
+    <p>The grounding corpus behind every lesson. Add, review, and curate what the AI draws on.</p>
+  </div>
+  <a href="/">← Lesson editor</a>
+</header>
+
+<div class="wrap">
+
+  <!-- ── What is this? ─────────────────────────────────────────────────── -->
+  <details class="card" id="helpCard">
+    <summary>What is this, and how do I use it?</summary>
+    <div class="body">
+      <p class="sub">
+        LessonForge doesn't invent lessons from thin air — it <strong>grounds</strong> them in a
+        knowledge base you control. The better this corpus, the less generic every generated lesson
+        becomes. This page lets you grow and clean that corpus without touching the command line.
+      </p>
+      <h3 style="margin:14px 0 6px;font-size:13px;">The four collections</h3>
+      <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--muted);line-height:1.7;">
+        <li><strong>curriculum</strong> — CDC/NEB standards &amp; learning outcomes. What students must learn.</li>
+        <li><strong>pedagogical</strong> — misconceptions, 5E strategies, teaching moves. <em>The moat.</em></li>
+        <li><strong>exemplar</strong> — whole strong reference lessons used as examples.</li>
+        <li><strong>local_context</strong> — local hooks: paddy fields, goats, the monsoon, festivals.</li>
+      </ul>
+      <h3 style="margin:14px 0 6px;font-size:13px;">Two ways to add</h3>
+      <p class="sub" style="margin-bottom:6px;">
+        <strong>Guided</strong> — fill one form to add a single record. No JSON needed; start here.<br />
+        <strong>Bulk (JSONL)</strong> — paste or upload many records at once. JSONL is just
+        <em>one JSON object per line</em>, each with at least a <code>"text"</code> field, e.g.
+      </p>
+      <p><code>{"text": "Students often think clouds are alive because they move.", "grade": 6, "subject": "Science"}</code></p>
+      <p class="sub" style="margin-top:10px;">
+        <strong>Add vs. update:</strong> records are keyed by their content. Submitting the same text
+        again updates it in place — it never creates a duplicate. To fix a record, delete it below and
+        re-add the corrected version (or just re-add if only the metadata differs and the text is new).
+      </p>
+    </div>
+  </details>
+
+  <!-- ── Knowledge base overview ───────────────────────────────────────── -->
+  <div class="card">
+    <h2>What's in the knowledge base <span class="spinner hidden" id="ovSpin"></span></h2>
+    <div class="body">
+      <div id="ovBanner"></div>
+      <div class="kb-grid" id="kbGrid"></div>
+    </div>
+  </div>
+
+  <!-- ── Add content ───────────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>Add or update content</h2>
+    <div class="body">
+      <div class="tabs">
+        <button class="active" id="tabGuidedBtn" data-tab="guided">Guided (one record)</button>
+        <button id="tabBulkBtn" data-tab="bulk">Bulk (JSONL)</button>
+      </div>
+      <div id="addBanner"></div>
+
+      <!-- guided -->
+      <div id="tabGuided">
+        <div class="grid">
+          <label class="f"><span>Collection *</span><select id="g_collection"></select></label>
+          <label class="f"><span>Grade</span><input id="g_grade" type="number" min="1" max="12" placeholder="e.g. 6" /></label>
+          <label class="f"><span>Subject</span><input id="g_subject" placeholder="e.g. Science" /></label>
+          <label class="f"><span>Language</span>
+            <select id="g_language"><option value="">—</option><option value="en">en</option><option value="ne">ne</option><option value="en-ne">en-ne</option></select>
+          </label>
+          <label class="f"><span>Topic</span><input id="g_topic" placeholder="e.g. Components of Environment" /></label>
+          <label class="f"><span>Standard / code</span><input id="g_standard" placeholder="e.g. SC6-ENV-1" /></label>
+        </div>
+        <label class="f"><span>Text * — the actual content the AI will ground on</span>
+          <textarea id="g_text" placeholder="e.g. A common misconception is that soil is a living (biotic) component; it is abiotic, though it teems with living things."></textarea>
+        </label>
+        <label class="f"><span>Source label (provenance shown to teachers)</span>
+          <input id="g_source" placeholder="e.g. CDC Science Grade 6 — misconception bank" />
+        </label>
+        <div class="row">
+          <button class="primary" id="addOne">Add record</button>
+          <span class="status" id="guidedStatus"></span>
+        </div>
+      </div>
+
+      <!-- bulk -->
+      <div id="tabBulk" class="hidden">
+        <div class="grid">
+          <label class="f"><span>Default collection *</span><select id="b_collection"></select></label>
+        </div>
+        <p class="sub">One JSON object per line. Each line's own <code>"collection"</code> (if present) wins over the default above.</p>
+        <label class="f"><span>Records (JSONL)</span>
+          <textarea id="b_jsonl" class="code" placeholder='{"text": "…", "grade": 6, "subject": "Science"}'></textarea>
+        </label>
+        <div class="row">
+          <input type="file" id="b_file" accept=".jsonl,.json,.txt" style="width:auto;flex:1;min-width:200px;" />
+          <button class="ghost small" id="loadExample">Load example</button>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button class="primary" id="addBulk">Add records</button>
+          <span class="status" id="bulkStatus"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Browse & curate ───────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>Browse &amp; curate records</h2>
+    <div class="body">
+      <div class="row" style="margin-bottom:12px;">
+        <label class="f" style="margin:0;flex:1;min-width:200px;"><span>Collection</span><select id="br_collection"></select></label>
+        <button id="br_load" style="align-self:flex-end;">Load records</button>
+      </div>
+      <div id="browseBanner"></div>
+      <div id="recs"></div>
+      <div class="row" style="justify-content:center;">
+        <button class="ghost hidden" id="br_more">Load more</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const COLLECTIONS = ["curriculum", "pedagogical", "exemplar", "local_context"];
+
+function banner(el, kind, html) {
+  el.innerHTML = html ? `<div class="banner ${kind}">${html}</div>` : "";
+}
+function esc(s) {
+  return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+function fillCollectionSelect(sel) {
+  sel.innerHTML = COLLECTIONS.map((c) => `<option value="${c}">${c}</option>`).join("");
+}
+
+// ── overview ────────────────────────────────────────────────────────────
+async function loadOverview() {
+  $("ovSpin").classList.remove("hidden");
+  banner($("ovBanner"), "err", "");
+  try {
+    const r = await fetch("/corpus/overview");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    $("kbGrid").innerHTML = data.collections.map((c) => `
+      <div class="kb">
+        <div class="kb-head"><span class="kb-name">${c.name}</span><span class="kb-count">${c.count}</span></div>
+        <p class="kb-desc">${esc(c.description)}</p>
+      </div>`).join("");
+  } catch (e) {
+    banner($("ovBanner"), "err", `Couldn't load the knowledge base: ${esc(e.message)}. Is the server (and vector store) running?`);
+  } finally {
+    $("ovSpin").classList.add("hidden");
+  }
+}
+
+// ── add: guided ─────────────────────────────────────────────────────────
+function guidedRecord() {
+  const rec = { text: $("g_text").value.trim() };
+  const g = $("g_grade").value.trim();
+  if (g) rec.grade = Number(g);
+  for (const [id, key] of [["g_subject", "subject"], ["g_topic", "topic"],
+                           ["g_standard", "standard"], ["g_language", "language"],
+                           ["g_source", "source"]]) {
+    const v = $(id).value.trim();
+    if (v) rec[key] = v;
+  }
+  return rec;
+}
+async function ingest(collection, records, statusEl, bannerEl) {
+  statusEl.innerHTML = '<span class="spinner"></span> Saving…';
+  banner(bannerEl, "ok", "");
+  try {
+    const r = await fetch("/corpus/ingest", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ collection, records }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    statusEl.textContent = "";
+    banner(bannerEl, "ok",
+      `Saved <strong>${data.documents}</strong> record(s) → <strong>${data.chunks}</strong> searchable chunk(s). Re-submitting identical text updates in place.`);
+    await loadOverview();
+    return true;
+  } catch (e) {
+    statusEl.textContent = "";
+    banner(bannerEl, "err", `Couldn't save: ${esc(e.message)}`);
+    return false;
+  }
+}
+
+$("addOne").onclick = async () => {
+  const rec = guidedRecord();
+  if (!rec.text) { banner($("addBanner"), "err", "The <strong>Text</strong> field is required."); return; }
+  const ok = await ingest($("g_collection").value, [rec], $("guidedStatus"), $("addBanner"));
+  if (ok) $("g_text").value = "";
+};
+
+// ── add: bulk ───────────────────────────────────────────────────────────
+function parseJsonl(text) {
+  const records = [];
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith("//")) continue;
+    let obj;
+    try { obj = JSON.parse(line); }
+    catch { throw new Error(`Line ${i + 1} is not valid JSON. Each line must be a complete JSON object.`); }
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) throw new Error(`Line ${i + 1} must be a JSON object.`);
+    if (!obj.text || !String(obj.text).trim()) throw new Error(`Line ${i + 1} is missing a non-empty "text" field.`);
+    records.push(obj);
+  }
+  if (!records.length) throw new Error("No records found. Paste at least one JSON line.");
+  return records;
+}
+
+$("b_file").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (file) $("b_jsonl").value = await file.text();
+};
+$("loadExample").onclick = () => {
+  $("b_jsonl").value = [
+    '{"text": "Students often think soil is biotic because plants grow in it; soil is an abiotic component.", "collection": "pedagogical", "grade": 6, "subject": "Science", "source": "Misconception bank"}',
+    '{"text": "In the paddy fields around the village, frogs, snails and herons form a simple food chain.", "collection": "local_context", "grade": 6, "subject": "Science"}',
+  ].join("\n");
+};
+$("addBulk").onclick = async () => {
+  let records;
+  try { records = parseJsonl($("b_jsonl").value); }
+  catch (e) { banner($("addBanner"), "err", esc(e.message)); return; }
+  const ok = await ingest($("b_collection").value, records, $("bulkStatus"), $("addBanner"));
+  if (ok) { $("b_jsonl").value = ""; $("b_file").value = ""; }
+};
+
+// ── tabs ────────────────────────────────────────────────────────────────
+for (const btn of document.querySelectorAll(".tabs button")) {
+  btn.onclick = () => {
+    document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b === btn));
+    $("tabGuided").classList.toggle("hidden", btn.dataset.tab !== "guided");
+    $("tabBulk").classList.toggle("hidden", btn.dataset.tab !== "bulk");
+    banner($("addBanner"), "ok", "");
+  };
+}
+
+// ── browse & delete ─────────────────────────────────────────────────────
+let browseOffset = null;
+function renderRecords(records, append) {
+  const host = $("recs");
+  if (!append) host.innerHTML = "";
+  if (!records.length && !append) { host.innerHTML = '<p class="sub">No records in this collection yet.</p>'; return; }
+  for (const rec of records) {
+    const div = document.createElement("div");
+    div.className = "rec";
+    const metaChips = Object.entries(rec.metadata || {})
+      .map(([k, v]) => `<span class="chip">${esc(k)}: ${esc(v)}</span>`).join("");
+    div.innerHTML = `
+      <div class="rec-head">
+        <p class="rec-text">${esc(rec.text)}</p>
+        <button class="danger small" style="flex:0 0 auto;">Delete</button>
+      </div>
+      ${rec.source ? `<p class="rec-src">Source: ${esc(rec.source)}</p>` : ""}
+      ${metaChips ? `<div class="rec-meta">${metaChips}</div>` : ""}`;
+    const btn = div.querySelector("button");
+    let armed = false;
+    btn.onclick = async () => {
+      if (!armed) { armed = true; btn.textContent = "Confirm delete?"; setTimeout(() => { armed = false; btn.textContent = "Delete"; }, 3000); return; }
+      btn.disabled = true; btn.textContent = "Deleting…";
+      try {
+        const r = await fetch(`/corpus/collections/${$("br_collection").value}/delete`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ids: [rec.id] }),
+        });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        div.remove();
+        loadOverview();
+      } catch (e) {
+        btn.disabled = false; btn.textContent = "Delete";
+        banner($("browseBanner"), "err", `Couldn't delete: ${esc(e.message)}`);
+      }
+    };
+    host.appendChild(div);
+  }
+}
+async function loadRecords(append) {
+  banner($("browseBanner"), "err", "");
+  const name = $("br_collection").value;
+  const params = new URLSearchParams({ limit: "25" });
+  if (append && browseOffset) params.set("offset", browseOffset);
+  try {
+    const r = await fetch(`/corpus/collections/${name}/records?${params}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderRecords(data.records, append);
+    browseOffset = data.next_offset;
+    $("br_more").classList.toggle("hidden", !browseOffset);
+  } catch (e) {
+    banner($("browseBanner"), "err", `Couldn't load records: ${esc(e.message)}`);
+  }
+}
+$("br_load").onclick = () => { browseOffset = null; loadRecords(false); };
+$("br_more").onclick = () => loadRecords(true);
+
+// ── init ────────────────────────────────────────────────────────────────
+for (const sel of [$("g_collection"), $("b_collection"), $("br_collection")]) fillCollectionSelect(sel);
+$("g_collection").value = "pedagogical";
+$("b_collection").value = "pedagogical";
+loadOverview();
+</script>
+</body>
+</html>

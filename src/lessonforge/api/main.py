@@ -14,9 +14,16 @@ from ..domain.ldd import IntakeRequest, LessonDesignDocument, NormalizedBrief
 from ..domain.profile import TeacherProfile
 from ..domain.rubric import Critique
 from ..export import ArtifactKind, RenderedArtifact
+from ..rag.documents import COLLECTION_KEY, SOURCE_KEY, TEXT_KEY, Collection
 from .deps import get_container
 
 _UI_INDEX = Path(__file__).parent / "static" / "index.html"
+_UI_CORPUS = Path(__file__).parent / "static" / "corpus.html"
+
+# Payload keys that carry the record's own text/source/collection or store
+# internals — surfaced as dedicated fields, so they're stripped from the
+# free-form "metadata" the browse UI shows.
+_RESERVED_PAYLOAD_KEYS = frozenset({TEXT_KEY, SOURCE_KEY, COLLECTION_KEY})
 
 
 class ValidationResult(BaseModel):
@@ -54,6 +61,39 @@ class GenerateRequest(BaseModel):
         if not self.topic and not self.existing_plan:
             raise ValueError("provide `topic`, or `existing_plan` for intake to parse")
         return self
+
+
+class CorpusIngestRequest(BaseModel):
+    """Add/update grounding records in a collection. Each record is a JSONL-style
+    object (``text`` required; ``grade``/``subject``/``standard``/``language``/
+    ``topic``/``source`` optional). Idempotent: re-submitting the same text
+    updates the existing point instead of duplicating it."""
+
+    collection: Collection
+    records: list[dict[str, Any]] = Field(..., min_length=1)
+
+
+class CorpusDeleteRequest(BaseModel):
+    ids: list[str] = Field(..., min_length=1)
+
+
+def _record_view(rec: Any, fallback_collection: str) -> dict[str, Any]:
+    """Shape a stored point for the browse UI: promote text/source/collection,
+    keep the rest as displayable metadata (dropping store internals like the
+    leading-underscore round-trip keys)."""
+    payload = rec.payload or {}
+    metadata = {
+        k: v
+        for k, v in payload.items()
+        if k not in _RESERVED_PAYLOAD_KEYS and not k.startswith("_")
+    }
+    return {
+        "id": rec.id,
+        "text": payload.get(TEXT_KEY, ""),
+        "source": payload.get(SOURCE_KEY, ""),
+        "collection": payload.get(COLLECTION_KEY, fallback_collection),
+        "metadata": metadata,
+    }
 
 
 def create_app() -> FastAPI:
@@ -181,6 +221,73 @@ def create_app() -> FastAPI:
     ) -> Response:
         """One-click zip of every configured artifact."""
         return _file_response(c.exporter.bundle(ldd))
+
+    # ── corpus manager: grow & curate the grounding knowledge base ───────────
+    @app.get("/corpus", response_class=HTMLResponse, include_in_schema=False)
+    def corpus_page() -> str:
+        """Self-contained page to add, browse, and delete grounding records."""
+        if _UI_CORPUS.exists():
+            return _UI_CORPUS.read_text(encoding="utf-8")
+        return "<h1>Corpus manager</h1><p>UI asset missing. See /docs for the API.</p>"
+
+    @app.get("/corpus/overview", tags=["corpus"])
+    def corpus_overview(c: Container = Depends(get_container)) -> dict[str, object]:
+        """Every collection with its curator-facing description and live count —
+        what the UI's 'what's in the knowledge base' panel renders."""
+        return {
+            "collections": [
+                {
+                    "name": col.value,
+                    "description": col.description,
+                    "count": c.vector_store.count(col.value),
+                }
+                for col in Collection
+            ]
+        }
+
+    @app.get("/corpus/collections/{name}/records", tags=["corpus"])
+    def corpus_records(
+        name: Collection,
+        c: Container = Depends(get_container),
+        limit: int = Query(default=25, ge=1, le=100),
+        offset: str | None = Query(default=None, description="opaque next-page token"),
+    ) -> dict[str, object]:
+        """Page through the records stored in one collection (read-only browse)."""
+        records, next_offset = c.vector_store.scroll(name.value, limit=limit, offset=offset)
+        return {
+            "records": [_record_view(r, name.value) for r in records],
+            "next_offset": next_offset,
+        }
+
+    @app.post("/corpus/ingest", tags=["corpus"])
+    def corpus_ingest(
+        req: CorpusIngestRequest, c: Container = Depends(get_container)
+    ) -> dict[str, object]:
+        """Add or update grounding records. Returns what was ingested plus the
+        refreshed per-collection counts so the UI updates without a second call."""
+        try:
+            report = c.ingestor.ingest_records(
+                req.collection, req.records, source_label="ui"
+            )
+        except ValueError as exc:  # a record missing 'text', bad shape, …
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "documents": report.documents,
+            "chunks": report.chunks,
+            "sources": sorted(report.sources),
+            "counts": {col.value: c.vector_store.count(col.value) for col in Collection},
+        }
+
+    @app.post("/corpus/collections/{name}/delete", tags=["corpus"])
+    def corpus_delete(
+        name: Collection,
+        req: CorpusDeleteRequest,
+        c: Container = Depends(get_container),
+    ) -> dict[str, object]:
+        """Delete records by id (from the browse view). Destructive — the UI
+        confirms first."""
+        deleted = c.vector_store.delete(name.value, req.ids)
+        return {"deleted": deleted, "count": c.vector_store.count(name.value)}
 
     return app
 

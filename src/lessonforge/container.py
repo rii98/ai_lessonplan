@@ -20,6 +20,7 @@ from .providers.registry import (
     build_vector_store,
 )
 from .rag.grounding import GroundingRetriever
+from .rag.ingest import Ingestor
 from .rag.retriever import Retriever
 from .services.critique import Critic
 from .services.generation import LessonGenerator
@@ -41,6 +42,7 @@ class Container:
     grounding: GroundingRetriever
     generator: LessonGenerator
     exporter: ExportService
+    ingestor: Ingestor | None = None
     # M4 stages — optional so existing call sites keep working; ``__post_init__``
     # wires any left unset from ``settings`` (+ the fast model / reasoning model).
     llm_fast: LLMClient | None = None
@@ -53,6 +55,8 @@ class Container:
     def __post_init__(self) -> None:
         # intake uses the cheap fast model; critique/revise use the reasoning model.
         self.llm_fast = self.llm_fast or self.llm
+        if self.ingestor is None:
+            self.ingestor = Ingestor(embedder=self.embedder, vector_store=self.vector_store)
         if self.profile_store is None:
             self.profile_store = build_profile_store(self.settings.profile)
         if self.intake is None:

@@ -11,7 +11,7 @@ import uuid
 from typing import Any
 
 from ...config import VectorStoreConfig
-from ..base import ScoredRecord, VectorRecord, VectorStore
+from ..base import ScoredRecord, StoredRecord, VectorRecord, VectorStore
 from ..registry import register_vector_store
 
 # Qdrant requires point IDs to be unsigned ints or UUIDs. Our interface uses
@@ -98,6 +98,51 @@ class QdrantVectorStore(VectorStore):
             )
             for h in hits
         ]
+
+    def count(self, name: str) -> int:
+        client = self._c()
+        full = self._name(name)
+        if not client.collection_exists(full):
+            return 0
+        return int(client.count(collection_name=full, exact=True).count)
+
+    def scroll(
+        self, name: str, *, limit: int, offset: str | None = None
+    ) -> tuple[list[StoredRecord], str | None]:
+        client = self._c()
+        full = self._name(name)
+        if not client.collection_exists(full):
+            return [], None
+        points, next_offset = client.scroll(
+            collection_name=full,
+            limit=limit,
+            offset=offset,
+            with_payload=True,
+            with_vectors=False,
+        )
+        records = [
+            StoredRecord(
+                id=(p.payload or {}).get(_SOURCE_ID_KEY, str(p.id)),
+                payload=p.payload or {},
+            )
+            for p in points
+        ]
+        return records, (str(next_offset) if next_offset is not None else None)
+
+    def delete(self, name: str, ids: list[str]) -> int:
+        from qdrant_client.models import PointIdsList
+
+        if not ids:
+            return 0
+        client = self._c()
+        full = self._name(name)
+        if not client.collection_exists(full):
+            return 0
+        client.delete(
+            collection_name=full,
+            points_selector=PointIdsList(points=[_point_id(i) for i in ids]),
+        )
+        return len(ids)
 
     @staticmethod
     def _build_filter(where: dict[str, Any] | None):
