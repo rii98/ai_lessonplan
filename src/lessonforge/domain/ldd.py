@@ -113,6 +113,11 @@ class QualityReport(BaseModel):
     local_relevance: float = 0.0
     grounding_sources: list[str] = Field(default_factory=list)
     notes: str = ""
+    # Meaning-preserving fixes the normalization/repair boundary applied to the
+    # model's raw draft (e.g. hook kind 'analogy' → 'scenario'). Kept distinct
+    # from ``notes`` so the critique stamp can't clobber this trail, and so the
+    # editor can show the teacher exactly what was auto-adjusted.
+    adjustments: list[str] = Field(default_factory=list)
 
 
 class LessonDesignDocument(BaseModel):

@@ -105,6 +105,15 @@ class CritiqueConfig(BaseModel):
     weights: dict[str, float] = Field(default_factory=dict)  # per-dimension; empty = equal
 
 
+class GenerationConfig(BaseModel):
+    """The model→domain boundary for generation. ``max_repairs`` is how many times
+    the assembler may feed a validation failure back to the model to self-correct
+    before degrading to a clean error (0 disables the repair loop, leaving only the
+    deterministic normalization layer)."""
+
+    max_repairs: int = 1
+
+
 class RefineConfig(BaseModel):
     """The human-in-the-loop refine step (teacher reprompts one LDD section).
 
@@ -189,6 +198,7 @@ class Settings(BaseSettings):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     grounding: GroundingConfig = Field(default_factory=GroundingConfig)
     intake: IntakeConfig = Field(default_factory=IntakeConfig)
+    generation: GenerationConfig = Field(default_factory=GenerationConfig)
     critique: CritiqueConfig = Field(default_factory=CritiqueConfig)
     refine: RefineConfig = Field(default_factory=RefineConfig)
     profile: ProfileConfig = Field(default_factory=ProfileConfig)

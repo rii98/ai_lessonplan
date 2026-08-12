@@ -225,6 +225,7 @@
       <div class="quality" id="quality"></div>
       <p class="sub" id="qualityNotes" style="margin-top:10px"></p>
       <p class="sub" id="groundingSources"></p>
+      <div id="adjustments"></div>
 
       <h3 class="section">Export</h3>
       <div class="toolbar">
@@ -614,6 +615,14 @@ function renderQuality() {
   $("qualityNotes").textContent = q.notes || "";
   const src = q.grounding_sources || [];
   $("groundingSources").textContent = src.length ? "Grounded in: " + src.join(" · ") : "";
+  // auto-adjustments the normalization/repair boundary made to the model's draft
+  const adj = q.adjustments || []; const abox = $("adjustments"); abox.textContent = "";
+  if (adj.length) {
+    abox.append(h("p", { class: "sub", style: "margin-top:8px" },
+      h("strong", {}, "Auto-adjusted from the model's draft:")));
+    abox.append(h("ul", { class: "sub", style: "margin:4px 0 0;padding-left:18px" },
+      ...adj.map((a) => h("li", {}, a))));
+  }
 }
 
 // ── validate ────────────────────────────────────────────────────────────────

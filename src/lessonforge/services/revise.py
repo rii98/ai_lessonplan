@@ -121,8 +121,10 @@ class Reviser:
         except Exception:
             # non-JSON, schema-invalid, or a network hiccup → keep the current best
             return None
-        # provenance is authoritative — the rewrite can't invent new citations
+        # provenance is authoritative — the rewrite can't invent new citations,
+        # and it carries the generation-time adjustment trail forward intact
         candidate.quality.grounding_sources = ldd.quality.grounding_sources
+        candidate.quality.adjustments = ldd.quality.adjustments
         return candidate
 
     def _stamp(

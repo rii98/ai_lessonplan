@@ -39,3 +39,14 @@ def test_pipeline_critique_delegates(export_ldd, valid_ldd_dict):
     critique = _pipeline(valid_ldd_dict).critique(export_ldd)
     assert 0.0 <= critique.overall <= 1.0
     assert critique.scores.local_relevance > 0.0
+
+
+def test_pipeline_preserves_adjustment_trail(valid_ldd_dict):
+    # a normalization applied at generation must survive the critique/revise stamp
+    import copy
+    bad = copy.deepcopy(valid_ldd_dict)
+    bad["engagement_hook"]["kind"] = "analogy"
+    out = _pipeline(bad).run(IntakeRequest(topic="Environment", grade=6, subject="Science"))
+    assert out.engagement_hook.kind == "scenario"
+    assert any("analogy" in a for a in out.quality.adjustments)  # trail intact
+    assert out.quality.notes  # critique still stamped its own notes separately

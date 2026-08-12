@@ -39,6 +39,16 @@ class LLMClient(ABC):
     def health(self) -> bool:
         """Cheap reachability check for readiness probes."""
 
+    @property
+    def supports_structured_output(self) -> bool:
+        """Layer 0 of the model→domain boundary: does this backend *enforce* the
+        ``json_schema`` at decode time (grammar/constrained decoding), so invalid
+        output is structurally impossible? Most backends only best-effort it — the
+        default is ``False``, which tells the assembler its normalize+repair layers
+        are load-bearing. A backend with true guided decoding overrides this to
+        ``True`` and the repair loop then almost never fires."""
+        return False
+
 
 # ── Embeddings ───────────────────────────────────────────────────────────────
 class Embedder(ABC):

@@ -96,7 +96,9 @@ class Container:
             rerank_top_n=settings.retrieval.rerank_top_n,
         )
         grounding = GroundingRetriever(retriever, settings.grounding)
-        generator = LessonGenerator(llm=llm, grounding=grounding)
+        generator = LessonGenerator(
+            llm=llm, grounding=grounding, max_repairs=settings.generation.max_repairs
+        )
         exporter = ExportService(settings.export)
         return cls(
             settings=settings,

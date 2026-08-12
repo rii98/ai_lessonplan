@@ -14,7 +14,7 @@ from typing import Any
 from ..domain.ldd import LessonDesignDocument, NormalizedBrief
 from ..providers.base import LLMClient
 from ..rag.grounding import GroundingBundle, GroundingRetriever
-from ..util import extract_json
+from .assemble import LDDAssembler
 
 # A concrete, minimal, structurally-valid example. Cloud models that ignore
 # Ollama's `format` schema constraint still follow a shown example closely, so
@@ -124,10 +124,16 @@ def _existing_plan_block(plan: str | None) -> str:
 
 class LessonGenerator:
     def __init__(
-        self, *, llm: LLMClient, grounding: GroundingRetriever | None = None
+        self,
+        *,
+        llm: LLMClient,
+        grounding: GroundingRetriever | None = None,
+        max_repairs: int = 1,
     ) -> None:
         self.llm = llm
         self.grounding = grounding
+        # the shared model→domain boundary (normalize + bounded repair + degrade)
+        self.assembler = LDDAssembler(llm=llm, max_repairs=max_repairs)
 
     def _ground(self, brief: NormalizedBrief) -> GroundingBundle:
         if self.grounding is None:
@@ -157,13 +163,16 @@ class LessonGenerator:
             example=json.dumps(_EXAMPLE_LDD, ensure_ascii=False, indent=2),
         )
         result = self.llm.complete(prompt, system=_SYSTEM, json_schema=schema)
-        try:
-            data = extract_json(result.text)
-        except ValueError as exc:
-            raise ValueError(f"LLM did not return valid JSON: {exc}") from exc
-        # Pydantic validation IS the anti-generic guardrail — a structurally
-        # deficient lesson raises here rather than reaching the user.
-        ldd = LessonDesignDocument.model_validate(data)
+        # The boundary normalizes cosmetic deviations, validates against the
+        # anti-generic guardrails, and repairs semantic ones via the model. A
+        # lesson that still can't be made valid degrades to a clean error here
+        # rather than a 500 or a structurally deficient plan reaching the user.
+        outcome = self.assembler.assemble(result.text)
+        if not outcome.ok or outcome.ldd is None:
+            raise ValueError("could not generate a valid lesson: " + "; ".join(outcome.errors))
+        ldd = outcome.ldd
+        if outcome.notes:  # transparency trail (survives the critique stamp)
+            ldd.quality.adjustments = outcome.notes
         # Provenance is authoritative: overwrite whatever the model claimed with
         # the sources we actually retrieved, so citations are trustworthy.
         if bundle.sources:
