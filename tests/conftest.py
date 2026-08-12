@@ -246,6 +246,12 @@ def export_ldd(export_ldd_dict):
 
 
 @pytest.fixture
+def valid_ldd(valid_ldd_dict):
+    from lessonforge.domain.ldd import LessonDesignDocument
+    return LessonDesignDocument.model_validate(valid_ldd_dict)
+
+
+@pytest.fixture
 def weak_ldd_dict() -> dict[str, Any]:
     """A structurally VALID but pedagogically generic LDD: bland hook, no
     misconceptions, no local context, thin activities, no homework. Passes the

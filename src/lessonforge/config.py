@@ -105,6 +105,17 @@ class CritiqueConfig(BaseModel):
     weights: dict[str, float] = Field(default_factory=dict)  # per-dimension; empty = equal
 
 
+class RefineConfig(BaseModel):
+    """The human-in-the-loop refine step (teacher reprompts one LDD section).
+
+    ``max_cascade`` caps how many coupled neighbour sections the reviser may
+    auto-repair when a scoped edit breaks a structural guardrail (e.g. a new
+    objective needs a matching phase and formative check → 2). Set to 0 to
+    disable cascade entirely and always reject-with-reason instead."""
+
+    max_cascade: int = 2
+
+
 class ProfileConfig(BaseModel):
     """Where teacher preferences (:class:`TeacherProfile`) are stored.
 
@@ -179,6 +190,7 @@ class Settings(BaseSettings):
     grounding: GroundingConfig = Field(default_factory=GroundingConfig)
     intake: IntakeConfig = Field(default_factory=IntakeConfig)
     critique: CritiqueConfig = Field(default_factory=CritiqueConfig)
+    refine: RefineConfig = Field(default_factory=RefineConfig)
     profile: ProfileConfig = Field(default_factory=ProfileConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
 

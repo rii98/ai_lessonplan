@@ -12,7 +12,9 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from ..container import Container
 from ..domain.ldd import IntakeRequest, LessonDesignDocument, NormalizedBrief
 from ..domain.profile import TeacherProfile
+from ..domain.refine import RefineRequest, RefineResult
 from ..domain.rubric import Critique
+from ..domain.sections import LDD_SECTIONS, WHOLE_DOCUMENT
 from ..export import ArtifactKind, RenderedArtifact
 from ..rag.documents import COLLECTION_KEY, SOURCE_KEY, TEXT_KEY, Collection
 from .deps import get_container
@@ -61,6 +63,16 @@ class GenerateRequest(BaseModel):
         if not self.topic and not self.existing_plan:
             raise ValueError("provide `topic`, or `existing_plan` for intake to parse")
         return self
+
+
+class RefineLessonRequest(BaseModel):
+    """Reprompt one section of a lesson. ``ldd`` is the current (possibly already
+    hand-edited) lesson; ``target`` names the section to improve (or ``"*"`` for
+    the whole lesson); ``instruction`` is the teacher's free-text intent."""
+
+    ldd: LessonDesignDocument
+    target: str = Field(examples=["engagement_hook"])
+    instruction: str = Field(min_length=1, examples=["make the hook about the local river"])
 
 
 class CorpusIngestRequest(BaseModel):
@@ -162,6 +174,34 @@ def create_app() -> FastAPI:
     ) -> Critique:
         """Score an already-generated LDD against the anti-generic rubric."""
         return c.pipeline.critique(ldd)
+
+    @app.get("/lessons/refine/targets", tags=["lessons"])
+    def refine_targets() -> dict[str, object]:
+        """The reprompt-able sections and their edit blast radius, for the UI to
+        render an "improve this" control per section. ``coupled`` lists the
+        neighbours a change may cascade into; leaf sections are zero-risk."""
+        return {
+            "sections": [
+                {"target": s.name, "coupled": list(s.coupled), "leaf": s.is_leaf}
+                for s in LDD_SECTIONS.values()
+            ],
+            "whole_document": WHOLE_DOCUMENT,
+        }
+
+    @app.post("/lessons/refine", response_model=RefineResult, tags=["lessons"])
+    def refine_lesson(
+        req: RefineLessonRequest, c: Container = Depends(get_container)
+    ) -> RefineResult:
+        """Reprompt one section (or the whole lesson) and PROPOSE an improved,
+        re-validated LDD — the teacher accepts or rejects the returned candidate.
+        A change that would break a structural guardrail is repaired via a bounded
+        cascade or rejected with the reason; it is never silently forced through."""
+        try:
+            return c.refiner.refine(
+                req.ldd, RefineRequest(target=req.target, instruction=req.instruction)
+            )
+        except ValueError as exc:  # unknown target
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/lessons/validate", response_model=ValidationResult, tags=["lessons"])
     def validate_ldd(payload: dict[str, Any] = Body(...)) -> ValidationResult:

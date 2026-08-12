@@ -102,6 +102,40 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  /* ── refine ("improve this section") ─────────────────────────────────────── */
+  .section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .refine-btn { color: var(--accent); flex: 0 0 auto; }
+  .refine-btn:hover { border-color: var(--accent); }
+  .modal {
+    position: fixed; inset: 0; z-index: 20; background: rgba(16,24,40,.45);
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 40px 16px; overflow-y: auto;
+  }
+  .modal-card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: 0 10px 40px rgba(16,24,40,.28); width: 100%; max-width: 720px;
+  }
+  .modal-card > header {
+    padding: 14px 16px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .modal-card > header h3 { margin: 0; font-size: 15px; letter-spacing: normal; text-transform: none; color: var(--ink); }
+  .modal-card .body { padding: 16px; }
+  .delta { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  .delta b { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .delta .up b { color: var(--ok); }
+  .delta .down b { color: var(--warn); }
+  .diff { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+  .diff .diff-name {
+    background: var(--chip); padding: 6px 10px; font-size: 12px;
+    text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+  }
+  .diff pre {
+    margin: 0; padding: 10px; font-size: 12px; line-height: 1.45; white-space: pre-wrap;
+    word-break: break-word; overflow-x: auto; background: var(--bg);
+  }
+  .diff pre.before { color: var(--warn); background: var(--warn-bg); border-bottom: 1px dashed var(--line); }
+  .diff pre.after { color: var(--ok); background: var(--ok-bg); }
 </style>
 </head>
 <body>
@@ -206,6 +240,8 @@
   </div>
 
 </div>
+
+<div id="refineModal" class="modal hidden" role="dialog" aria-modal="true"></div>
 
 <script>
 "use strict";
@@ -349,18 +385,130 @@ function itemCard(label, onRemove, ...body) {
       h("button", { class: "small ghost", onclick: onRemove }, "Remove")),
     ...body);
 }
-function listSection(title, hint, arr, factory, template, rerender) {
+function listSection(title, hint, arr, factory, template, rerender, target) {
   const wrap = h("div", {});
-  wrap.append(h("h3", { class: "section" }, title));
+  wrap.append(sectionHead(title, target));
   if (hint) wrap.append(h("p", { class: "sub" }, hint));
   arr.forEach((it, i) => wrap.append(factory(it, i)));
   wrap.append(h("button", { class: "small", onclick: () => { arr.push(structuredClone(template)); rerender(); } }, "+ add"));
   return wrap;
 }
 
+// ── refine ("improve this section" with the AI) ──────────────────────────────
+const SECTION_LABELS = {
+  engagement_hook: "Engagement hook", objectives: "Objectives", misconceptions: "Misconceptions",
+  prior_knowledge: "Prior knowledge", local_context: "Local context", phases: "Phases",
+  materials: "Materials", differentiation: "Differentiation", formative_checks: "Formative checks",
+  homework: "Homework", "*": "the whole lesson",
+};
+
+// a section heading with an inline "✨ Improve" button (when the section is reprompt-able)
+function sectionHead(title, target) {
+  return h("div", { class: "section-head" },
+    h("h3", { class: "section" }, title),
+    target ? h("button", { class: "small ghost refine-btn", title: "Ask the AI to improve this section",
+      onclick: () => openRefine(target) }, "✨ Improve") : null);
+}
+
+function closeRefine() { const m = $("refineModal"); m.classList.add("hidden"); m.textContent = ""; }
+
+function fmtVal(v) {
+  if (v === null || v === undefined) return "—";
+  return typeof v === "string" ? v : JSON.stringify(v, null, 2);
+}
+// per-dimension before → after, arrows coloured by direction
+function deltaView(before, after) {
+  const dims = ["engagement","alignment","misconception_coverage","specificity","local_relevance"];
+  const row = h("div", { class: "delta" });
+  for (const d of dims) {
+    const b = Number((before && before[d]) || 0), a = Number((after && after[d]) || 0);
+    const dir = a > b + 1e-9 ? "up" : (a < b - 1e-9 ? "down" : "");
+    const arrow = dir === "up" ? "▲" : (dir === "down" ? "▼" : "=");
+    row.append(h("span", { class: dir }, d.replace(/_/g, " ") + " ",
+      h("b", {}, b.toFixed(2) + " → " + a.toFixed(2) + " " + arrow)));
+  }
+  return row;
+}
+function rejectView(data) {
+  return h("div", { class: "banner err" }, h("strong", {}, "Couldn't apply this change"),
+    h("ul", { style: "margin:6px 0 0;padding-left:18px" },
+      ...(data.errors && data.errors.length ? data.errors : ["the AI could not improve this section"])
+        .map((e) => h("li", {}, e))));
+}
+// the change preview: score delta, cascade note, per-section before/after, accept/discard
+function diffView(data, onAccept) {
+  const box = h("div", {});
+  box.append(deltaView(data.score_before, data.score_after));
+  if (data.cascaded && data.cascaded.length) {
+    box.append(h("p", { class: "sub" }, "Also adjusted to keep the lesson valid: " +
+      data.cascaded.map((n) => SECTION_LABELS[n] || n).join(", ")));
+  }
+  const names = Object.keys(data.diff || {});
+  if (!names.length) { box.append(h("p", { class: "sub" }, "The AI returned no changes.")); return box; }
+  for (const name of names) {
+    const d = data.diff[name];
+    box.append(h("div", { class: "diff" },
+      h("div", { class: "diff-name" }, SECTION_LABELS[name] || name),
+      h("pre", { class: "before" }, "− " + fmtVal(d.before)),
+      h("pre", { class: "after" }, "+ " + fmtVal(d.after))));
+  }
+  box.append(h("div", { class: "row", style: "margin-top:12px" },
+    h("button", { class: "primary", onclick: onAccept }, "Accept changes"),
+    h("button", { class: "ghost", onclick: closeRefine }, "Discard")));
+  return box;
+}
+
+function openRefine(target) {
+  const m = $("refineModal");
+  const label = SECTION_LABELS[target] || target;
+  const ta = h("textarea", { placeholder: "e.g. make the hook about the local river and add a prediction" });
+  const status = h("div", { class: "status" });
+  const results = h("div", {});
+  const improveBtn = h("button", { class: "primary" }, "✨ Improve");
+
+  improveBtn.addEventListener("click", async () => {
+    const instruction = ta.value.trim();
+    if (!instruction) { status.className = "status err"; status.textContent = "Describe what to improve."; return; }
+    status.className = "status"; status.innerHTML = '<span class="spinner"></span> Asking the AI…';
+    improveBtn.disabled = true; results.textContent = "";
+    try {
+      const res = await api("POST", "/lessons/refine", { ldd, target, instruction });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { status.className = "status err"; status.textContent = "Refine failed: " + (data.detail || res.status); return; }
+      status.textContent = "";
+      if (!data.ok) { results.append(rejectView(data)); return; }
+      results.append(diffView(data, () => {
+        ldd = data.candidate; renderEditor(); renderQuality();
+        $("validationBanner").innerHTML = '<div class="banner ok">✓ Applied the AI improvement to ' +
+          label + '. Re-check guardrails before export.</div>';
+        closeRefine();
+      }));
+    } catch (err) { status.className = "status err"; status.textContent = "Network error: " + err.message; }
+    finally { improveBtn.disabled = false; }
+  });
+
+  const card = h("div", { class: "modal-card" },
+    h("header", {}, h("h3", {}, "Improve — " + label),
+      h("button", { class: "small ghost", onclick: closeRefine }, "✕")),
+    h("div", { class: "body" },
+      h("p", { class: "sub" }, "Tell the AI how to improve this. It reads the whole lesson for context but rewrites only this part, then shows the change for you to accept or discard."),
+      ta,
+      h("div", { class: "row", style: "margin-top:10px" }, improveBtn,
+        h("button", { class: "ghost", onclick: closeRefine }, "Cancel")),
+      status, results));
+  m.textContent = ""; m.append(card); m.classList.remove("hidden"); ta.focus();
+}
+// dismiss on backdrop click or Escape
+$("refineModal").addEventListener("click", (ev) => { if (ev.target.id === "refineModal") closeRefine(); });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeRefine(); });
+
 function renderEditor() {
   const root = $("editor"); root.textContent = "";
   const rr = renderEditor;
+
+  // whole-lesson refine — the escape hatch for a cross-cutting instruction
+  root.append(h("div", { class: "row", style: "justify-content:flex-end;margin-bottom:4px" },
+    h("button", { class: "small ghost refine-btn", onclick: () => openRefine("*") }, "✨ Improve whole lesson")));
 
   // framing — duration is an int Literal, so its select round-trips through String
   const durSel = h("select", {}, ...["30","45","60"].map((o) => h("option", { value: o }, o)));
@@ -376,7 +524,7 @@ function renderEditor() {
   ));
 
   // engagement hook
-  root.append(h("h3", { class: "section" }, "Engagement hook"));
+  root.append(sectionHead("Engagement hook", "engagement_hook"));
   root.append(h("p", { class: "sub" }, "Must open with curiosity — a scenario, question, prediction or demonstration, never a definition."));
   root.append(h("div", {},
     field("Prompt", bound(ldd.engagement_hook, "prompt", { area: true })),
@@ -389,15 +537,15 @@ function renderEditor() {
     (o) => itemCard(o.id || "objective", () => { ldd.objectives.splice(ldd.objectives.indexOf(o), 1); rr(); },
       h("div", { class: "grid" }, field("ID", bound(o, "id")), field("Bloom", boundSelect(o, "bloom", BLOOM))),
       field("Statement", bound(o, "statement", { area: true }))),
-    { id: "", statement: "", bloom: "understand" }, rr));
+    { id: "", statement: "", bloom: "understand" }, rr, "objectives"));
 
   // prior knowledge & local context & materials (string lists)
-  root.append(h("h3", { class: "section" }, "Prior knowledge"));
+  root.append(sectionHead("Prior knowledge", "prior_knowledge"));
   root.append(stringList(ldd.prior_knowledge, "what students already know", rr));
-  root.append(h("h3", { class: "section" }, "Local context"));
+  root.append(sectionHead("Local context", "local_context"));
   root.append(h("p", { class: "sub" }, "Local anchors students recognize — the anti-generic signal."));
   root.append(stringList(ldd.local_context, "e.g. temple bell, millet field", rr));
-  root.append(h("h3", { class: "section" }, "Materials"));
+  root.append(sectionHead("Materials", "materials"));
   root.append(stringList(ldd.materials, "e.g. rubber band", rr));
 
   // misconceptions
@@ -406,7 +554,7 @@ function renderEditor() {
     (m) => itemCard("misconception", () => { ldd.misconceptions.splice(ldd.misconceptions.indexOf(m), 1); rr(); },
       field("Misconception", bound(m, "statement", { area: true })),
       field("Correction", bound(m, "correction", { area: true }))),
-    { statement: "", correction: "", source: null }, rr));
+    { statement: "", correction: "", source: null }, rr, "misconceptions"));
 
   // phases
   root.append(listSection("Phases", "The teaching sequence. objective_ids tie each phase to what it teaches.",
@@ -419,10 +567,10 @@ function renderEditor() {
       csvField("Objective IDs", p, "objective_ids"),
       h("p", { class: "sub" }, "Teacher activities"), stringList(p.teacher_activities, "what the teacher does", rr),
       h("p", { class: "sub" }, "Student activities"), stringList(p.student_activities, "what students do", rr)),
-    { name_en: "", name_ne: "", teacher_activities: [""], student_activities: [""], minutes: 5, objective_ids: [] }, rr));
+    { name_en: "", name_ne: "", teacher_activities: [""], student_activities: [""], minutes: 5, objective_ids: [] }, rr, "phases"));
 
   // differentiation
-  root.append(h("h3", { class: "section" }, "Differentiation"));
+  root.append(sectionHead("Differentiation", "differentiation"));
   root.append(h("div", {},
     h("p", { class: "sub" }, "Struggling"), stringList(ldd.differentiation.struggling, "support", rr),
     h("p", { class: "sub" }, "On level"), stringList(ldd.differentiation.on_level, "core task", rr),
@@ -440,10 +588,10 @@ function renderEditor() {
       csvField("Objective IDs", q, "objective_ids"),
       q.type === "mcq" ? (() => { q.options = q.options || [""]; return h("div", {},
         h("p", { class: "sub" }, "Options (MCQ)"), stringList(q.options, "option", rr)); })() : null),
-    { id: "", type: "short_answer", prompt: "", answer: "", objective_ids: [], options: null }, rr));
+    { id: "", type: "short_answer", prompt: "", answer: "", objective_ids: [], options: null }, rr, "formative_checks"));
 
   // homework (optional)
-  root.append(h("h3", { class: "section" }, "Homework"));
+  root.append(sectionHead("Homework", "homework"));
   if (ldd.homework) {
     root.append(h("div", {},
       h("p", { class: "sub" }, "Instructions"), stringList(ldd.homework.instructions, "task", rr),

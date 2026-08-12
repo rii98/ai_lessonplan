@@ -27,6 +27,7 @@ from .services.generation import LessonGenerator
 from .services.intake import Intake
 from .services.pipeline import LessonPipeline
 from .services.profile import ProfileStore
+from .services.refine import Refiner
 from .services.registry import build_critic, build_intake, build_profile_store
 from .services.revise import Reviser
 
@@ -49,6 +50,7 @@ class Container:
     intake: Intake | None = None
     critic: Critic | None = None
     reviser: Reviser | None = None
+    refiner: Refiner | None = None
     pipeline: LessonPipeline | None = field(default=None)
     profile_store: ProfileStore | None = None
 
@@ -66,6 +68,10 @@ class Container:
         if self.reviser is None:
             self.reviser = Reviser.from_config(
                 self.settings.critique, llm=self.llm, critic=self.critic
+            )
+        if self.refiner is None:
+            self.refiner = Refiner.from_config(
+                self.settings.refine, llm=self.llm, critic=self.critic
             )
         if self.pipeline is None:
             self.pipeline = LessonPipeline(
