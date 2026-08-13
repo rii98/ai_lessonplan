@@ -1,6 +1,8 @@
 # LessonForge local stack.
 #
-#   docker compose up --build
+#   docker compose up --build     # first time, or after a dependency change
+#   docker compose up             # thereafter — source is bind-mounted + --reload,
+#                                 # so code edits are live with NO rebuild
 #
 # The reranker + embedder run in-process (FastEmbed), so the only external
 # service is Qdrant. The LLM (Ollama) runs on the HOST — set it up with:
@@ -39,6 +41,24 @@ services:
         condition: service_healthy
     volumes:
       - fastembed_cache:/app/.cache/fastembed
+      # Bind-mount source + config so host edits are live in the container.
+      # Combined with the editable install and --reload below, a code change
+      # never needs `docker compose up --build` — just save the file.
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./corpus:/app/corpus
+    # --reload restarts the server on any change under the mounted src (watchfiles
+    # ships with uvicorn[standard]).
+    command:
+      - uvicorn
+      - lessonforge.api.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /app/src
 
 volumes:
   qdrant_data:
