@@ -329,8 +329,8 @@ function readProfileForm() {
   const p = { owner_id: profile.owner_id || "default", local_anchors: profile.local_anchors };
   for (const f of PROFILE_FIELDS) {
     const v = $("p_" + f).value.trim();
-    if (f === "default_grade") p[f] = v === "" ? null : Number(v);
-    else if (["default_duration_min","default_subject","default_language","default_framework"].includes(f))
+    if (f === "default_grade" || f === "default_duration_min") p[f] = v === "" ? null : Number(v);
+    else if (["default_subject","default_language","default_framework"].includes(f))
       p[f] = v === "" ? null : v;
     else p[f] = v;
   }
