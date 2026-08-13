@@ -150,6 +150,11 @@ class GroundingConfig(BaseModel):
     )
     per_collection_top_n: int = 3
     filter_fields: list[str] = Field(default_factory=lambda: ["grade", "subject"])
+    # Collections whose records are ALSO filtered by the lesson's framework, so a
+    # gradual_release build retrieves gradual_release exemplars — not 5E ones.
+    # Only collections whose records carry a `framework` tag belong here
+    # (curriculum/local_context are framework-agnostic).
+    framework_filter_collections: list[str] = Field(default_factory=lambda: ["exemplar"])
 
 
 class ExportConfig(BaseModel):

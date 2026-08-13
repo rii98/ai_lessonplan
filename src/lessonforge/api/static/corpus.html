@@ -143,7 +143,8 @@
       <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--muted);line-height:1.7;">
         <li><strong>curriculum</strong> — CDC/NEB standards &amp; learning outcomes. What students must learn.</li>
         <li><strong>pedagogical</strong> — misconceptions, 5E strategies, teaching moves. <em>The moat.</em></li>
-        <li><strong>exemplar</strong> — whole strong reference lessons used as examples.</li>
+        <li><strong>exemplar</strong> — whole strong reference lessons used as examples. Tag each with its
+          <strong>framework</strong> (5E, gradual_release, inquiry) so it is only shown for lessons of that framework.</li>
         <li><strong>local_context</strong> — local hooks: paddy fields, goats, the monsoon, festivals.</li>
       </ul>
       <h3 style="margin:14px 0 6px;font-size:13px;">Two ways to add</h3>
@@ -191,6 +192,9 @@
           </label>
           <label class="f"><span>Topic</span><input id="g_topic" placeholder="e.g. Components of Environment" /></label>
           <label class="f"><span>Standard / code</span><input id="g_standard" placeholder="e.g. SC6-ENV-1" /></label>
+          <label class="f"><span>Framework <em>(exemplars)</em></span>
+            <select id="g_framework"><option value="">— any —</option><option value="5E">5E</option><option value="gradual_release">gradual_release</option><option value="inquiry">inquiry</option></select>
+          </label>
         </div>
         <label class="f"><span>Text * — the actual content the AI will ground on</span>
           <textarea id="g_text" placeholder="e.g. A common misconception is that soil is a living (biotic) component; it is abiotic, though it teems with living things."></textarea>
@@ -284,7 +288,7 @@ function guidedRecord() {
   if (g) rec.grade = Number(g);
   for (const [id, key] of [["g_subject", "subject"], ["g_topic", "topic"],
                            ["g_standard", "standard"], ["g_language", "language"],
-                           ["g_source", "source"]]) {
+                           ["g_framework", "framework"], ["g_source", "source"]]) {
     const v = $(id).value.trim();
     if (v) rec[key] = v;
   }

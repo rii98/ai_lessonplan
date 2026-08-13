@@ -11,20 +11,23 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..domain.frameworks import FrameworkSpec, get_framework
 from ..domain.ldd import LessonDesignDocument, NormalizedBrief
 from ..providers.base import LLMClient
 from ..rag.grounding import GroundingBundle, GroundingRetriever
 from .assemble import LDDAssembler
 
-# A concrete, minimal, structurally-valid example. Cloud models that ignore
-# Ollama's `format` schema constraint still follow a shown example closely, so
-# few-shot shape-anchoring is what actually makes structured output reliable.
-_EXAMPLE_LDD: dict[str, Any] = {
+# The framework-independent parts of a concrete, structurally-valid example.
+# Cloud models that ignore Ollama's `format` schema constraint still follow a
+# shown example closely, so few-shot shape-anchoring is what actually makes
+# structured output reliable. `framework` and `phases` are filled in per request
+# from the selected framework's spec (see `_build_example`) so the shown
+# skeleton always matches the framework the teacher chose — never a fixed 5E.
+_EXAMPLE_BASE: dict[str, Any] = {
     "topic": "Sound and Vibration",
     "curriculum_ref": {"board": "CDC", "grade": 7, "subject": "Science", "code": None},
     "duration_min": 45,
     "language": "en-ne",
-    "framework": "5E",
     "objectives": [
         {"id": "O1", "statement": "Explain that sound is produced by vibration",
          "bloom": "understand"}
@@ -39,12 +42,6 @@ _EXAMPLE_LDD: dict[str, Any] = {
         "kind": "demonstration",
     },
     "local_context": ["temple bell", "madal drum", "flowing khola"],
-    "phases": [
-        {"name_en": "Engage", "name_ne": "संलग्न गराउनु",
-         "teacher_activities": ["Ring a temple bell and ask what makes the sound"],
-         "student_activities": ["Feel the vibration of the bell"],
-         "minutes": 8, "objective_ids": ["O1"]}
-    ],
     "materials": ["A small bell", "Rubber band"],
     "formative_checks": [
         {"id": "Q1", "type": "short_answer",
@@ -54,6 +51,13 @@ _EXAMPLE_LDD: dict[str, Any] = {
     "homework": {"instructions": ["List three vibrating objects at home"],
                  "objective_ids": ["O1"]},
 }
+
+
+def _build_example(spec: FrameworkSpec) -> dict[str, Any]:
+    """The few-shot example, shaped to the selected framework: its phase skeleton
+    and `framework` value come from the spec, so a gradual_release request is
+    anchored on gradual_release phases, not 5E."""
+    return {**_EXAMPLE_BASE, "framework": spec.key, "phases": spec.example_phases()}
 
 _SYSTEM = (
     "You are an experienced Nepali secondary-school teacher and curriculum "
@@ -72,6 +76,8 @@ Language mode: {language} (English body, Nepali pedagogical phase labels).
 {personalization}{existing_plan}
 {grounding}
 
+{framework_directive}
+
 Return a single JSON object with EXACTLY the same keys and nesting as this
 example (replace the content, keep the structure). Use "id" strings like
 "O1","O2" for objectives and reference them in each phase's `objective_ids`
@@ -80,6 +86,7 @@ and each question's `objective_ids`:
 {example}
 
 Hard requirements (the output is rejected otherwise):
+- The `phases` MUST follow the {framework} framework exactly as specified above.
 - engagement_hook.prompt must be a scenario/question/demonstration, never a definition.
 - At least one grade-specific misconception with its correction.
 - EVERY objective id must appear in at least one phase's objective_ids AND at
@@ -143,12 +150,14 @@ class LessonGenerator:
                 query=f"{brief.topic} grade {brief.grade} {brief.subject}",
                 grade=brief.grade,
                 subject=brief.subject,
+                framework=brief.framework,
             )
         except Exception:
             return GroundingBundle()
 
     def generate(self, brief: NormalizedBrief) -> LessonDesignDocument:
         bundle = self._ground(brief)
+        spec = get_framework(brief.framework)
         schema: dict[str, Any] = LessonDesignDocument.model_json_schema()
         prompt = _PROMPT_TEMPLATE.format(
             duration=brief.duration_min,
@@ -160,7 +169,8 @@ class LessonGenerator:
             personalization=_personalization_block(brief),
             existing_plan=_existing_plan_block(brief.existing_plan),
             grounding=bundle.as_prompt_context(),
-            example=json.dumps(_EXAMPLE_LDD, ensure_ascii=False, indent=2),
+            framework_directive=spec.phase_directive(),
+            example=json.dumps(_build_example(spec), ensure_ascii=False, indent=2),
         )
         result = self.llm.complete(prompt, system=_SYSTEM, json_schema=schema)
         # The boundary normalizes cosmetic deviations, validates against the

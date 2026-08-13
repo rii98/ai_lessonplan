@@ -48,7 +48,9 @@ _COLLECTION_DESCRIPTIONS: dict[Collection, str] = {
     ),
     Collection.exemplar: (
         "Hand-picked reference lessons used as few-shot examples of what a great "
-        "lesson looks like. Add whole strong lessons, not fragments."
+        "lesson looks like. Add whole strong lessons, not fragments. Tag each with "
+        "its framework (5E, gradual_release, inquiry) so it is retrieved only for "
+        "lessons of that framework."
     ),
     Collection.local_context: (
         "Local hooks that make lessons concrete for Nepali classrooms — paddy "

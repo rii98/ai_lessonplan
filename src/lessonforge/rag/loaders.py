@@ -25,7 +25,7 @@ from .documents import Document
 # Recognized JSONL record fields (shared by the file loader and the in-memory
 # record path the corpus UI posts through). ``metadata`` fields may sit at the
 # top level or inside a nested ``metadata`` object; both are merged.
-_META_FIELDS: tuple[str, ...] = ("grade", "subject", "standard", "language", "topic")
+_META_FIELDS: tuple[str, ...] = ("grade", "subject", "standard", "language", "topic", "framework")
 _KNOWN: set[str] = {"id", "text", "source", "collection", "metadata", *_META_FIELDS}
 
 

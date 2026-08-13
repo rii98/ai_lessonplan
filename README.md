@@ -97,10 +97,25 @@ text is embedded with a complex-script font hint so it renders in Word/PowerPoin
 
 ## Grounding (RAG)
 
-Enrichment retrieves from four collections — `curriculum`, `pedagogical`,
-`exemplar`, `local_context` — and stamps the **real retrieved sources** into the
-lesson's `quality.grounding_sources` (a model can't invent a citation; the
-retrieved provenance wins).
+Enrichment retrieves from four collections and stamps the **real retrieved
+sources** into the lesson's `quality.grounding_sources` (a model can't invent a
+citation; the retrieved provenance wins). What each collection is for — so a
+teacher knows exactly what to put where — is documented in
+[`corpus/README.md`](corpus/README.md):
+
+| Collection | What belongs there |
+|------------|--------------------|
+| `curriculum`    | **what** students must learn — CDC/NEB outcomes, objectives, prior knowledge |
+| `pedagogical`   | **how** to teach — misconceptions + teaching strategies (the moat) |
+| `exemplar`      | **whole model lessons** (added phase-by-phase), tagged with their `framework` |
+| `local_context` | **local hooks** — Nepali places, crops, animals, festivals, daily life |
+
+**Framework-aware.** A lesson's framework (`5E`, `gradual_release`, `inquiry`) has
+its phase sequence fixed in code, so an inquiry lesson never copies 5E phases.
+`exemplar` records are tagged with a `framework` and retrieved only for that
+framework (a `gradual_release` build sees gradual-release examples, not 5E ones);
+`pedagogical`/`curriculum`/`local_context` stay framework-agnostic so misconceptions
+and local colour flow to every lesson.
 
 ```bash
 python -m lessonforge.rag.ingest --seed         # ingest corpus/seed/*.jsonl

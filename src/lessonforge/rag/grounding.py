@@ -59,7 +59,12 @@ class GroundingRetriever:
         return where or None
 
     def ground(
-        self, *, query: str, grade: int | None = None, subject: str | None = None
+        self,
+        *,
+        query: str,
+        grade: int | None = None,
+        subject: str | None = None,
+        framework: str | None = None,
     ) -> GroundingBundle:
         """Retrieve grounding for a brief across the configured collections.
 
@@ -67,9 +72,17 @@ class GroundingRetriever:
         nothing (e.g. the seed corpus lacks that exact grade), it retries the
         same collection unfiltered so grounding degrades to broader context
         rather than to nothing.
+
+        ``framework`` narrows only the collections in
+        ``framework_filter_collections`` (exemplars by default), so a
+        gradual_release build retrieves gradual_release exemplars instead of
+        being anchored on the seeded 5E ones. Framework-agnostic collections
+        (curriculum, local_context) are unaffected. The framework filter is a
+        *floor*: even the lenient fallback keeps it, so a build never falls back
+        to a wrong-framework exemplar — it broadens grade/subject only.
         """
         meta = {"grade": grade, "subject": subject}
-        where = self._filter(meta)
+        base_where = self._filter(meta)
         bundle = GroundingBundle()
         seen: set[str] = set()
 
@@ -78,7 +91,15 @@ class GroundingRetriever:
                 collection = Collection(name)
             except ValueError:
                 continue  # unknown collection name in config → skip, don't crash
-            chunks = self._retrieve(collection.value, query, where)
+            where = base_where
+            # The framework filter must survive the lenient fallback: broadening
+            # by grade/subject is fine, but a gradual_release build must never
+            # fall back to a 5E exemplar. So keep {framework} as the floor filter.
+            fallback_where: dict[str, Any] | None = None
+            if framework and collection.value in self.config.framework_filter_collections:
+                where = {**(base_where or {}), "framework": framework}
+                fallback_where = {"framework": framework}
+            chunks = self._retrieve(collection.value, query, where, fallback_where)
             bundle.chunks[collection.value] = chunks
             for c in chunks:
                 src = str(c.payload.get("source", "")).strip()
@@ -88,12 +109,21 @@ class GroundingRetriever:
         return bundle
 
     def _retrieve(
-        self, collection: str, query: str, where: dict[str, Any] | None
+        self,
+        collection: str,
+        query: str,
+        where: dict[str, Any] | None,
+        fallback_where: dict[str, Any] | None = None,
     ) -> list[RetrievedChunk]:
+        """Retrieve with a lenient fallback: if the fully-filtered query returns
+        nothing, retry with ``fallback_where`` (the floor filter that must not be
+        dropped — e.g. framework) and, failing that, unfiltered."""
         top_n = self.config.per_collection_top_n
         try:
             hits = self.retriever.retrieve(collection, query, where=where, top_n=top_n)
-            if not hits and where:  # lenient fallback: broaden by dropping filters
+            if not hits and fallback_where and fallback_where != where:
+                hits = self.retriever.retrieve(collection, query, where=fallback_where, top_n=top_n)
+            if not hits and where and not fallback_where:  # broaden fully
                 hits = self.retriever.retrieve(collection, query, where=None, top_n=top_n)
             return hits
         except Exception:

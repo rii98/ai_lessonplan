@@ -90,6 +90,50 @@ def test_retrieval_error_degrades_to_empty(fake_embedder, fake_store, fake_reran
     assert bundle.is_empty
 
 
+def test_framework_filters_exemplars_but_not_agnostic_collections(
+    fake_embedder, fake_store, fake_reranker
+):
+    ing = Ingestor(embedder=fake_embedder, vector_store=fake_store)
+    # two exemplars, same grade/subject, different frameworks
+    ing.ingest_documents(Collection.exemplar, [
+        Document(id="e5e", text="components lesson done the 5E way", source="ex5E",
+                 metadata={"grade": 6, "subject": "Science", "framework": "5E"}),
+        Document(id="einq", text="components lesson done the inquiry way", source="exINQ",
+                 metadata={"grade": 6, "subject": "Science", "framework": "inquiry"}),
+    ])
+    # a framework-agnostic collection with no framework tag
+    ing.ingest_documents(Collection.curriculum, [
+        Document(id="c1", text="classify biotic and abiotic components", source="cur",
+                 metadata={"grade": 6, "subject": "Science"}),
+    ])
+    g = _grounder(fake_embedder, fake_store, fake_reranker)
+
+    bundle = g.ground(query="components", grade=6, subject="Science", framework="inquiry")
+    ex_sources = {c.payload["source"] for c in bundle.chunks["exemplar"]}
+    assert ex_sources == {"exINQ"}  # only the inquiry exemplar survives the filter
+    # curriculum is framework-agnostic → still retrieved despite the framework arg
+    assert bundle.chunks["curriculum"]
+
+
+def test_framework_filter_is_sticky_through_lenient_fallback(
+    fake_embedder, fake_store, fake_reranker
+):
+    # only a gradual_release exemplar exists, for Mathematics. A Science query
+    # must broaden by subject but NEVER fall back to the 5E exemplar.
+    ing = Ingestor(embedder=fake_embedder, vector_store=fake_store)
+    ing.ingest_documents(Collection.exemplar, [
+        Document(id="e5e", text="a 5E components lesson", source="ex5E",
+                 metadata={"grade": 6, "subject": "Science", "framework": "5E"}),
+        Document(id="egr", text="a gradual release area lesson", source="exGR",
+                 metadata={"grade": 6, "subject": "Mathematics", "framework": "gradual_release"}),
+    ])
+    g = _grounder(fake_embedder, fake_store, fake_reranker)
+    bundle = g.ground(query="lesson", grade=6, subject="Science",
+                      framework="gradual_release")
+    frameworks = {c.payload.get("framework") for c in bundle.chunks["exemplar"]}
+    assert frameworks == {"gradual_release"}  # broadened subject, kept framework
+
+
 def test_no_filter_fields_queries_unfiltered(fake_embedder, fake_store, fake_reranker):
     _seed(fake_embedder, fake_store)
     cfg = GroundingConfig(filter_fields=[])
