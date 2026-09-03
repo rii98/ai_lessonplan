@@ -28,17 +28,22 @@ from ..domain.ldd import LessonDesignDocument, Question, QuestionType
 from ..rag.grounding import ensure_sources
 from .base import ArtifactKind, ExportOptions, RenderedArtifact, Renderer, timing_summary
 from .registry import register_renderer
+from .richtext import parse_inline
 
 _MEDIA = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_MONO = "Consolas"
 
 
-def _style_run(run: Run, opts: ExportOptions) -> None:
-    """Set Latin *and* complex-script fonts on a run so Devanagari shapes."""
-    run.font.name = opts.body_font
+def _style_run(run: Run, opts: ExportOptions, *, mono: bool = False) -> None:
+    """Set Latin *and* complex-script fonts on a run so Devanagari shapes.
+    Inline code uses a monospace face for the Latin slots but keeps the
+    Devanagari font on the complex-script slot."""
+    face = _MONO if mono else opts.body_font
+    run.font.name = face
     rpr = run._element.get_or_add_rPr()
     rfonts = rpr.get_or_add_rFonts()
-    rfonts.set(qn("w:ascii"), opts.body_font)
-    rfonts.set(qn("w:hAnsi"), opts.body_font)
+    rfonts.set(qn("w:ascii"), face)
+    rfonts.set(qn("w:hAnsi"), face)
     # complex-script slot → Devanagari-capable font
     rfonts.set(qn("w:cs"), opts.devanagari_font)
 
@@ -46,15 +51,29 @@ def _style_run(run: Run, opts: ExportOptions) -> None:
 def _run(paragraph, text: str, opts: ExportOptions, *, bold: bool = False,
          italic: bool = False, size: int | None = None,
          color: RGBColor | None = None) -> Run:
-    run = paragraph.add_run(text)
-    run.bold = bold
-    run.italic = italic
-    if size is not None:
-        run.font.size = Pt(size)
-    if color is not None:
-        run.font.color.rgb = color
-    _style_run(run, opts)
-    return run
+    """Append ``text`` to ``paragraph`` as one or more styled runs.
+
+    Inline Markdown (``**bold**``, ``*italic*``, ``` `code` ```) and LaTeX math
+    ($…$, $$…$$, \\(..\\), \\[..\\]) in ``text`` are honoured — bold/italic/code
+    become real Word runs and math is transliterated to Unicode — instead of
+    leaking as literal ``$``/``**`` characters. ``bold``/``italic`` set the base
+    style each segment is layered on top of. Returns the last run created (only
+    used to keep call sites happy; callers ignore it)."""
+    last: Run | None = None
+    for seg in parse_inline(text):
+        run = paragraph.add_run(seg.text)
+        run.bold = bold or seg.bold
+        run.italic = italic or seg.italic
+        if size is not None:
+            run.font.size = Pt(size)
+        if color is not None:
+            run.font.color.rgb = color
+        _style_run(run, opts, mono=seg.code)
+        last = run
+    if last is None:  # empty text → still emit an (empty) run so layout is stable
+        last = paragraph.add_run("")
+        _style_run(last, opts)
+    return last
 
 
 _ACCENT = RGBColor(0x1F, 0x4E, 0x79)
