@@ -247,6 +247,30 @@ class ChatRetrievalConfig(BaseModel):
     filter_fields: list[str] = Field(default_factory=lambda: ["grade", "subject", "class"])
     default_mode: str = "scoped"  # scoped | broad
 
+    # ── coverage + priority over the reranked union (all opt-in) ───────────────
+    # Pure reranking is collection-blind: one lexically-strong collection can take
+    # every slot and starve the rest. These knobs layer a *soft* coverage floor and
+    # a priority bias on top of relevance, applied AFTER reranking so the reranker's
+    # judgment within each collection is preserved. Defaults (0 / empty / None) =
+    # pure-relevance behaviour, unchanged.
+    #
+    # ``min_per_collection`` guarantees each retrieved collection contributes at
+    # least this many chunks (a floor, taken from its best-reranked hits);
+    # ``min_per_collection_overrides`` raises it per collection (e.g. reference: 2).
+    # Floors are soft: an empty/weak collection leaves its slots to the general
+    # pool — never padded. If the floors sum past ``rerank_top_n`` they are granted
+    # in priority order (weight desc, then config order) until the budget is spent.
+    min_per_collection: int = 0
+    min_per_collection_overrides: dict[str, int] = Field(default_factory=dict)
+    # Ranking bias: final_score = rerank_score * weight (default 1.0). A gentle
+    # nudge to surface authoritative sources (e.g. reference: 1.2) first in the
+    # citation order — keep it small; large weights defeat the reranker.
+    collection_weights: dict[str, float] = Field(default_factory=dict)
+    # Relevance floor for filling a reserved slot: a chunk below this rerank score
+    # is never force-included by a quota. None disables it (reranker score scales
+    # vary — tune once you've seen your reranker's distribution).
+    min_score: float | None = None
+
 
 class ChatQueryTransformConfig(BaseModel):
     """The advanced query-understanding stage. Each technique is independently

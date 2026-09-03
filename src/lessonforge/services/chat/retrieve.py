@@ -63,7 +63,8 @@ class ChatRetriever:
             fused = self._gather(cols, transformed.queries, None)
         if not fused:
             return []
-        return self._rerank(transformed.standalone, fused)
+        reranked = self._rerank(transformed.standalone, fused)
+        return self._select(reranked)
 
     # ── internals ──────────────────────────────────────────────────────────────
     def _collections(self, override: list[str] | None) -> list[str]:
@@ -110,16 +111,18 @@ class ChatRetriever:
     def _rerank(
         self, query: str, fused: dict[str, tuple[ScoredChunk, float]]
     ) -> list[ScoredChunk]:
-        """Rerank the fused union against the standalone question, then keep
-        ``rerank_top_n``. Falls back to the fused (RRF) order if reranking fails."""
-        # order fused candidates by RRF first so a reranker cap still sees the best
+        """Rerank the ENTIRE fused union against the standalone question (not just
+        the final top-N), so the downstream selection has per-collection visibility
+        to honour coverage floors. Falls back to the fused (RRF) order if reranking
+        fails. Selection (:meth:`_select`) applies weights + quotas and caps to
+        ``rerank_top_n``."""
         candidates = [c for c, _ in sorted(fused.values(), key=lambda t: t[1], reverse=True)]
         try:
             ranked = self.retriever.reranker.rerank(
-                query, [c.text for c in candidates], top_n=self.config.rerank_top_n
+                query, [c.text for c in candidates], top_n=len(candidates)
             )
         except Exception:
-            return candidates[: self.config.rerank_top_n]
+            return candidates  # RRF order; scores are the RRF contributions
         out: list[ScoredChunk] = []
         for r in ranked:
             chunk = candidates[r.index]
@@ -130,6 +133,86 @@ class ChatRetriever:
                 )
             )
         return out
+
+    # ── coverage-aware selection over the reranked union ────────────────────────
+    def _weight(self, collection: str) -> float:
+        return self.config.collection_weights.get(collection, 1.0)
+
+    def _wscore(self, chunk: ScoredChunk) -> float:
+        """Priority-biased score used for ordering and general fill."""
+        return chunk.score * self._weight(chunk.collection)
+
+    def _quota_active(self) -> bool:
+        return self.config.min_per_collection > 0 or any(
+            v > 0 for v in self.config.min_per_collection_overrides.values()
+        )
+
+    def _priority_order(self, collections) -> list[str]:
+        """Collections ranked by priority: higher weight first, then config order —
+        the order floors are granted in when they compete for a tight budget."""
+        idx = {name: i for i, name in enumerate(self.config.collections)}
+        return sorted(collections, key=lambda c: (-self._weight(c), idx.get(c, 1_000)))
+
+    def _resolve_floors(self, collections, top_n: int) -> dict[str, int]:
+        """Per-collection minimum, capped so the floors never sum past ``top_n``;
+        granted in priority order until the budget is spent."""
+        base = self.config.min_per_collection
+        overrides = self.config.min_per_collection_overrides
+        floors: dict[str, int] = {}
+        total = 0
+        for col in self._priority_order(collections):
+            want = max(0, overrides.get(col, base))
+            grant = min(want, max(0, top_n - total))
+            floors[col] = grant
+            total += grant
+        return floors
+
+    def _passes_floor(self, chunk: ScoredChunk) -> bool:
+        return self.config.min_score is None or chunk.score >= self.config.min_score
+
+    def _select(self, reranked: list[ScoredChunk]) -> list[ScoredChunk]:
+        """Turn the fully-reranked union into the final set: apply priority weights,
+        reserve soft per-collection floors, fill the rest by weighted relevance, and
+        order authoritative/priority collections first. With no weights and no
+        quotas configured this is exactly ``reranked[:rerank_top_n]``."""
+        top_n = self.config.rerank_top_n
+        ordered = sorted(reranked, key=self._wscore, reverse=True)
+        if not self._quota_active():
+            return ordered[:top_n]
+
+        # group the weighted-ordered chunks by collection (floor-eligible only)
+        by_col: dict[str, list[ScoredChunk]] = {}
+        for chunk in ordered:
+            if self._passes_floor(chunk):
+                by_col.setdefault(chunk.collection, []).append(chunk)
+
+        floors = self._resolve_floors(by_col.keys(), top_n)
+        selected: list[ScoredChunk] = []
+        taken: set[str] = set()
+
+        # Phase 1 — reserve each collection's best chunks up to its (soft) floor.
+        for col in self._priority_order(by_col.keys()):
+            for chunk in by_col[col][: floors.get(col, 0)]:
+                if len(selected) >= top_n:
+                    break
+                selected.append(chunk)
+                taken.add(self._key(chunk))
+
+        # Phase 2 — fill remaining slots from the global weighted order. Slots left
+        # by unmet floors (empty/weak collections) are recycled here, never wasted.
+        for chunk in ordered:
+            if len(selected) >= top_n:
+                break
+            key = self._key(chunk)
+            if key in taken or not self._passes_floor(chunk):
+                continue
+            selected.append(chunk)
+            taken.add(key)
+
+        # Final order: weighted score, so priority sources lead the citations (and
+        # sit earlier in the prompt, where they get more of the model's attention).
+        selected.sort(key=self._wscore, reverse=True)
+        return selected[:top_n]
 
     @staticmethod
     def _to_chunk(hit: Any, collection: str) -> ScoredChunk:

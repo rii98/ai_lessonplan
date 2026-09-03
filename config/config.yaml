@@ -127,9 +127,18 @@ chat:
     collections: [reference, curriculum, pedagogical, exemplar, local_context]
     per_collection_top_n: 4             # candidates pulled from each collection, per query
     top_k: 20                           # dense/hybrid candidate pool (from retrieval.top_k)
-    rerank_top_n: 6                     # kept after fusing + reranking across queries
+    rerank_top_n: 8                     # kept after fusing + reranking across queries
     filter_fields: [grade, subject, class]   # which default tags become scoped-mode filters
     default_mode: scoped                # scoped (apply tag filters) | broad (search everything)
+    # Coverage + priority over the reranked union (all soft, applied after rerank).
+    # Pure reranking is collection-blind — one strong collection can take every slot.
+    min_per_collection: 1               # floor: each retrieved collection gets ≥ this many
+    min_per_collection_overrides:       # raise the floor for specific collections
+      reference: 2                      # the authoritative course material earns more
+    collection_weights:                 # ranking bias (final = score × weight); keep small
+      reference: 1.2                    # surface authoritative sources first in the citations
+    # min_score: 0.0                    # floor to skip filling a reserved slot with a weak hit
+    #                                   # (leave unset unless you've tuned it to your reranker)
   query_transform:
     provider: llm                       # ← swap: llm | passthrough (no LLM)
     condense_history: true              # rewrite follow-ups into standalone queries
