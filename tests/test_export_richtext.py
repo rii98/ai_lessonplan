@@ -64,6 +64,59 @@ def test_empty_and_plain():
     assert parse_inline("just text") == [Segment("just text")]
 
 
+# ── fenced code blocks ───────────────────────────────────────────────────────
+
+def test_inline_code_is_monospace_segment():
+    segs = parse_inline("call `solve()` here")
+    assert Segment("solve()", code=True) in segs
+
+
+def test_fenced_block_drops_fence_and_language():
+    segs = parse_inline("Example:\n```python\ndef f(x):\n    return x*x\n```\ndone")
+    block = [s for s in segs if s.block]
+    assert len(block) == 1
+    assert block[0].code and block[0].text == "def f(x):\n    return x*x"
+    # neither the fence nor the language tag leaks into any segment
+    joined = "".join(s.text for s in segs)
+    assert "```" not in joined and "python" not in joined
+
+
+def test_fenced_block_without_language():
+    segs = parse_inline("```\nplain\ncode\n```")
+    assert next(s for s in segs if s.block).text == "plain\ncode"
+
+
+# ── inline HTML ──────────────────────────────────────────────────────────────
+
+def test_html_formatting_tags_become_styles():
+    segs = parse_inline("a <b>bold</b> <i>it</i> <code>c=1</code>")
+    assert Segment("bold", bold=True) in segs
+    assert Segment("it", italic=True) in segs
+    assert Segment("c=1", code=True) in segs
+
+
+def test_html_entities_are_decoded():
+    segs = parse_inline("5 &lt; 10 &amp; 3 &gt; 1 &#39;q&#39;")
+    assert "".join(s.text for s in segs) == "5 < 10 & 3 > 1 'q'"
+
+
+def test_html_br_becomes_newline():
+    segs = parse_inline("line one<br>line two")
+    assert "\n" in "".join(s.text for s in segs)
+
+
+def test_html_block_structure_degrades_without_garbage():
+    # a table has no faithful inline form; keep the text, drop the angle brackets
+    segs = parse_inline("<table><tr><td>a</td><td>b</td></tr></table>")
+    joined = "".join(s.text for s in segs)
+    assert "<" not in joined and ">" not in joined and "ab" in joined
+
+
+def test_plain_text_with_ampersand_or_angle_is_untouched():
+    # not HTML — a bare "<" / "&" must survive verbatim
+    assert parse_inline("a < b and x & y")[0].text == "a < b and x & y"
+
+
 # ── end-to-end through the renderers ─────────────────────────────────────────
 
 def _docx_runs(export_ldd):

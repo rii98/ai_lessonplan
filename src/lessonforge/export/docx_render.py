@@ -53,15 +53,21 @@ def _run(paragraph, text: str, opts: ExportOptions, *, bold: bool = False,
          color: RGBColor | None = None) -> Run:
     """Append ``text`` to ``paragraph`` as one or more styled runs.
 
-    Inline Markdown (``**bold**``, ``*italic*``, ``` `code` ```) and LaTeX math
-    ($…$, $$…$$, \\(..\\), \\[..\\]) in ``text`` are honoured — bold/italic/code
-    become real Word runs and math is transliterated to Unicode — instead of
-    leaking as literal ``$``/``**`` characters. ``bold``/``italic`` set the base
-    style each segment is layered on top of. Returns the last run created (only
-    used to keep call sites happy; callers ignore it)."""
+    Inline Markdown (``**bold**``, ``*italic*``, ``` `code` ```), fenced code
+    blocks, inline HTML (``<b>``, ``<code>``, ``<br>``, entities) and LaTeX math
+    ($…$, $$…$$, \\(..\\), \\[..\\]) in ``text`` are honoured — emphasis/code
+    become real Word runs, HTML folds onto the same styles, and math is
+    transliterated to Unicode — instead of leaking as literal markup. Newlines
+    (from a fenced block or ``<br>``) become real line breaks. ``bold``/
+    ``italic`` set the base style each segment is layered on top of. Returns the
+    last run created (callers ignore it)."""
     last: Run | None = None
     for seg in parse_inline(text):
-        run = paragraph.add_run(seg.text)
+        lines = seg.text.split("\n")
+        run = paragraph.add_run(lines[0])
+        for extra in lines[1:]:            # newline → real Word line break
+            run.add_break()
+            run.add_text(extra)
         run.bold = bold or seg.bold
         run.italic = italic or seg.italic
         if size is not None:

@@ -18,18 +18,25 @@ raw backslashes, so the output is always legible.
 
 from __future__ import annotations
 
+import html as _html
 import re
 from dataclasses import dataclass
 
 
 @dataclass
 class Segment:
-    """A run of text with the inline styles that apply to it."""
+    """A run of text with the inline styles that apply to it.
+
+    ``block`` marks a segment that must stand on its own line(s) — a fenced code
+    block — so renderers give it a paragraph rather than flowing it inline. Its
+    ``text`` may contain newlines, which renderers turn into real line breaks.
+    """
 
     text: str
     bold: bool = False
     italic: bool = False
     code: bool = False
+    block: bool = False
 
 
 # ── LaTeX → Unicode ──────────────────────────────────────────────────────────
@@ -179,6 +186,43 @@ def _needs_parens(u: str) -> bool:
     return bool(re.search(r"[+\-−±/ ]", u.strip())) or len(u.strip()) > 3
 
 
+# ── HTML → Markdown ──────────────────────────────────────────────────────────
+
+# The LLM is asked for Markdown, but may emit HTML. There is no faithful .docx /
+# .pptx equivalent for arbitrary HTML, so we fold the common inline formatting
+# tags onto their Markdown spelling, turn <br> into a newline, drop every other
+# tag (keeping its text), then decode entities. Block structure (tables, lists)
+# is lost rather than dumped as angle-bracket garbage.
+_TAG_TO_MD = {
+    "b": "**", "strong": "**", "i": "*", "em": "*",
+    "code": "`", "tt": "`", "kbd": "`", "samp": "`",
+}
+_HTML_TAG = re.compile(r"</?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>")
+_BR = re.compile(r"<br\s*/?>", re.IGNORECASE)
+_BLOCK_END = re.compile(r"</(p|div|li|tr|h[1-6])>", re.IGNORECASE)
+
+
+def _looks_like_html(s: str) -> bool:
+    return "<" in s and bool(_HTML_TAG.search(s)) or "&" in s
+
+
+def _html_to_markdown(s: str) -> str:
+    if not _looks_like_html(s):
+        return s
+    s = _BR.sub("\n", s)
+    s = _BLOCK_END.sub("\n", s)           # close of a block element → line break
+    s = _HTML_TAG.sub(lambda m: _TAG_TO_MD.get(m.group(1).lower(), ""), s)
+    s = _html.unescape(s)                 # &lt; &amp; &#39; … → characters
+    return re.sub(r"\n{3,}", "\n\n", s).strip("\n")
+
+
+# ── fenced code blocks ───────────────────────────────────────────────────────
+
+# ```lang\n … ``` → one block segment; the language tag and fences are dropped
+# so they never leak, and the body keeps its newlines for real line breaks.
+_FENCE = re.compile(r"```[ \t]*[\w+.-]*[ \t]*\r?\n?(.*?)```", re.DOTALL)
+
+
 # ── inline Markdown ──────────────────────────────────────────────────────────
 
 _MATH_PATTERNS = (
@@ -187,8 +231,8 @@ _MATH_PATTERNS = (
     re.compile(r"\\\((.+?)\\\)", re.DOTALL),          # \( … \)
     re.compile(r"\$(?!\s)(.+?)(?<!\s)\$", re.DOTALL),  # $ … $  (tight, skips "$5")
 )
-_O, _C = chr(0xE000), chr(0xE001)  # private-use sentinels for stashed math
-_PLACEHOLDER = re.compile(_O + r"(\d+)" + _C)
+_O, _C = chr(0xE000), chr(0xE001)  # private-use sentinels for stashed spans
+_PLACEHOLDER = re.compile(_O + r"([mc])(\d+)" + _C)
 # code, then **bold**, then *italic* (italic tight so "a * b" is left alone)
 _INLINE = re.compile(r"`([^`]+)`|\*\*(.+?)\*\*|\*(?!\s)([^*]+?)(?<!\s)\*", re.DOTALL)
 
@@ -212,31 +256,45 @@ def _parse_emphasis(s: str) -> list[Segment]:
 
 
 def parse_inline(text: str) -> list[Segment]:
-    """Split ``text`` into styled segments, converting LaTeX math to Unicode.
+    """Split ``text`` into styled segments.
 
-    Math is stashed out first so Markdown parsing never mangles a backslash or
-    caret that belongs to LaTeX — the same protect-first order the web renderer
-    uses. Returns ``[]`` only for empty input.
+    Handles, in a protect-first order (so each stage never mangles the next):
+    fenced code blocks, LaTeX math (→ Unicode), inline HTML (→ Markdown +
+    decoded entities), then Markdown emphasis / inline code. Fenced blocks and
+    math are stashed behind sentinels before any Markdown or HTML rewriting runs,
+    the same discipline the web renderer uses. Returns ``[]`` only for empty
+    input.
     """
     if not text:
         return []
+    code_blocks: list[str] = []
     math: list[str] = []
 
-    def _stash(m: re.Match[str]) -> str:
-        math.append(latex_to_unicode(m.group(1)))
-        return f"{_O}{len(math) - 1}{_C}"
+    def _stash_code(m: re.Match[str]) -> str:
+        code_blocks.append(m.group(1).rstrip("\n"))
+        return f"{_O}c{len(code_blocks) - 1}{_C}"
 
-    protected = text
-    for pat in _MATH_PATTERNS:
-        protected = pat.sub(_stash, protected)
+    def _stash_math(m: re.Match[str]) -> str:
+        math.append(latex_to_unicode(m.group(1)))
+        return f"{_O}m{len(math) - 1}{_C}"
+
+    protected = _FENCE.sub(_stash_code, text)   # fenced code first (literal)
+    for pat in _MATH_PATTERNS:                  # then math (before HTML/Markdown)
+        protected = pat.sub(_stash_math, protected)
+    protected = _html_to_markdown(protected)    # HTML → Markdown + entities
 
     out: list[Segment] = []
     for seg in _parse_emphasis(protected):
         parts = _PLACEHOLDER.split(seg.text)
-        for idx, part in enumerate(parts):
-            if idx % 2 == 0:
-                if part:
-                    out.append(Segment(part, seg.bold, seg.italic, seg.code))
-            else:  # a stashed math run — render italic, math convention
-                out.append(Segment(math[int(part)], seg.bold, True, False))
+        # split() yields: text, kind, index, text, kind, index, … so step by 3
+        for idx in range(0, len(parts), 3):
+            plain = parts[idx]
+            if plain:
+                out.append(Segment(plain, seg.bold, seg.italic, seg.code))
+            if idx + 2 < len(parts):
+                kind, num = parts[idx + 1], int(parts[idx + 2])
+                if kind == "m":  # math run — italic, math convention
+                    out.append(Segment(math[num], seg.bold, True, False))
+                else:            # fenced code block — its own monospace lines
+                    out.append(Segment(code_blocks[num], code=True, block=True))
     return out or [Segment(text)]

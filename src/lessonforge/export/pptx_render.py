@@ -47,18 +47,27 @@ def _style_run(run, opts: ExportOptions, *, mono: bool = False) -> None:
 def _add_rich(para, text: str, opts: ExportOptions, *, size: int,
               bold: bool = False, color=None) -> None:
     """Add ``text`` to a paragraph as styled runs, honouring inline Markdown
-    (**bold**, *italic*, `code`) and transliterating LaTeX math to Unicode —
-    the PPTX counterpart to the DOCX ``_run`` helper."""
+    (**bold**, *italic*, `code`), fenced code blocks, inline HTML (<b>, <code>,
+    <br>, entities) and transliterating LaTeX math to Unicode — the PPTX
+    counterpart to the DOCX ``_run`` helper. Newlines become soft line breaks."""
     from pptx.util import Pt as _Pt
-    for seg in parse_inline(text) or [None]:
+
+    def _emit(chunk: str, seg) -> None:
         run = para.add_run()
-        run.text = "" if seg is None else seg.text
+        run.text = chunk
         run.font.size = _Pt(size)
         run.font.bold = bool(bold or (seg and seg.bold))
         run.font.italic = bool(seg and seg.italic)
         if color is not None:
             run.font.color.rgb = color
         _style_run(run, opts, mono=bool(seg and seg.code))
+
+    for seg in parse_inline(text) or [None]:
+        lines = (seg.text if seg else "").split("\n")
+        _emit(lines[0], seg)
+        for extra in lines[1:]:            # newline → line break within the run
+            para.add_line_break()
+            _emit(extra, seg)
 
 
 @register_renderer(ArtifactKind.slides, "pptx")
