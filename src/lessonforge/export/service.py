@@ -39,10 +39,22 @@ class ExportService:
     def render(
         self, kind: ArtifactKind, ldd: LessonDesignDocument, *, fmt: str | None = None
     ) -> RenderedArtifact:
-        """Render a single artifact. ``fmt`` overrides the configured default."""
+        """Render a single artifact from a full lesson. ``fmt`` overrides the
+        configured default. The targeted renderers project the LDD into their IR
+        themselves, so this serves lesson_plan/slides/worksheet/quiz uniformly."""
         chosen = fmt or self.default_format(kind)
         renderer = build_renderer(kind, chosen, self.options)
         return renderer.render(ldd)
+
+    def render_artifact(
+        self, kind: ArtifactKind, ir: object, *, fmt: str | None = None
+    ) -> RenderedArtifact:
+        """Render a *standalone* artifact IR (a ``Quiz``/``Worksheet``/``Slides``
+        produced by targeted generation) — no lesson required. Same renderer as
+        the lesson-export path; the renderer accepts either shape."""
+        chosen = fmt or self.default_format(kind)
+        renderer = build_renderer(kind, chosen, self.options)
+        return renderer.render(ir)
 
     def bundle(
         self, ldd: LessonDesignDocument, *, kinds: list[ArtifactKind] | None = None

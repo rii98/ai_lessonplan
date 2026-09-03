@@ -141,15 +141,35 @@ class RetrievalConfig(BaseModel):
     rerank_top_n: int = 5
 
 
+class ChunkingConfig(BaseModel):
+    """How raw documents are split before embedding. ``default`` names the chunker
+    for any source; ``by_format`` overrides it per loader format (so markdown books
+    get the structure-aware chunker while JSONL keeps paragraph packing). ``params``
+    are constructor kwargs passed to whichever chunker is built — one place to tune
+    ``max_chars``/``min_chars`` without code. Chunker names resolve through the
+    chunker registry (``rag.chunkers.build_chunker``)."""
+
+    default: str = "paragraph"
+    by_format: dict[str, str] = Field(default_factory=lambda: {"markdown": "markdown"})
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class GroundingConfig(BaseModel):
     """Which collections enrichment retrieves from, how much each contributes,
     and which brief fields become metadata filters. All swappable from config."""
 
     collections: list[str] = Field(
-        default_factory=lambda: ["curriculum", "pedagogical", "exemplar", "local_context"]
+        default_factory=lambda: [
+            "reference", "curriculum", "pedagogical", "exemplar", "local_context",
+        ]
     )
     per_collection_top_n: int = 3
     filter_fields: list[str] = Field(default_factory=lambda: ["grade", "subject"])
+    # Collections whose material is authoritative course content: when they return
+    # hits, the prompt is told to PREFER them over the model's general knowledge and
+    # to cite them. When they're empty (no book ingested for this topic), grounding
+    # degrades to the model's own reasoning — no special-casing needed.
+    authoritative_collections: list[str] = Field(default_factory=lambda: ["reference"])
     # Collections whose records are ALSO filtered by the lesson's framework, so a
     # gradual_release build retrieves gradual_release exemplars — not 5E ones.
     # Only collections whose records carry a `framework` tag belong here
@@ -201,6 +221,7 @@ class Settings(BaseSettings):
     reranker: RerankerConfig
     vector_store: VectorStoreConfig
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     grounding: GroundingConfig = Field(default_factory=GroundingConfig)
     intake: IntakeConfig = Field(default_factory=IntakeConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)

@@ -211,6 +211,25 @@
         <button class="primary" id="generate">Generate lesson</button>
         <span class="status" id="genStatus"></span>
       </div>
+
+      <!-- ── Targeted generation: just one artifact from the same brief ── -->
+      <div class="row" style="margin-top:12px; flex-wrap:wrap; gap:6px; align-items:center">
+        <span class="sub" style="width:100%; margin:0">…or generate just one thing (no full lesson):</span>
+        <button class="ghost" data-artifact="quiz">Just a quiz</button>
+        <button class="ghost" data-artifact="worksheet">Just a worksheet</button>
+        <button class="ghost" data-artifact="slides">Just slides</button>
+        <span class="status" id="artifactStatus"></span>
+      </div>
+      <div class="hidden" id="artifactPanel" style="margin-top:8px">
+        <label class="f"><span>Generated <b id="artifactKindLabel"></b> — edit the JSON if you like, then export</span>
+          <textarea id="artifactJson" spellcheck="false" style="min-height:200px; font-family:ui-monospace,Menlo,Consolas,monospace"></textarea>
+        </label>
+        <div class="row" style="gap:6px; align-items:center">
+          <select id="artifactFmt"></select>
+          <button class="primary" id="artifactExport">Export</button>
+          <span class="status" id="artifactExportStatus"></span>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -377,6 +396,63 @@ $("generate").addEventListener("click", async () => {
     $("reviewCard").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (err) { st.className = "status err"; st.textContent = "Network error: " + err.message; }
   finally { $("generate").disabled = false; }
+});
+
+// ── Targeted artifact generation (quiz / worksheet / slides) ─────────────────
+// Independent of the lesson pipeline: generate one artifact's editable IR from the
+// same brief, then export it. Formats come from /artifacts/manifest.
+let artifactKind = null;
+const artifactFormats = {};
+(async () => {
+  try {
+    const r = await api("GET", "/artifacts/manifest");
+    if (r.ok) (await r.json()).generatable.forEach((g) => { artifactFormats[g.kind] = g.formats; });
+  } catch (_) { /* manifest is best-effort; export falls back to docx */ }
+})();
+
+async function generateArtifact(kind) {
+  artifactKind = kind;
+  const st = $("artifactStatus"); st.className = "status";
+  st.innerHTML = '<span class="spinner"></span> Generating the ' + kind + ' (intake → grounding)…';
+  document.querySelectorAll("[data-artifact]").forEach((b) => (b.disabled = true));
+  try {
+    const res = await api("POST", "/artifacts/" + kind + "/generate", readBrief());
+    if (!res.ok) { const e = await res.json().catch(() => ({}));
+      st.className = "status err";
+      st.textContent = "Failed: " + (typeof e.detail === "string" ? e.detail : res.status); return; }
+    const ir = await res.json();
+    $("artifactKindLabel").textContent = kind;
+    $("artifactJson").value = JSON.stringify(ir, null, 2);
+    const fmts = artifactFormats[kind] || ["docx"];
+    $("artifactFmt").innerHTML = "";
+    fmts.forEach((f) => $("artifactFmt").append(h("option", { value: f }, f)));
+    $("artifactPanel").classList.remove("hidden");
+    st.textContent = kind + " ready — edit the JSON if you like, then export.";
+  } catch (err) { st.className = "status err"; st.textContent = "Network error: " + err.message; }
+  finally { document.querySelectorAll("[data-artifact]").forEach((b) => (b.disabled = false)); }
+}
+document.querySelectorAll("[data-artifact]").forEach((btn) =>
+  btn.addEventListener("click", () => generateArtifact(btn.dataset.artifact)));
+
+$("artifactExport").addEventListener("click", async () => {
+  const st = $("artifactExportStatus"); st.className = "status";
+  let ir;
+  try { ir = JSON.parse($("artifactJson").value); }
+  catch (e) { st.className = "status err"; st.textContent = "The JSON is invalid: " + e.message; return; }
+  const fmt = $("artifactFmt").value;
+  st.innerHTML = '<span class="spinner"></span> Rendering…';
+  try {
+    const res = await api("POST", "/artifacts/" + artifactKind + "/export?fmt=" + encodeURIComponent(fmt), ir);
+    if (!res.ok) { const e = await res.json().catch(() => ({}));
+      st.className = "status err";
+      st.textContent = "Export rejected: " + (typeof e.detail === "string" ? e.detail : "the artifact failed validation.");
+      return; }
+    const blob = await res.blob();
+    const name = filenameFrom(res, artifactKind + "." + fmt);
+    const a = h("a", { href: URL.createObjectURL(blob), download: name });
+    document.body.append(a); a.click(); a.remove();
+    st.textContent = "Downloaded " + name;
+  } catch (err) { st.className = "status err"; st.textContent = "Network error: " + err.message; }
 });
 
 // ── LDD editor (source of truth = `ldd`) ─────────────────────────────────────

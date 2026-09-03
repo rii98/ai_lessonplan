@@ -54,7 +54,13 @@ class ExportOptions:
 
 
 class Renderer(ABC):
-    """Compiles one artifact kind into one output format."""
+    """Compiles one artifact kind into one output format.
+
+    ``render`` accepts either the artifact's own IR (``Quiz``/``Worksheet``/
+    ``Slides``) or a full ``LessonDesignDocument`` — the targeted renderers
+    ``coerce`` a lesson into their IR, so the same renderer serves both the
+    standalone-generation and export-from-a-lesson paths. The shared helpers only
+    depend on a ``.topic`` attribute, which every renderable carries."""
 
     kind: ClassVar[ArtifactKind]
     fmt: ClassVar[str]
@@ -65,18 +71,18 @@ class Renderer(ABC):
         self.options = options or ExportOptions()
 
     @abstractmethod
-    def render(self, ldd: LessonDesignDocument) -> RenderedArtifact:
-        """Produce the artifact bytes for ``ldd``."""
+    def render(self, source: object) -> RenderedArtifact:
+        """Produce the artifact bytes for ``source`` (an IR or a full LDD)."""
 
-    # ── shared helpers ──────────────────────────────────────────────────────
-    def _filename(self, ldd: LessonDesignDocument) -> str:
-        return f"{slugify(ldd.topic)}_{self.kind.value}.{self.extension}"
+    # ── shared helpers (depend only on ``.topic``) ──────────────────────────
+    def _filename(self, doc: object) -> str:
+        return f"{slugify(doc.topic)}_{self.kind.value}.{self.extension}"
 
-    def _artifact(self, ldd: LessonDesignDocument, content: bytes) -> RenderedArtifact:
+    def _artifact(self, doc: object, content: bytes) -> RenderedArtifact:
         return RenderedArtifact(
             kind=self.kind,
             fmt=self.fmt,
-            filename=self._filename(ldd),
+            filename=self._filename(doc),
             media_type=self.media_type,
             content=content,
         )

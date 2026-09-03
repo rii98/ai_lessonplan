@@ -20,6 +20,8 @@ from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .documents import Document
 
 # Recognized JSONL record fields (shared by the file loader and the in-memory
@@ -124,12 +126,55 @@ class JsonlLoader(Loader):
 @register_loader("markdown")
 class MarkdownLoader(Loader):
     """Load a whole Markdown file as one document. The chunker splits it into
-    sections; useful for ingesting an exemplar lesson (e.g. ``lp1.md``) directly.
-    Metadata may be supplied out-of-band by the caller via the ingestor."""
+    sections (the structure-aware :class:`~lessonforge.rag.chunkers.MarkdownChunker`
+    preserves its header hierarchy); useful for ingesting an exemplar lesson or a
+    whole curriculum-book chapter directly.
+
+    An optional YAML front-matter block lets a book file self-declare its tags, so
+    grade/subject/source flow into every chunk without CLI flags::
+
+        ---
+        source: CDC Science Grade 6
+        grade: 6
+        subject: Science
+        ---
+        # Chapter 1 …
+
+    ``source`` (and ``id``) override the filename defaults. Other keys become
+    metadata. Metadata may still be supplied out-of-band by the caller via the
+    ingestor; caller-supplied values win, matching the JSONL merge order."""
 
     def load(self, path: str | Path) -> Iterator[Document]:
         p = Path(path)
-        text = p.read_text(encoding="utf-8").strip()
+        raw = p.read_text(encoding="utf-8")
+        front, text = split_front_matter(raw)
+        text = text.strip()
         if not text:
             return
-        yield Document(id=p.stem, text=text, source=p.name, metadata={})
+        metadata = {k: v for k, v in front.items() if k not in {"id", "source"}}
+        yield Document(
+            id=str(front.get("id") or p.stem),
+            text=text,
+            source=str(front.get("source") or p.name),
+            metadata=metadata,
+        )
+
+
+def split_front_matter(raw: str) -> tuple[dict[str, Any], str]:
+    """Split a leading ``---`` YAML front-matter block from the body. Returns
+    ``({}, raw)`` when there is none or it fails to parse — front-matter is a
+    convenience, never a hard requirement. Public so the corpus API can offer the
+    same convenience for pasted/uploaded Markdown."""
+    if not raw.lstrip().startswith("---"):
+        return {}, raw
+    lines = raw.lstrip().split("\n")
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            block = "\n".join(lines[1:i])
+            body = "\n".join(lines[i + 1 :])
+            try:
+                data = yaml.safe_load(block)
+            except yaml.YAMLError:
+                return {}, raw
+            return (data if isinstance(data, dict) else {}), body
+    return {}, raw

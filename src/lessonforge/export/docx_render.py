@@ -23,7 +23,8 @@ from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor
 from docx.text.run import Run
 
-from ..domain.ldd import LessonDesignDocument, QuestionType
+from ..domain.artifacts import Quiz, Worksheet
+from ..domain.ldd import LessonDesignDocument, Question, QuestionType
 from .base import ArtifactKind, ExportOptions, RenderedArtifact, Renderer, timing_summary
 from .registry import register_renderer
 
@@ -205,9 +206,9 @@ class _QuestionDoc(_DocxBase):
 
     heading_prefix: str
 
-    def _questions(self, doc: Document, ldd: LessonDesignDocument) -> None:
+    def _questions(self, doc: Document, questions: list[Question]) -> None:
         opts = self.options
-        for i, q in enumerate(ldd.formative_checks, 1):
+        for i, q in enumerate(questions, 1):
             p = doc.add_paragraph()
             _run(p, f"{i}. ", opts, bold=True)
             _run(p, q.prompt, opts)
@@ -222,10 +223,10 @@ class _QuestionDoc(_DocxBase):
                 op = doc.add_paragraph()
                 _run(op, "    Answer: ______________________________", opts, color=_MUTED)
 
-    def _answer_key(self, doc: Document, ldd: LessonDesignDocument) -> None:
+    def _answer_key(self, doc: Document, questions: list[Question]) -> None:
         doc.add_page_break()
         self._heading(doc, "Answer Key")
-        for i, q in enumerate(ldd.formative_checks, 1):
+        for i, q in enumerate(questions, 1):
             p = doc.add_paragraph()
             _run(p, f"{i}. ", self.options, bold=True)
             _run(p, q.answer, self.options)
@@ -233,41 +234,43 @@ class _QuestionDoc(_DocxBase):
 
 @register_renderer(ArtifactKind.worksheet, "docx")
 class DocxWorksheet(_QuestionDoc):
-    def render(self, ldd: LessonDesignDocument) -> RenderedArtifact:
+    def render(self, source: object) -> RenderedArtifact:
+        ws = Worksheet.coerce(source)
         doc = self._new_doc()
         opts = self.options
         title = doc.add_paragraph()
-        _run(title, f"Worksheet — {ldd.topic}", opts, bold=True, size=18, color=_ACCENT)
+        _run(title, f"Worksheet — {ws.topic}", opts, bold=True, size=18, color=_ACCENT)
         name = doc.add_paragraph()
         _run(name, "Name: ____________________      Date: ____________", opts, color=_MUTED)
 
         self._heading(doc, "Objectives")
-        for o in ldd.objectives:
+        for o in ws.objectives:
             p = doc.add_paragraph(style="List Number")
             _run(p, o.statement, opts)
 
-        if ldd.homework:
+        if ws.tasks:
             self._heading(doc, "Tasks")
-            self._bullets(doc, ldd.homework.instructions)
+            self._bullets(doc, ws.tasks)
 
         self._heading(doc, "Practice Questions")
-        self._questions(doc, ldd)
-        self._answer_key(doc, ldd)
-        return self._save(doc, ldd)
+        self._questions(doc, ws.questions)
+        self._answer_key(doc, ws.questions)
+        return self._save(doc, ws)
 
 
 @register_renderer(ArtifactKind.quiz, "docx")
 class DocxQuiz(_QuestionDoc):
-    def render(self, ldd: LessonDesignDocument) -> RenderedArtifact:
+    def render(self, source: object) -> RenderedArtifact:
+        quiz = Quiz.coerce(source)
         doc = self._new_doc()
         opts = self.options
         title = doc.add_paragraph()
-        _run(title, f"Quiz — {ldd.topic}", opts, bold=True, size=18, color=_ACCENT)
+        _run(title, f"Quiz — {quiz.topic}", opts, bold=True, size=18, color=_ACCENT)
         info = doc.add_paragraph()
         info.alignment = WD_ALIGN_PARAGRAPH.LEFT
         _run(info, f"Name: ____________________      Score: _____ / "
-                   f"{len(ldd.formative_checks)}", opts, color=_MUTED)
+                   f"{len(quiz.questions)}", opts, color=_MUTED)
 
-        self._questions(doc, ldd)
-        self._answer_key(doc, ldd)
-        return self._save(doc, ldd)
+        self._questions(doc, quiz.questions)
+        self._answer_key(doc, quiz.questions)
+        return self._save(doc, quiz)

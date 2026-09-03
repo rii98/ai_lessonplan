@@ -28,24 +28,59 @@ from .retriever import RetrievedChunk, Retriever
 class GroundingBundle:
     chunks: dict[str, list[RetrievedChunk]] = field(default_factory=dict)
     sources: list[str] = field(default_factory=list)
+    # Collections whose hits are authoritative course material (real textbook
+    # content). Rendered first, under a "prefer this over general knowledge"
+    # directive. Set by the retriever from config; empty here for standalone use.
+    authoritative: frozenset[str] = field(default_factory=frozenset)
 
     @property
     def is_empty(self) -> bool:
         return not any(self.chunks.values())
 
+    def _has(self, name: str) -> bool:
+        return bool(self.chunks.get(name))
+
+    @property
+    def has_authoritative(self) -> bool:
+        """True when real course material was retrieved for this topic — the signal
+        that generation should ground in the book rather than model knowledge."""
+        return any(self._has(n) for n in self.authoritative)
+
     def as_prompt_context(self) -> str:
-        """Render the bundle as labeled context for the enrichment prompt."""
+        """Render the bundle as labeled context for the enrichment prompt.
+
+        Authoritative collections (``reference`` — actual course material) are
+        rendered first under a stronger directive so the model prefers the real
+        book over its own general knowledge. When nothing was retrieved at all, the
+        model is told to fall back to its curriculum knowledge — so a topic with no
+        ingested book still generates, just ungrounded."""
         if self.is_empty:
             return "No retrieved context available; rely on curriculum knowledge."
-        sections: list[str] = [
-            "Grounding context (use it; cite these sources in quality.grounding_sources):"
-        ]
-        for name, chunks in self.chunks.items():
-            if not chunks:
-                continue
-            sections.append(f"\n[{name}]")
-            sections.extend(f"- {c.text}  (source: {c.payload.get('source', '?')})"
-                            for c in chunks)
+        sections: list[str] = []
+
+        auth = [(n, cs) for n, cs in self.chunks.items() if n in self.authoritative and cs]
+        if auth:
+            sections.append(
+                "AUTHORITATIVE course material below — prefer it over your own "
+                "general knowledge, ground your content in it, and cite these "
+                "sources in quality.grounding_sources:"
+            )
+            for name, chunks in auth:
+                sections.append(f"\n[{name}]")
+                sections.extend(f"- {c.text}  (source: {c.payload.get('source', '?')})"
+                                for c in chunks)
+
+        other = [(n, cs) for n, cs in self.chunks.items() if n not in self.authoritative and cs]
+        if other:
+            sections.append(
+                ("\nSupporting context (use it; cite these sources in "
+                 "quality.grounding_sources):") if auth else
+                "Grounding context (use it; cite these sources in quality.grounding_sources):"
+            )
+            for name, chunks in other:
+                sections.append(f"\n[{name}]")
+                sections.extend(f"- {c.text}  (source: {c.payload.get('source', '?')})"
+                                for c in chunks)
         return "\n".join(sections)
 
 
@@ -83,7 +118,9 @@ class GroundingRetriever:
         """
         meta = {"grade": grade, "subject": subject}
         base_where = self._filter(meta)
-        bundle = GroundingBundle()
+        bundle = GroundingBundle(
+            authoritative=frozenset(self.config.authoritative_collections)
+        )
         seen: set[str] = set()
 
         for name in self.config.collections:

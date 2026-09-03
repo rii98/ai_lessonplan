@@ -118,7 +118,7 @@ def test_corpus_overview_lists_all_collections_with_counts(client):
     resp = client.get("/corpus/overview")
     assert resp.status_code == 200, resp.text
     cols = {c["name"]: c for c in resp.json()["collections"]}
-    assert set(cols) == {"curriculum", "pedagogical", "exemplar", "local_context"}
+    assert set(cols) == {"reference", "curriculum", "pedagogical", "exemplar", "local_context"}
     assert all(c["count"] == 0 for c in cols.values())
     assert cols["pedagogical"]["description"]  # curator-facing help text present
 
@@ -160,4 +160,56 @@ def test_corpus_ingest_rejects_record_without_text(client):
 
 def test_corpus_ingest_rejects_unknown_collection(client):
     resp = client.post("/corpus/ingest", json={"collection": "nonsense", "records": [{"text": "x"}]})
+    assert resp.status_code == 422
+
+
+# ── book (markdown) ingestion: structure-aware, with a dry-run preview ────────
+_BOOK = ("---\nsource: My Science Grade 6\ngrade: 6\nsubject: Science\n---\n"
+         "# Chapter 2\n\nIntro.\n\n## Biotic Components\n\nLiving parts.\n\n"
+         "## Abiotic Components\n\nNon-living parts.\n")
+
+
+def test_corpus_chunkers_lists_strategies(client):
+    body = client.get("/corpus/chunkers").json()
+    assert "markdown" in body["chunkers"] and "paragraph" in body["chunkers"]
+    assert body["by_format"]["markdown"] == "markdown"
+
+
+def test_corpus_preview_splits_by_hierarchy_without_storing(client):
+    resp = client.post("/corpus/preview", json={"collection": "reference", "text": _BOOK})
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    paths = [c["heading_path"] for c in data["chunks"]]
+    assert "Chapter 2 > Biotic Components" in paths
+    # preview stores nothing
+    assert client.get("/corpus/overview").json()
+    counts = {c["name"]: c["count"] for c in client.get("/corpus/overview").json()["collections"]}
+    assert counts["reference"] == 0
+
+
+def test_corpus_ingest_document_stores_hierarchy_tagged_chunks(client):
+    resp = client.post("/corpus/ingest/document", json={"collection": "reference", "text": _BOOK})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["chunks"] >= 3
+    assert resp.json()["counts"]["reference"] >= 3
+    # front-matter tags landed on the stored chunks
+    recs = client.get("/corpus/collections/reference/records").json()["records"]
+    assert any(r["metadata"].get("heading_path") for r in recs)
+    assert all(r["metadata"].get("grade") == 6 for r in recs)
+
+
+def test_corpus_preview_honors_split_levels_knob(client):
+    resp = client.post("/corpus/preview", json={
+        "collection": "reference", "text": _BOOK, "params": {"split_levels": [1]},
+    })
+    # splitting only at H1 → the two H2 sections fold into the single H1 chunk
+    data = resp.json()
+    assert data["total"] == 1
+    assert "Biotic Components" in data["chunks"][0]["text"]
+
+
+def test_corpus_ingest_document_rejects_unknown_chunker(client):
+    resp = client.post("/corpus/ingest/document", json={
+        "collection": "reference", "text": _BOOK, "chunker": "nope",
+    })
     assert resp.status_code == 422

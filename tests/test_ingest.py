@@ -76,7 +76,7 @@ def test_per_document_collection_override(fake_embedder, fake_store):
     assert "curriculum" not in fake_store.data or not fake_store.data["curriculum"]
 
 
-def test_seed_corpus_ingests_all_four_collections(fake_embedder, fake_store):
+def test_seed_corpus_ingests_all_collections(fake_embedder, fake_store):
     assert default_seed_dir().exists(), "seed corpus missing"
     ing = _ingestor(fake_embedder, fake_store)
     report = ingest_seed(ing)

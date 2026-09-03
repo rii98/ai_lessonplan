@@ -14,7 +14,8 @@ previous knowledge, the 5E table, closure, evaluation questions, homework.
 
 from __future__ import annotations
 
-from ..domain.ldd import LessonDesignDocument, Question, QuestionType
+from ..domain.artifacts import Quiz, Worksheet
+from ..domain.ldd import CurriculumRef, LessonDesignDocument, Question, QuestionType
 from .base import ArtifactKind, RenderedArtifact, Renderer, timing_summary
 from .registry import register_renderer
 
@@ -26,10 +27,9 @@ def _encode(lines: list[str]) -> bytes:
     return ("\n".join(lines).rstrip("\n") + "\n").encode("utf-8")
 
 
-def _ref_line(ldd: LessonDesignDocument) -> str:
-    r = ldd.curriculum_ref
-    code = f" · {r.code}" if r.code else ""
-    return f"**Curriculum:** {r.board} · Grade {r.grade} · {r.subject}{code}"
+def _ref_line(ref: CurriculumRef) -> str:
+    code = f" · {ref.code}" if ref.code else ""
+    return f"**Curriculum:** {ref.board} · Grade {ref.grade} · {ref.subject}{code}"
 
 
 def _timing_line(ldd: LessonDesignDocument) -> str:
@@ -50,7 +50,7 @@ class MarkdownLessonPlan(Renderer):
     def render(self, ldd: LessonDesignDocument) -> RenderedArtifact:
         out: list[str] = [f"# {ldd.topic}", ""]
         out += [
-            _ref_line(ldd),
+            _ref_line(ldd.curriculum_ref),
             (f"**Duration:** {ldd.duration_min} min · **Framework:** {ldd.framework} "
              f"· **Language:** {ldd.language}"),
             _timing_line(ldd),
@@ -147,33 +147,34 @@ class MarkdownWorksheet(Renderer):
     media_type = _MEDIA
     extension = "md"
 
-    def render(self, ldd: LessonDesignDocument) -> RenderedArtifact:
-        out: list[str] = [f"# Worksheet — {ldd.topic}", "",
-                          _ref_line(ldd), "",
+    def render(self, source: object) -> RenderedArtifact:
+        ws = Worksheet.coerce(source)
+        out: list[str] = [f"# Worksheet — {ws.topic}", "",
+                          _ref_line(ws.curriculum_ref), "",
                           "**Name:** ____________________    **Date:** ____________", ""]
 
         out += ["## Objectives for this worksheet", ""]
-        for i, o in enumerate(ldd.objectives, 1):
+        for i, o in enumerate(ws.objectives, 1):
             out.append(f"{i}. {o.statement}")
         out.append("")
 
-        if ldd.homework:
+        if ws.tasks:
             out += ["## Tasks", ""]
-            for i, ins in enumerate(ldd.homework.instructions, 1):
+            for i, ins in enumerate(ws.tasks, 1):
                 out.append(f"{i}. {ins}")
             out.append("")
 
         out += ["## Practice Questions", ""]
-        for i, q in enumerate(ldd.formative_checks, 1):
+        for i, q in enumerate(ws.questions, 1):
             _question_block(out, q, i)
 
         # ── answer key on its own page ──────────────────────────────────────
         out += ["---", "", "## Answer Key", ""]
-        for i, q in enumerate(ldd.formative_checks, 1):
+        for i, q in enumerate(ws.questions, 1):
             out.append(f"{i}. {q.answer}")
         out.append("")
 
-        return self._artifact(ldd, _encode(out))
+        return self._artifact(ws, _encode(out))
 
 
 @register_renderer(ArtifactKind.quiz, "md")
@@ -181,18 +182,19 @@ class MarkdownQuiz(Renderer):
     media_type = _MEDIA
     extension = "md"
 
-    def render(self, ldd: LessonDesignDocument) -> RenderedArtifact:
-        out: list[str] = [f"# Quiz — {ldd.topic}", "",
-                          _ref_line(ldd), "",
+    def render(self, source: object) -> RenderedArtifact:
+        quiz = Quiz.coerce(source)
+        out: list[str] = [f"# Quiz — {quiz.topic}", "",
+                          _ref_line(quiz.curriculum_ref), "",
                           ("**Name:** ____________________    **Score:** _____ / "
-                           f"{len(ldd.formative_checks)}"), ""]
+                           f"{len(quiz.questions)}"), ""]
 
-        for i, q in enumerate(ldd.formative_checks, 1):
+        for i, q in enumerate(quiz.questions, 1):
             _question_block(out, q, i)
 
         out += ["---", "", "## Answer Key", ""]
-        for i, q in enumerate(ldd.formative_checks, 1):
+        for i, q in enumerate(quiz.questions, 1):
             out.append(f"{i}. {q.answer}")
         out.append("")
 
-        return self._artifact(ldd, _encode(out))
+        return self._artifact(quiz, _encode(out))

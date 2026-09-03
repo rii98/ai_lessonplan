@@ -24,9 +24,40 @@ from pathlib import Path
 from typing import Any
 
 from ..providers.base import Embedder, VectorRecord, VectorStore
-from .chunkers import Chunker, ParagraphChunker
+from .chunkers import CHUNKER_REGISTRY, Chunker, ParagraphChunker, build_chunker
 from .documents import Chunk, Collection, Document
 from .loaders import build_loader, document_from_record
+
+
+class ChunkerPolicy:
+    """Resolves which :class:`Chunker` to use for a given source format.
+
+    Built from the ``chunking`` config block, it mirrors the loader/provider
+    registries' loose coupling: the ingestor never names a concrete chunker, it
+    asks the policy, and swapping "markdown → structure-aware" is one config line.
+    Instances are cached per format so repeated ingests don't rebuild them."""
+
+    def __init__(
+        self,
+        *,
+        default: str = "paragraph",
+        by_format: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> None:
+        self.default = default
+        self.by_format = dict(by_format or {})
+        self.params = dict(params or {})
+        self._cache: dict[str, Chunker] = {}
+
+    @classmethod
+    def from_config(cls, config: Any) -> ChunkerPolicy:
+        return cls(default=config.default, by_format=config.by_format, params=config.params)
+
+    def for_format(self, fmt: str) -> Chunker:
+        name = self.by_format.get(fmt, self.default)
+        if name not in self._cache:
+            self._cache[name] = build_chunker(name, **self.params)
+        return self._cache[name]
 
 
 @dataclass(slots=True)
@@ -51,17 +82,26 @@ class Ingestor:
         embedder: Embedder,
         vector_store: VectorStore,
         chunker: Chunker | None = None,
+        chunker_policy: ChunkerPolicy | None = None,
         batch_size: int = 64,
     ) -> None:
         self.embedder = embedder
         self.vector_store = vector_store
+        # ``chunker`` is the fallback default; ``chunker_policy`` selects per source
+        # format when set (e.g. markdown → structure-aware). Either may be omitted.
         self.chunker = chunker or ParagraphChunker()
+        self.chunker_policy = chunker_policy
         self.batch_size = batch_size
 
     # ── core ────────────────────────────────────────────────────────────────
     def ingest_documents(
-        self, collection: Collection, docs: Iterable[Document]
+        self,
+        collection: Collection,
+        docs: Iterable[Document],
+        *,
+        chunker: Chunker | None = None,
     ) -> IngestReport:
+        chunker = chunker or self.chunker
         report = IngestReport(collection=collection)
         # group chunks by their actual target collection so a mixed file (records
         # that declare their own `collection`) lands in the right collections.
@@ -71,7 +111,7 @@ class Ingestor:
             report.sources.add(doc.source)
             target = _coerce_collection(doc.metadata.get("collection"), collection)
             by_collection.setdefault(target, []).extend(
-                self.chunker.chunk(
+                chunker.chunk(
                     doc.text, collection=target, source=doc.source, metadata=doc.metadata
                 )
             )
@@ -97,13 +137,16 @@ class Ingestor:
         *,
         fmt: str = "jsonl",
         extra_metadata: dict[str, Any] | None = None,
+        chunker: Chunker | None = None,
     ) -> IngestReport:
         loader = build_loader(fmt)
         docs = list(loader.load(path))
         if extra_metadata:
             for d in docs:
                 d.metadata = {**extra_metadata, **d.metadata}
-        return self.ingest_documents(collection, docs)
+        # explicit chunker wins; else the policy picks by format; else the default.
+        chosen = chunker or (self.chunker_policy.for_format(fmt) if self.chunker_policy else None)
+        return self.ingest_documents(collection, docs, chunker=chosen)
 
     def ingest_records(
         self,
@@ -164,7 +207,11 @@ def _build_default_ingestor() -> Ingestor:
     from ..container import Container
 
     c = Container.from_settings()
-    return Ingestor(embedder=c.embedder, vector_store=c.vector_store)
+    return Ingestor(
+        embedder=c.embedder,
+        vector_store=c.vector_store,
+        chunker_policy=ChunkerPolicy.from_config(c.settings.chunking),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -174,6 +221,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--collection", choices=[c.value for c in Collection],
                         help="target collection for --source")
     parser.add_argument("--format", default="jsonl", help="loader format (jsonl, markdown)")
+    parser.add_argument("--chunker", choices=sorted(CHUNKER_REGISTRY),
+                        help="override the chunker (default: per-format from config)")
+    parser.add_argument("--max-chars", type=int, dest="max_chars",
+                        help="chunk size budget for the chosen chunker")
     parser.add_argument("--grade", type=int, help="metadata: grade for --source")
     parser.add_argument("--subject", help="metadata: subject for --source")
     args = parser.parse_args(argv)
@@ -194,8 +245,14 @@ def main(argv: list[str] | None = None) -> int:
             extra["grade"] = args.grade
         if args.subject:
             extra["subject"] = args.subject
+        # an explicit --chunker (optionally with --max-chars) overrides the policy
+        override: Chunker | None = None
+        if args.chunker:
+            params = {"max_chars": args.max_chars} if args.max_chars else {}
+            override = build_chunker(args.chunker, **params)
         report = ingestor.ingest_source(
-            args.source, Collection(args.collection), fmt=args.format, extra_metadata=extra
+            args.source, Collection(args.collection), fmt=args.format,
+            extra_metadata=extra, chunker=override,
         )
         print(f"ingested {report.documents} docs → {report.chunks} chunks "
               f"into {report.collection.value}")

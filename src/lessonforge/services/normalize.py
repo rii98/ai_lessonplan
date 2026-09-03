@@ -217,16 +217,34 @@ def _norm_top(d: dict, notes: list[str]) -> None:
             d["duration_min"] = n
 
 
-def _norm_curriculum(d: dict, notes: list[str]) -> None:
-    cr = d.get("curriculum_ref")
+def normalize_curriculum_ref(cr: Any, notes: list[str], where: str = "curriculum_ref") -> None:
+    """Snap a curriculum_ref's board onto CDC/NEB and coerce grade to int, in place.
+    Shared by the LDD normalizer and the artifact normalizer (quiz/worksheet)."""
     if not isinstance(cr, dict):
         return
-    _snap_field(cr, "board", BOARDS, "CDC", "board", "curriculum_ref", notes)
+    _snap_field(cr, "board", BOARDS, "CDC", "board", where, notes)
     if "grade" in cr:
         n = _to_int(cr["grade"])
         if n is not None and n != cr["grade"]:
-            notes.append(f"curriculum_ref.grade: {cr['grade']!r} → {n}")
+            notes.append(f"{where}.grade: {cr['grade']!r} → {n}")
             cr["grade"] = n
+
+
+def normalize_question(q: Any, notes: list[str], where: str) -> None:
+    """Snap one question's type onto the legal set, wrap scalar objective_ids into
+    a list, and clear options on non-MCQs — in place. Shared by the LDD normalizer
+    and the artifact normalizer so a standalone quiz gets the same defenses."""
+    if not isinstance(q, dict):
+        return
+    _snap_field(q, "type", Q_TYPES, "short_answer", "type", where, notes)
+    _wrap_list(q, "objective_ids", notes, where, split_csv=True)
+    if q.get("type") != "mcq" and q.get("options") is not None:
+        q["options"] = None
+        notes.append(f"{where}.options: cleared (not an MCQ)")
+
+
+def _norm_curriculum(d: dict, notes: list[str]) -> None:
+    normalize_curriculum_ref(d.get("curriculum_ref"), notes)
 
 
 def _norm_hook(d: dict, notes: list[str]) -> None:
@@ -255,14 +273,7 @@ def _norm_phases(d: dict, notes: list[str]) -> None:
 
 def _norm_checks(d: dict, notes: list[str]) -> None:
     for i, q in enumerate(d.get("formative_checks") or []):
-        if not isinstance(q, dict):
-            continue
-        _snap_field(q, "type", Q_TYPES, "short_answer", "type", f"formative_checks[{i}]", notes)
-        _wrap_list(q, "objective_ids", notes, f"formative_checks[{i}]", split_csv=True)
-        # a non-MCQ must not carry options; an MCQ's options must be a list
-        if q.get("type") != "mcq" and q.get("options") not in (None,):
-            q["options"] = None
-            notes.append(f"formative_checks[{i}].options: cleared (not an MCQ)")
+        normalize_question(q, notes, f"formative_checks[{i}]")
 
 
 def _norm_homework(d: dict, notes: list[str]) -> None:
@@ -271,6 +282,25 @@ def _norm_homework(d: dict, notes: list[str]) -> None:
         return
     _wrap_list(hw, "instructions", notes, "homework")
     _wrap_list(hw, "objective_ids", notes, "homework", split_csv=True)
+
+
+def normalize_artifact(data: Any) -> tuple[Any, list[str]]:
+    """Light normalizer for the standalone artifact IRs (quiz/worksheet/slides):
+    snap the curriculum_ref board, normalize each question, and wrap a scalar
+    ``tasks`` into a list. Reuses the LDD normalizer's helpers so a targeted
+    artifact gets the same meaning-preserving defenses. Never raises."""
+    notes: list[str] = []
+    if not isinstance(data, dict):
+        return data, notes
+    try:
+        d = copy.deepcopy(data)
+        normalize_curriculum_ref(d.get("curriculum_ref"), notes)
+        for i, q in enumerate(d.get("questions") or []):
+            normalize_question(q, notes, f"questions[{i}]")
+        _wrap_list(d, "tasks", notes, "worksheet")
+        return d, notes
+    except Exception:
+        return data, notes
 
 
 def _norm_top_prose_lists(d: dict, notes: list[str]) -> None:

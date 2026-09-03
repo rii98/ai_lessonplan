@@ -10,14 +10,25 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from ..container import Container
+from ..domain.artifacts import Quiz, Slides, Worksheet
 from ..domain.ldd import IntakeRequest, LessonDesignDocument, NormalizedBrief
 from ..domain.profile import TeacherProfile
 from ..domain.refine import RefineRequest, RefineResult
 from ..domain.rubric import Critique
 from ..domain.sections import LDD_SECTIONS, WHOLE_DOCUMENT
-from ..export import ArtifactKind, RenderedArtifact
-from ..rag.documents import COLLECTION_KEY, SOURCE_KEY, TEXT_KEY, Collection
+from ..export import ArtifactKind, RenderedArtifact, formats_for
+from ..rag.chunkers import CHUNKER_REGISTRY, build_chunker
+from ..rag.documents import COLLECTION_KEY, SOURCE_KEY, TEXT_KEY, Collection, Document
+from ..rag.loaders import split_front_matter
+from ..services.artifact_generation import generatable_kinds
 from .deps import get_container
+
+# Maps a targeted artifact kind to the IR model its generate/export endpoints use.
+_ARTIFACT_MODELS: dict[ArtifactKind, type] = {
+    ArtifactKind.quiz: Quiz,
+    ArtifactKind.worksheet: Worksheet,
+    ArtifactKind.slides: Slides,
+}
 
 _UI_INDEX = Path(__file__).parent / "static" / "index.html"
 _UI_CORPUS = Path(__file__).parent / "static" / "corpus.html"
@@ -89,6 +100,26 @@ class CorpusDeleteRequest(BaseModel):
     ids: list[str] = Field(..., min_length=1)
 
 
+class DocumentIngestRequest(BaseModel):
+    """Ingest ONE whole document (a book chapter, an exemplar lesson) as raw text,
+    split by a structure-aware chunker. Unlike the JSONL path (one record → one
+    chunk), the chunker slices the document and — for ``markdown`` — preserves the
+    header hierarchy as ``heading_path`` metadata on every chunk.
+
+    ``chunker`` overrides the per-format default; ``params`` tune it
+    (``max_chars``, ``min_chars``, ``split_levels``, ``prepend_breadcrumb``,
+    ``include_heading``). Optional ``---`` YAML front-matter in ``text`` is merged
+    into ``metadata`` (explicit ``metadata`` wins)."""
+
+    collection: Collection
+    text: str = Field(..., min_length=1)
+    format: str = "markdown"
+    source: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    chunker: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 def _record_view(rec: Any, fallback_collection: str) -> dict[str, Any]:
     """Shape a stored point for the browse UI: promote text/source/collection,
     keep the rest as displayable metadata (dropping store internals like the
@@ -105,6 +136,43 @@ def _record_view(rec: Any, fallback_collection: str) -> dict[str, Any]:
         "source": payload.get(SOURCE_KEY, ""),
         "collection": payload.get(COLLECTION_KEY, fallback_collection),
         "metadata": metadata,
+    }
+
+
+def _resolve_document_chunker(settings: Any, req: DocumentIngestRequest):
+    """Pick the chunker for a document-ingest request: an explicit ``chunker``, or
+    the per-format default from ``chunking`` config; tuned by merging config
+    ``params`` with the request's (request wins). ``build_chunker`` drops params a
+    given chunker doesn't accept, so cross-strategy knobs are safe."""
+    name = req.chunker or settings.chunking.by_format.get(req.format, settings.chunking.default)
+    params = {**settings.chunking.params, **(req.params or {})}
+    return build_chunker(name, **params)
+
+
+def _document_from_request(req: DocumentIngestRequest) -> Document:
+    """Build the source Document from raw text, honoring optional Markdown
+    front-matter (explicit request ``metadata`` wins over front-matter keys)."""
+    text, meta, source = req.text, dict(req.metadata or {}), req.source
+    if req.format == "markdown":
+        front, text = split_front_matter(req.text)
+        source = source or (str(front["source"]) if front.get("source") else None)
+        merged = {k: v for k, v in front.items() if k not in {"id", "source"}}
+        merged.update(meta)
+        meta = merged
+    return Document(id=source or "ui-document", text=text.strip(),
+                    source=source or "ui-upload", metadata=meta)
+
+
+def _chunk_view(chunk: Any) -> dict[str, Any]:
+    """One preview chunk for the UI: its breadcrumb, size, text, and the metadata
+    that will be stored (heading_path/heading pulled out for display)."""
+    md = dict(chunk.metadata)
+    return {
+        "heading_path": md.pop("heading_path", None),
+        "heading": md.pop("heading", None),
+        "chars": len(chunk.text),
+        "text": chunk.text,
+        "metadata": md,
     }
 
 
@@ -262,6 +330,69 @@ def create_app() -> FastAPI:
         """One-click zip of every configured artifact."""
         return _file_response(c.exporter.bundle(ldd))
 
+    # ── targeted artifacts: generate ONE artifact without a whole lesson ──────
+    def _generatable(kind: ArtifactKind) -> None:
+        if kind not in _ARTIFACT_MODELS or kind not in generatable_kinds():
+            raise HTTPException(
+                status_code=422,
+                detail=(f"{kind.value!r} is not generatable on its own. "
+                        f"Generatable: {[k.value for k in generatable_kinds()]}."),
+            )
+
+    @app.get("/artifacts/manifest", tags=["artifacts"])
+    def artifacts_manifest() -> dict[str, object]:
+        """Which artifacts can be generated standalone, and in which export formats
+        — what the 'generate just a…' UI renders its controls from."""
+        return {
+            "generatable": [
+                {"kind": k.value, "formats": formats_for(k)}
+                for k in generatable_kinds()
+            ]
+        }
+
+    @app.post("/artifacts/{kind}/generate", tags=["artifacts"])
+    def generate_artifact(
+        kind: ArtifactKind,
+        req: GenerateRequest,
+        c: Container = Depends(get_container),
+    ):
+        """Generate a single artifact (quiz/worksheet/slides) straight from a brief
+        — no full lesson built. Returns the editable IR so the teacher can tweak it
+        before exporting, symmetric with the lesson edit-before-export flow. The
+        teacher's profile fills unset fields; grounding uses the ``reference`` book
+        when the topic is covered there."""
+        _generatable(kind)
+        profile = c.profile_store.load()
+        try:
+            request = profile.apply_defaults(IntakeRequest(**req.model_dump()))
+            brief = profile.personalize(c.intake.normalize(request))
+        except ValueError as exc:  # intake couldn't determine topic/grade
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        try:
+            return c.artifact_generator(kind).generate(brief)
+        except ValueError as exc:  # could not assemble a valid artifact
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/artifacts/{kind}/export", tags=["artifacts"])
+    def export_generated_artifact(
+        kind: ArtifactKind,
+        payload: dict[str, Any] = Body(...),
+        c: Container = Depends(get_container),
+        fmt: str | None = Query(default=None, description="Override the configured format"),
+    ) -> Response:
+        """Render a standalone artifact IR (as returned by generate, possibly
+        hand-edited) into a downloadable file."""
+        _generatable(kind)
+        try:
+            ir = _ARTIFACT_MODELS[kind].model_validate(payload)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=_format_errors(exc)) from exc
+        try:
+            art = c.exporter.render_artifact(kind, ir, fmt=fmt)
+        except ValueError as exc:  # unknown/unsupported format
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _file_response(art)
+
     # ── corpus manager: grow & curate the grounding knowledge base ───────────
     @app.get("/corpus", response_class=HTMLResponse, include_in_schema=False)
     def corpus_page() -> str:
@@ -310,6 +441,60 @@ def create_app() -> FastAPI:
                 req.collection, req.records, source_label="ui"
             )
         except ValueError as exc:  # a record missing 'text', bad shape, …
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "documents": report.documents,
+            "chunks": report.chunks,
+            "sources": sorted(report.sources),
+            "counts": {col.value: c.vector_store.count(col.value) for col in Collection},
+        }
+
+    @app.get("/corpus/chunkers", tags=["corpus"])
+    def corpus_chunkers(c: Container = Depends(get_container)) -> dict[str, object]:
+        """The chunkers available for document ingest and the per-format defaults —
+        so the UI can offer the right strategy and show which one a format uses."""
+        return {
+            "chunkers": sorted(CHUNKER_REGISTRY),
+            "default": c.settings.chunking.default,
+            "by_format": c.settings.chunking.by_format,
+            "params": c.settings.chunking.params,
+        }
+
+    @app.post("/corpus/preview", tags=["corpus"])
+    def corpus_preview(
+        req: DocumentIngestRequest, c: Container = Depends(get_container)
+    ) -> dict[str, object]:
+        """Dry-run: split a document with the chosen chunker + knobs and return the
+        resulting chunks (with their header breadcrumbs) WITHOUT embedding or
+        storing anything. Lets a curator tune the chunker and see the split before
+        committing. Cheap — no model, no vector store."""
+        try:
+            chunker = _resolve_document_chunker(c.settings, req)
+            doc = _document_from_request(req)
+            chunks = chunker.chunk(
+                doc.text, collection=req.collection, source=doc.source, metadata=doc.metadata
+            )
+        except ValueError as exc:  # unknown chunker, bad params
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        limit = 60
+        return {
+            "total": len(chunks),
+            "truncated": len(chunks) > limit,
+            "chunks": [_chunk_view(ch) for ch in chunks[:limit]],
+        }
+
+    @app.post("/corpus/ingest/document", tags=["corpus"])
+    def corpus_ingest_document(
+        req: DocumentIngestRequest, c: Container = Depends(get_container)
+    ) -> dict[str, object]:
+        """Ingest one whole document (a book chapter, an exemplar lesson) with a
+        structure-aware chunker — the Markdown path preserves the header hierarchy
+        as ``heading_path`` on every chunk. Idempotent, like every ingest path."""
+        try:
+            chunker = _resolve_document_chunker(c.settings, req)
+            doc = _document_from_request(req)
+            report = c.ingestor.ingest_documents(req.collection, [doc], chunker=chunker)
+        except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {
             "documents": report.documents,

@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from . import providers  # noqa: F401  (import triggers adapter registration)
 from .config import Settings, load_settings
 from .export import ExportService
+from .export.base import ArtifactKind
 from .providers.base import Embedder, LLMClient, Reranker, VectorStore
 from .providers.registry import (
     build_embedder,
@@ -20,8 +21,9 @@ from .providers.registry import (
     build_vector_store,
 )
 from .rag.grounding import GroundingRetriever
-from .rag.ingest import Ingestor
+from .rag.ingest import ChunkerPolicy, Ingestor
 from .rag.retriever import Retriever
+from .services.artifact_generation import ArtifactGenerator, build_generator
 from .services.critique import Critic
 from .services.generation import LessonGenerator
 from .services.intake import Intake
@@ -58,7 +60,11 @@ class Container:
         # intake uses the cheap fast model; critique/revise use the reasoning model.
         self.llm_fast = self.llm_fast or self.llm
         if self.ingestor is None:
-            self.ingestor = Ingestor(embedder=self.embedder, vector_store=self.vector_store)
+            self.ingestor = Ingestor(
+                embedder=self.embedder,
+                vector_store=self.vector_store,
+                chunker_policy=ChunkerPolicy.from_config(self.settings.chunking),
+            )
         if self.profile_store is None:
             self.profile_store = build_profile_store(self.settings.profile)
         if self.intake is None:
@@ -77,6 +83,18 @@ class Container:
             self.pipeline = LessonPipeline(
                 intake=self.intake, generator=self.generator, reviser=self.reviser
             )
+
+    def artifact_generator(self, kind: ArtifactKind) -> ArtifactGenerator:
+        """Build a targeted-artifact generator (quiz/worksheet/slides/…) for
+        ``kind``, wired with the reasoning LLM, the shared grounding retriever (so
+        it uses the ``reference`` book), and the configured repair budget. Built
+        per request — generators are cheap and hold no state."""
+        return build_generator(
+            kind,
+            llm=self.llm,
+            grounding=self.grounding,
+            max_repairs=self.settings.generation.max_repairs,
+        )
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> Container:

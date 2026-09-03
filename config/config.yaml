@@ -51,12 +51,29 @@ retrieval:
   top_k: 20                             # candidates pulled from vector search
   rerank_top_n: 5                       # kept after reranking
 
+chunking:
+  # How documents are split before embedding. `default` applies to any source;
+  # `by_format` overrides per loader format so a Markdown book gets the
+  # structure-aware chunker (preserves chapter/section hierarchy → heading_path
+  # metadata) while JSONL keeps simple paragraph packing. `params` tune whichever
+  # chunker is built (e.g. max_chars, min_chars). Swap a strategy in one line.
+  default: paragraph                    # ← swap: paragraph | markdown
+  by_format:
+    markdown: markdown
+  params:
+    max_chars: 1200                     # markdown sections longer than this are paragraph-packed
+    # min_chars: 400                    # merge consecutive tiny sections under one parent (off by default)
+
 grounding:
   # Which corpora enrichment retrieves from, how much each contributes, and which
   # brief fields become metadata filters. Ingest with: python -m lessonforge.rag.ingest --seed
-  collections: [curriculum, pedagogical, exemplar, local_context]
+  collections: [reference, curriculum, pedagogical, exemplar, local_context]
   per_collection_top_n: 3
   filter_fields: [grade, subject]       # grade/subject filter on search (lenient fallback if empty)
+  # When `reference` (real course material) has hits, the prompt is told to prefer
+  # it over the model's general knowledge and cite it; when empty, generation just
+  # falls back to the model. Add other authoritative corpora here if you curate them.
+  authoritative_collections: [reference]
 
 intake:
   # Turns a raw request (or a pasted existing plan, US-3) into a NormalizedBrief.

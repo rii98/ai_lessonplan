@@ -139,19 +139,25 @@
         knowledge base you control. The better this corpus, the less generic every generated lesson
         becomes. This page lets you grow and clean that corpus without touching the command line.
       </p>
-      <h3 style="margin:14px 0 6px;font-size:13px;">The four collections</h3>
+      <h3 style="margin:14px 0 6px;font-size:13px;">The five collections</h3>
       <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--muted);line-height:1.7;">
+        <li><strong>reference</strong> — the actual course material: textbook chapters for a topic.
+          When a lesson's topic is covered here, the AI grounds in <em>this real book</em> instead of its
+          general knowledge. Add whole chapters as Markdown in the <strong>Book</strong> tab below.</li>
         <li><strong>curriculum</strong> — CDC/NEB standards &amp; learning outcomes. What students must learn.</li>
         <li><strong>pedagogical</strong> — misconceptions, 5E strategies, teaching moves. <em>The moat.</em></li>
         <li><strong>exemplar</strong> — whole strong reference lessons used as examples. Tag each with its
           <strong>framework</strong> (5E, gradual_release, inquiry) so it is only shown for lessons of that framework.</li>
         <li><strong>local_context</strong> — local hooks: paddy fields, goats, the monsoon, festivals.</li>
       </ul>
-      <h3 style="margin:14px 0 6px;font-size:13px;">Two ways to add</h3>
+      <h3 style="margin:14px 0 6px;font-size:13px;">Three ways to add</h3>
       <p class="sub" style="margin-bottom:6px;">
         <strong>Guided</strong> — fill one form to add a single record. No JSON needed; start here.<br />
         <strong>Bulk (JSONL)</strong> — paste or upload many records at once. JSONL is just
-        <em>one JSON object per line</em>, each with at least a <code>"text"</code> field, e.g.
+        <em>one JSON object per line</em>, each with at least a <code>"text"</code> field, e.g.<br />
+        <strong>Book (Markdown)</strong> — paste or upload a whole chapter. A structure-aware chunker
+        splits it while <em>preserving the heading hierarchy</em> (a chunk knows it came from
+        “Chapter 2 › Biotic Components”). Preview the split and tune it before saving.
       </p>
       <p><code>{"text": "Students often think clouds are alive because they move.", "grade": 6, "subject": "Science"}</code></p>
       <p class="sub" style="margin-top:10px;">
@@ -178,6 +184,7 @@
       <div class="tabs">
         <button class="active" id="tabGuidedBtn" data-tab="guided">Guided (one record)</button>
         <button id="tabBulkBtn" data-tab="bulk">Bulk (JSONL)</button>
+        <button id="tabDocBtn" data-tab="doc">Book (Markdown)</button>
       </div>
       <div id="addBanner"></div>
 
@@ -226,6 +233,51 @@
           <span class="status" id="bulkStatus"></span>
         </div>
       </div>
+
+      <!-- book (markdown) -->
+      <div id="tabDoc" class="hidden">
+        <p class="sub" style="margin-bottom:10px;">
+          Paste or upload a whole Markdown chapter. The structure-aware chunker splits it at headings and
+          tags every chunk with its <code>heading_path</code> breadcrumb. Optional <code>---</code> YAML
+          front-matter (<code>grade</code>, <code>subject</code>, <code>source</code>) is read automatically.
+        </p>
+        <div class="grid">
+          <label class="f"><span>Collection *</span><select id="d_collection"></select></label>
+          <label class="f"><span>Grade</span><input id="d_grade" type="number" min="1" max="12" placeholder="e.g. 6" /></label>
+          <label class="f"><span>Subject</span><input id="d_subject" placeholder="e.g. Science" /></label>
+          <label class="f"><span>Topic</span><input id="d_topic" placeholder="e.g. Components of Environment" /></label>
+        </div>
+        <label class="f"><span>Source label (book title / provenance)</span>
+          <input id="d_source" placeholder="e.g. My Science Grade 6 — Chapter 2" />
+        </label>
+        <label class="f"><span>Markdown *</span>
+          <textarea id="d_text" class="code" placeholder="# Chapter 2 — The Environment&#10;&#10;## Biotic Components&#10;&#10;Living parts of the environment…"></textarea>
+        </label>
+        <input type="file" id="d_file" accept=".md,.markdown,.txt" style="width:auto;margin-bottom:12px;" />
+
+        <details style="margin-bottom:12px;">
+          <summary style="cursor:pointer;font-size:13px;color:var(--muted);font-weight:600;">Chunking options</summary>
+          <div class="grid" style="margin-top:10px;">
+            <label class="f"><span>Strategy</span><select id="d_chunker"></select></label>
+            <label class="f"><span>Max chars / chunk</span><input id="d_max" type="number" min="1" value="1200" /></label>
+            <label class="f"><span>Merge sections under (chars)</span><input id="d_min" type="number" min="0" placeholder="off" /></label>
+            <label class="f"><span>New chunk down to heading</span>
+              <select id="d_depth"><option value="1">H1</option><option value="2">H1–H2</option><option value="3">H1–H3</option><option value="4">H1–H4</option><option value="5">H1–H5</option><option value="6" selected>every heading</option></select>
+            </label>
+          </div>
+          <div class="row" style="gap:16px;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;width:auto;margin:0;"><input type="checkbox" id="d_bc" checked style="width:auto;" /> Embed breadcrumb in chunk text</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;width:auto;margin:0;"><input type="checkbox" id="d_head" checked style="width:auto;" /> Keep heading line in body</label>
+          </div>
+        </details>
+
+        <div class="row">
+          <button class="ghost" id="docPreview">Preview split</button>
+          <button class="primary" id="docIngest">Ingest book</button>
+          <span class="status" id="docStatus"></span>
+        </div>
+        <div id="docPreviewOut" style="margin-top:12px;"></div>
+      </div>
     </div>
   </div>
 
@@ -249,7 +301,10 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const COLLECTIONS = ["curriculum", "pedagogical", "exemplar", "local_context"];
+// Seeded so the selects are usable before /corpus/overview returns; then refreshed
+// from the server (source of truth), so a newly added collection shows up too.
+let COLLECTIONS = ["reference", "curriculum", "pedagogical", "exemplar", "local_context"];
+const COLLECTION_SELECTS = ["g_collection", "b_collection", "d_collection", "br_collection"];
 
 function banner(el, kind, html) {
   el.innerHTML = html ? `<div class="banner ${kind}">${html}</div>` : "";
@@ -258,7 +313,12 @@ function esc(s) {
   return String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 function fillCollectionSelect(sel) {
+  const keep = sel.value;
   sel.innerHTML = COLLECTIONS.map((c) => `<option value="${c}">${c}</option>`).join("");
+  if (COLLECTIONS.includes(keep)) sel.value = keep;
+}
+function refillCollections() {
+  for (const id of COLLECTION_SELECTS) { const el = $(id); if (el) fillCollectionSelect(el); }
 }
 
 // ── overview ────────────────────────────────────────────────────────────
@@ -269,6 +329,8 @@ async function loadOverview() {
     const r = await fetch("/corpus/overview");
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
+    COLLECTIONS = data.collections.map((c) => c.name);
+    refillCollections();
     $("kbGrid").innerHTML = data.collections.map((c) => `
       <div class="kb">
         <div class="kb-head"><span class="kb-name">${c.name}</span><span class="kb-count">${c.count}</span></div>
@@ -365,9 +427,94 @@ for (const btn of document.querySelectorAll(".tabs button")) {
     document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b === btn));
     $("tabGuided").classList.toggle("hidden", btn.dataset.tab !== "guided");
     $("tabBulk").classList.toggle("hidden", btn.dataset.tab !== "bulk");
+    $("tabDoc").classList.toggle("hidden", btn.dataset.tab !== "doc");
     banner($("addBanner"), "ok", "");
   };
 }
+
+// ── add: book (markdown, structure-aware) ─────────────────────────────────
+async function loadChunkers() {
+  try {
+    const r = await fetch("/corpus/chunkers");
+    if (!r.ok) return;
+    const data = await r.json();
+    const preferred = (data.by_format && data.by_format.markdown) || "markdown";
+    $("d_chunker").innerHTML = data.chunkers
+      .map((c) => `<option value="${c}"${c === preferred ? " selected" : ""}>${c}</option>`).join("");
+  } catch { /* offline: leave the select empty, ingest defaults server-side */ }
+}
+function docRequest() {
+  const meta = {};
+  const g = $("d_grade").value.trim(); if (g) meta.grade = Number(g);
+  for (const [id, key] of [["d_subject", "subject"], ["d_topic", "topic"]]) {
+    const v = $(id).value.trim(); if (v) meta[key] = v;
+  }
+  const params = {
+    max_chars: Number($("d_max").value) || 1200,
+    prepend_breadcrumb: $("d_bc").checked,
+    include_heading: $("d_head").checked,
+  };
+  const mn = $("d_min").value.trim(); if (mn) params.min_chars = Number(mn);
+  const depth = Number($("d_depth").value) || 6;
+  params.split_levels = Array.from({ length: depth }, (_, i) => i + 1);
+  return {
+    collection: $("d_collection").value,
+    text: $("d_text").value,
+    format: "markdown",
+    source: $("d_source").value.trim() || null,
+    chunker: $("d_chunker").value || null,
+    metadata: meta,
+    params,
+  };
+}
+$("d_file").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (file) { $("d_text").value = await file.text(); if (!$("d_source").value.trim()) $("d_source").value = file.name; }
+};
+$("docPreview").onclick = async () => {
+  if (!$("d_text").value.trim()) { banner($("addBanner"), "err", "Paste or upload some Markdown first."); return; }
+  const st = $("docStatus"); st.innerHTML = '<span class="spinner"></span> Splitting…';
+  $("docPreviewOut").innerHTML = "";
+  try {
+    const r = await fetch("/corpus/preview", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(docRequest()),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    st.textContent = "";
+    renderPreview(data);
+  } catch (e) { st.textContent = ""; banner($("addBanner"), "err", `Preview failed: ${esc(e.message)}`); }
+};
+function renderPreview(data) {
+  const head = `<p class="sub" style="margin:0 0 8px;"><strong>${data.total}</strong> chunk(s)`
+    + (data.truncated ? ` — showing the first ${data.chunks.length}` : "") + ".</p>";
+  const body = data.chunks.map((ch, i) => `
+    <div class="rec">
+      <div class="rec-head">
+        <p class="rec-src" style="margin:0;font-weight:600;">${i + 1}. ${esc(ch.heading_path || ch.heading || "(preamble)")}</p>
+        <span class="chip">${ch.chars} chars</span>
+      </div>
+      <p class="rec-text" style="margin-top:6px;">${esc(ch.text)}</p>
+    </div>`).join("");
+  $("docPreviewOut").innerHTML = head + body;
+}
+$("docIngest").onclick = async () => {
+  if (!$("d_text").value.trim()) { banner($("addBanner"), "err", "Paste or upload some Markdown first."); return; }
+  const st = $("docStatus"); st.innerHTML = '<span class="spinner"></span> Chunking, embedding &amp; saving…';
+  banner($("addBanner"), "ok", "");
+  try {
+    const r = await fetch("/corpus/ingest/document", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(docRequest()),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    st.textContent = "";
+    banner($("addBanner"), "ok",
+      `Ingested <strong>${data.chunks}</strong> hierarchy-tagged chunk(s) into <strong>${$("d_collection").value}</strong>. Re-ingesting the same book updates in place.`);
+    $("docPreviewOut").innerHTML = "";
+    await loadOverview();
+  } catch (e) { st.textContent = ""; banner($("addBanner"), "err", `Couldn't ingest: ${esc(e.message)}`); }
+};
 
 // ── browse & delete ─────────────────────────────────────────────────────
 let browseOffset = null;
@@ -428,9 +575,11 @@ $("br_load").onclick = () => { browseOffset = null; loadRecords(false); };
 $("br_more").onclick = () => loadRecords(true);
 
 // ── init ────────────────────────────────────────────────────────────────
-for (const sel of [$("g_collection"), $("b_collection"), $("br_collection")]) fillCollectionSelect(sel);
+refillCollections();
 $("g_collection").value = "pedagogical";
 $("b_collection").value = "pedagogical";
+$("d_collection").value = "reference";  // the book tab targets the reference corpus by default
+loadChunkers();
 loadOverview();
 </script>
 </body>

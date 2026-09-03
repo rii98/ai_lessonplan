@@ -27,6 +27,7 @@ class Collection(str, Enum):
     pedagogical = "pedagogical"      # misconceptions, 5E strategies — the moat
     exemplar = "exemplar"            # hand-picked reference lessons (few-shot)
     local_context = "local_context"  # paddy field, goat, monsoon… local hooks
+    reference = "reference"          # actual course material — textbook chapters
 
     @property
     def description(self) -> str:
@@ -55,6 +56,13 @@ _COLLECTION_DESCRIPTIONS: dict[Collection, str] = {
     Collection.local_context: (
         "Local hooks that make lessons concrete for Nepali classrooms — paddy "
         "fields, goats, the monsoon, local festivals and places."
+    ),
+    Collection.reference: (
+        "The actual course material — textbook chapters and curriculum-book pages "
+        "for a topic. When a lesson's topic is covered here, generation grounds in "
+        "this real source instead of the model's general knowledge; when it isn't, "
+        "generation falls back to the model. Ingest books as Markdown — the "
+        "structure-aware chunker preserves their chapter/section hierarchy."
     ),
 }
 

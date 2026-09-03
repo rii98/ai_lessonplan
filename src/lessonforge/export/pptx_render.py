@@ -17,7 +17,7 @@ from pptx import Presentation
 from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
-from ..domain.ldd import LessonDesignDocument
+from ..domain.artifacts import Slides
 from .base import ArtifactKind, ExportOptions, RenderedArtifact, Renderer
 from .registry import register_renderer
 
@@ -45,39 +45,19 @@ class PptxSlides(Renderer):
     media_type = _MEDIA
     extension = "pptx"
 
-    def render(self, ldd: LessonDesignDocument) -> RenderedArtifact:
+    def render(self, source: object) -> RenderedArtifact:
+        deck = Slides.coerce(source)
         prs = Presentation()
         prs.slide_width = Inches(13.333)
         prs.slide_height = Inches(7.5)
 
-        r = ldd.curriculum_ref
-        self._title_slide(prs, ldd.topic,
-                          f"{r.board} · Grade {r.grade} · {r.subject}   ·   "
-                          f"{ldd.duration_min} min · {ldd.framework}")
-
-        # hook FIRST — the whole point of hook-first
-        self._bullet_slide(prs, "Let's begin…",
-                           [ldd.engagement_hook.prompt],
-                           subtitle=f"({ldd.engagement_hook.kind})")
-
-        self._bullet_slide(prs, "What we'll be able to do",
-                           [o.statement for o in ldd.objectives])
-
-        for i, phase in enumerate(ldd.phases, 1):
-            label = phase.name_en if not phase.name_ne else f"{phase.name_en} — {phase.name_ne}"
-            body: list[str] = []
-            body += [f"▸ {a}" for a in phase.teacher_activities]
-            body += [f"• {a}" for a in phase.student_activities]
-            self._bullet_slide(prs, f"{i}. {label}", body,
-                               subtitle=f"{phase.minutes} min")
-
-        if ldd.formative_checks:
-            self._bullet_slide(prs, "Check for Understanding",
-                               [q.prompt for q in ldd.formative_checks])
+        self._title_slide(prs, deck.topic, deck.subtitle)
+        for slide in deck.slides:
+            self._bullet_slide(prs, slide.heading, slide.bullets, subtitle=slide.subtitle)
 
         buf = io.BytesIO()
         prs.save(buf)
-        return self._artifact(ldd, buf.getvalue())
+        return self._artifact(deck, buf.getvalue())
 
     # ── slide builders ──────────────────────────────────────────────────────
     def _title_slide(self, prs: Presentation, title: str, subtitle: str) -> None:
