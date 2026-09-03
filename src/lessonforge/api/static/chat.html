@@ -4,6 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>LessonForge — chat</title>
+<!-- Vendored, version-pinned rendering libs (served locally, offline-safe). -->
+<link rel="stylesheet" href="/static/vendor/katex.min.css" />
+<link rel="stylesheet" href="/static/vendor/highlight-github.min.css" media="(prefers-color-scheme: light)" />
+<link rel="stylesheet" href="/static/vendor/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)" />
 <style>
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --ink: #1a2230; --muted: #667085;
@@ -116,11 +120,30 @@
   .prose p { margin: 0 0 10px; } .prose p:last-child { margin-bottom: 0; }
   .prose ul, .prose ol { margin: 0 0 10px; padding-left: 22px; }
   .prose li { margin: 2px 0; }
-  .prose code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
-  .prose pre { background: var(--chip); padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin: 0 0 10px; }
-  .prose pre code { background: none; padding: 0; }
-  .prose h1, .prose h2, .prose h3 { font-size: 15px; margin: 12px 0 6px; }
+  .prose code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size: 13px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; }
+  .prose pre { border-radius: 8px; overflow-x: auto; margin: 0 0 10px; }
+  .prose pre, .prose pre.hljs { background: var(--chip); padding: 10px 12px; }
+  .prose pre code, .prose pre code.hljs { background: none; padding: 0; font-size: 12.5px; line-height: 1.5; }
+  .prose h1, .prose h2, .prose h3, .prose h4 { font-weight: 700; margin: 14px 0 6px; line-height: 1.3; }
+  .prose h1 { font-size: 18px; } .prose h2 { font-size: 16px; } .prose h3, .prose h4 { font-size: 15px; }
+  .prose h1:first-child, .prose h2:first-child, .prose h3:first-child { margin-top: 0; }
   .prose strong { font-weight: 700; }
+  .prose em { font-style: italic; }
+  .prose a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+  .prose blockquote { margin: 0 0 10px; padding: 4px 14px; border-left: 3px solid var(--line);
+    color: var(--muted); }
+  .prose hr { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
+  .prose img { max-width: 100%; border-radius: 8px; }
+  .prose table { border-collapse: collapse; margin: 0 0 12px; font-size: 13.5px; display: block;
+    overflow-x: auto; max-width: 100%; }
+  .prose th, .prose td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+  .prose thead th { background: var(--chip); font-weight: 700; }
+  .prose tbody tr:nth-child(even) { background: color-mix(in srgb, var(--chip) 45%, transparent); }
+  /* KaTeX: inherit ink colour, let display math scroll on narrow screens */
+  .prose .katex { font-size: 1.05em; }
+  .prose .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+  .prose .katex-error { color: var(--warn); }
   .cite {
     display: inline-block; vertical-align: super; font-size: 10px; font-weight: 700;
     color: var(--accent); background: var(--chip); border-radius: 5px; padding: 0 4px;
@@ -254,6 +277,11 @@
 
   <div class="toast" id="toast"></div>
 
+<!-- Rendering libraries, loaded synchronously so their globals exist before the app runs. -->
+<script src="/static/vendor/markdown-it.min.js"></script>
+<script src="/static/vendor/katex.min.js"></script>
+<script src="/static/vendor/purify.min.js"></script>
+<script src="/static/vendor/highlight.min.js"></script>
 <script>
 "use strict";
 const $ = (s, r=document) => r.querySelector(s);
@@ -264,6 +292,18 @@ const api = async (m, url, body) => {
   return r.status === 204 ? null : r.json();
 };
 const toast = (m) => { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"), 3200); };
+// Trailing-edge throttle: runs at most once per `ms`, always fires the last
+// call. `.cancel()` drops a pending trailing run (used at stream end).
+function throttle(fn, ms){
+  let last = 0, timer = null;
+  const wrapped = (...args) => {
+    const now = Date.now(), wait = ms - (now - last);
+    if (wait <= 0){ if (timer){ clearTimeout(timer); timer = null; } last = now; fn(...args); }
+    else if (!timer){ timer = setTimeout(() => { timer = null; last = Date.now(); fn(...args); }, wait); }
+  };
+  wrapped.cancel = () => { if (timer){ clearTimeout(timer); timer = null; } };
+  return wrapped;
+}
 
 const state = {
   config: { collections: [], filter_fields: [], default_mode: "scoped" },
@@ -271,31 +311,128 @@ const state = {
   scope: { mode: "scoped", grade: null, subject: null, class: null, collections: null },
 };
 
-// ── minimal, safe markdown → HTML (escapes first, then a few inline/block rules) ──
-function esc(s){ return s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
-function renderMarkdown(src, citations){
-  let t = esc(src || "");
-  // fenced code
-  t = t.replace(/```([\s\S]*?)```/g, (_,c)=>`<pre><code>${c.replace(/^\n/,"")}</code></pre>`);
-  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
-  t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
-  // citations [n] → clickable superscript
-  t = t.replace(/\[(\d+)\]/g, (m,n)=>`<a class="cite" data-n="${n}">${n}</a>`);
-  // lists + paragraphs
-  const lines = t.split(/\n/); let html = "", inUl = false, inOl = false, para = [];
-  const flushP = () => { if (para.length){ html += `<p>${para.join(" ")}</p>`; para = []; } };
-  const closeLists = () => { if (inUl){ html += "</ul>"; inUl=false; } if (inOl){ html += "</ol>"; inOl=false; } };
-  for (let ln of lines){
-    if (/^\s*[-*]\s+/.test(ln)) { flushP(); if(inOl){html+="</ol>";inOl=false;} if(!inUl){html+="<ul>";inUl=true;} html += `<li>${ln.replace(/^\s*[-*]\s+/,"")}</li>`; }
-    else if (/^\s*\d+\.\s+/.test(ln)) { flushP(); if(inUl){html+="</ul>";inUl=false;} if(!inOl){html+="<ol>";inOl=true;} html += `<li>${ln.replace(/^\s*\d+\.\s+/,"")}</li>`; }
-    else if (/^\s*#{1,3}\s+/.test(ln)) { flushP(); closeLists(); html += `<h3>${ln.replace(/^\s*#{1,3}\s+/,"")}</h3>`; }
-    else if (ln.trim() === "") { flushP(); closeLists(); }
-    else if (/<pre>|<\/pre>/.test(ln)) { flushP(); closeLists(); html += ln; }
-    else para.push(ln);
+function esc(s){ return String(s).replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+
+/* ──────────────────────────────────────────────────────────────────────────────
+   Rich renderer for assistant messages.
+
+   LLMs emit a mix of Markdown, LaTeX math, fenced code and occasionally raw
+   HTML. Rendering that safely and correctly is a pipeline, not a regex:
+
+     1. protect math   — pull $$…$$, \[…\], \(…\), $…$ out into inert sentinels
+                          BEFORE Markdown runs, so Markdown never mangles a
+                          backslash, caret or underscore that belongs to LaTeX.
+     2. Markdown → HTML — markdown-it (tables, lists, code, links, raw HTML).
+     3. sanitize        — DOMPurify scrubs the (untrusted) LLM HTML.
+     4. restore math    — swap sentinels for KaTeX output (trusted, we generate
+                          it; KaTeX escapes its own input) after sanitising.
+     5. citations/links — turn [n] into clickable refs; open links in a new tab.
+
+   Every stage degrades gracefully: bad LaTeX renders as red source (KaTeX
+   throwOnError:false), unknown code languages fall back to plain escaping, and
+   partial/streaming text with an unclosed delimiter is simply left as text
+   until the closing token streams in.
+   ────────────────────────────────────────────────────────────────────────── */
+const md = window.markdownit({
+  html: true,        // pass raw HTML through — DOMPurify sanitises it in step 3
+  linkify: true,     // autolink bare URLs
+  breaks: true,      // treat a single newline as a line break (chat-friendly)
+  typographer: false,
+  highlight(code, lang){
+    let body;
+    if (lang && window.hljs && window.hljs.getLanguage(lang)){
+      try { body = window.hljs.highlight(code, { language: lang, ignoreIllegals: true }).value; }
+      catch { body = md.utils.escapeHtml(code); }
+    } else {
+      body = md.utils.escapeHtml(code);
+    }
+    // returning a full <pre> tells markdown-it not to wrap it again
+    return `<pre class="hljs"><code>${body}</code></pre>`;
+  },
+});
+
+// Sentinels: private-use codepoints survive Markdown and DOMPurify untouched.
+const MATH_OPEN = String.fromCharCode(0xE000), MATH_CLOSE = String.fromCharCode(0xE001);
+// Ordered so multi-char / display delimiters win over the single-$ inline rule.
+const MATH_RULES = [
+  { re: /\$\$([\s\S]+?)\$\$/g,               display: true  }, // $$ … $$
+  { re: /\\\[([\s\S]+?)\\\]/g,               display: true  }, // \[ … \]
+  { re: /```(?:math|latex|tex)\n([\s\S]+?)```/g, display: true }, // ```math fence
+  { re: /\\\(([\s\S]+?)\\\)/g,               display: false }, // \( … \)
+  // $ … $ inline: no space just inside the delimiters (so "$5 and $6" stays text)
+  { re: /\$(?![ \t])([^$\n]+?)(?<![ \t])\$/g, display: false },
+];
+function protectMath(src, store){
+  let t = src;
+  for (const { re, display } of MATH_RULES){
+    t = t.replace(re, (_, tex) => {
+      const i = store.push({ tex, display }) - 1;
+      return `${MATH_OPEN}${i}${MATH_CLOSE}`;
+    });
   }
-  flushP(); closeLists();
-  return html;
+  return t;
+}
+function restoreMath(html, store){
+  return html.replace(new RegExp(MATH_OPEN + "(\\d+)" + MATH_CLOSE, "g"), (_, i) => {
+    const m = store[+i]; if (!m) return "";
+    try {
+      return window.katex.renderToString(m.tex, {
+        displayMode: m.display, throwOnError: false, output: "htmlAndMathml",
+        strict: false, trust: false,
+      });
+    } catch { return esc((m.display ? "$$" : "$") + m.tex + (m.display ? "$$" : "$")); }
+  });
+}
+
+const CITE_SKIP = new Set(["CODE","PRE","A","SCRIPT","STYLE"]);
+function linkifyCitations(root){
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node){
+      for (let p = node.parentElement; p && p !== root; p = p.parentElement){
+        if (CITE_SKIP.has(p.tagName) || p.classList.contains("katex")) return NodeFilter.FILTER_REJECT;
+      }
+      return /\[\d+\]/.test(node.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    },
+  });
+  const targets = []; for (let n; (n = walker.nextNode()); ) targets.push(n);
+  for (const node of targets){
+    const frag = document.createDocumentFragment();
+    let last = 0; const s = node.nodeValue; const re = /\[(\d+)\]/g; let m;
+    while ((m = re.exec(s))){
+      if (m.index > last) frag.appendChild(document.createTextNode(s.slice(last, m.index)));
+      const a = el("a", "cite"); a.dataset.n = m[1]; a.textContent = m[1];
+      frag.appendChild(a); last = re.lastIndex;
+    }
+    if (last < s.length) frag.appendChild(document.createTextNode(s.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+function externalizeLinks(root){
+  root.querySelectorAll("a[href]").forEach(a => {
+    const href = a.getAttribute("href") || "";
+    if (/^https?:/i.test(href)){ a.target = "_blank"; a.rel = "noopener noreferrer"; }
+  });
+}
+
+// Render Markdown+math+code into a fresh element (caller swaps it into the DOM).
+function renderRich(src){
+  const store = [];
+  const protectedSrc = protectMath(String(src || ""), store);
+  const rawHtml = md.render(protectedSrc);
+  let clean = window.DOMPurify.sanitize(rawHtml, { ADD_ATTR: ["target","rel"] });
+  clean = restoreMath(clean, store);
+  const box = el("div", "prose");
+  box.innerHTML = clean;
+  linkifyCitations(box);
+  externalizeLinks(box);
+  return box;
+}
+
+// Paint an assistant answer into its prose element and wire its citation clicks.
+function paintAnswer(proseEl, content, citations){
+  const rendered = renderRich(content);
+  proseEl.replaceChildren(...rendered.childNodes);
+  wireCitations(proseEl, citations || []);
 }
 
 // ── sidebar ──────────────────────────────────────────────────────────────────
@@ -387,14 +524,13 @@ function bubble(role, content, citations){
   const who = el("div","who"); who.textContent = role === "user" ? "You" : "Assistant";
   const bub = el("div","bubble");
   const prose = el("div","prose");
-  if (role === "user") prose.textContent = content; else prose.innerHTML = renderMarkdown(content, citations);
+  if (role === "user") prose.textContent = content; else paintAnswer(prose, content, citations);
   bub.appendChild(prose);
   body.append(who, bub);
   if (role !== "user"){
     const refs = el("div","refs"); refs.hidden = !(citations && citations.length);
     if (citations && citations.length) renderRefs(refs, citations);
     body.appendChild(refs);
-    wireCitations(prose, citations || []);
   }
   wrap.append(av, body);
   wrap._prose = prose; wrap._refs = body.querySelector(".refs");
@@ -451,6 +587,10 @@ async function send(){
   state.streaming = true; $("#send").disabled = true;
 
   let answer = "", citations = [];
+  // Full Markdown+math+code render is heavier than a string assignment, so
+  // during streaming we coalesce repaints (≤ ~1 per 90ms). The final answer is
+  // always painted once more below, so nothing is lost between throttle ticks.
+  const repaint = throttle(() => { paintAnswer(ai._prose, answer, citations); scrollDown(); }, 90);
   try {
     const resp = await fetch(`/chat/conversations/${state.currentId}/message`, {
       method: "POST", headers: {"content-type":"application/json"},
@@ -467,12 +607,10 @@ async function send(){
         const ev = parseSSE(frame); if (!ev) continue;
         if (ev.event === "token"){
           answer += ev.data;
-          ai._prose.innerHTML = renderMarkdown(answer, citations);
-          scrollDown();
+          repaint();
         } else if (ev.event === "sources"){
           citations = ev.data || [];
-          ai._prose.innerHTML = renderMarkdown(answer, citations);
-          wireCitations(ai._prose, citations);
+          paintAnswer(ai._prose, answer, citations);
           if (citations.length){ ai._refs.hidden = false; renderRefs(ai._refs, citations); }
         } else if (ev.event === "done"){
           if (ev.data && ev.data.title){ // first message named the conversation
@@ -483,8 +621,12 @@ async function send(){
         }
       }
     }
-    if (!answer) ai._prose.innerHTML = `<em style="color:var(--muted)">No answer was produced.</em>`;
+    repaint.cancel();
+    if (answer) paintAnswer(ai._prose, answer, citations);   // guaranteed final full render
+    else ai._prose.innerHTML = `<em style="color:var(--muted)">No answer was produced.</em>`;
+    scrollDown();
   } catch(err){
+    repaint.cancel();
     ai._prose.innerHTML = `<em style="color:var(--warn)">${esc(err.message||"stream error")}</em>`;
   } finally {
     state.streaming = false; $("#send").disabled = false; input.focus();

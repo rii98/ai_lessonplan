@@ -20,17 +20,38 @@ from ...providers.base import LLMClient
 from .context import BuiltContext
 from .memory import MemoryView
 
+# Formatting contract. The chat UI renders answers with a full Markdown + KaTeX
+# + code-highlighting pipeline, so the model must emit ONE predictable syntax for
+# each construct. Getting the model to produce clean, well-delimited output is
+# what keeps rendering robust — the renderer is forgiving, but consistent input
+# means math, tables and code always render instead of leaking raw markup.
+_FORMATTING = (
+    "Format your answer in GitHub-Flavored Markdown so it renders cleanly:\n"
+    "- Structure with Markdown: `##`/`###` headings, `-` bullet lists, `1.` "
+    "numbered lists, `**bold**`, `*italic*`, `> ` blockquotes, and Markdown "
+    "tables for tabular data.\n"
+    "- Write ALL mathematics as LaTeX, never as plain text or Unicode symbols. "
+    "Use `$ ... $` for inline math (e.g. `$x^2 = 16$`) and `$$ ... $$` on their "
+    "own lines for displayed equations (e.g. `$$x = \\frac{-b \\pm "
+    "\\sqrt{b^2 - 4ac}}{2a}$$`). Do not put spaces just inside single-dollar "
+    "delimiters, and use `\\times`, `\\div`, `\\le`, `\\ge`, `\\frac{}{}` "
+    "rather than ×, ÷, ≤, ≥ or ad-hoc fractions.\n"
+    "- Put code in fenced blocks with a language tag, like ```python.\n"
+    "- Keep source citations as bare brackets like [1] or [2]; do not wrap them "
+    "in code, math, or links."
+)
 _SYSTEM_CITED = (
     "You are LessonForge's curriculum assistant for Nepali school teachers. Answer "
     "the question using ONLY the numbered sources provided. Cite the sources you "
     "use inline with their bracketed number, like [1] or [2]. If the sources do "
     "not contain the answer, say so plainly and answer from general knowledge only "
     "if you flag it as unsourced. Be concise, accurate, and practical for a "
-    "classroom teacher."
+    "classroom teacher.\n\n" + _FORMATTING
 )
 _SYSTEM_PLAIN = (
     "You are LessonForge's curriculum assistant for Nepali school teachers. Use the "
-    "provided context where relevant. Be concise, accurate, and practical."
+    "provided context where relevant. Be concise, accurate, and practical.\n\n"
+    + _FORMATTING
 )
 _NO_CONTEXT = (
     "No grounding sources were retrieved for this question. Answer from general "

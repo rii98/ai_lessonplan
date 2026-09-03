@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from ..container import Container
@@ -38,9 +39,13 @@ _ARTIFACT_MODELS: dict[ArtifactKind, type] = {
     ArtifactKind.slides: Slides,
 }
 
-_UI_INDEX = Path(__file__).parent / "static" / "index.html"
-_UI_CORPUS = Path(__file__).parent / "static" / "corpus.html"
-_UI_CHAT = Path(__file__).parent / "static" / "chat.html"
+_STATIC_DIR = Path(__file__).parent / "static"
+_UI_INDEX = _STATIC_DIR / "index.html"
+_UI_CORPUS = _STATIC_DIR / "corpus.html"
+_UI_CHAT = _STATIC_DIR / "chat.html"
+# Vendored, version-pinned browser libraries (markdown-it, KaTeX, DOMPurify,
+# highlight.js) so rich rendering works fully offline — no runtime CDN.
+_VENDOR_DIR = _STATIC_DIR / "vendor"
 
 # Payload keys that carry the record's own text/source/collection or store
 # internals — surfaced as dedicated fields, so they're stripped from the
@@ -191,6 +196,13 @@ def create_app() -> FastAPI:
         version="0.1.0",
         summary="AI that thinks like an experienced teacher.",
     )
+
+    if _VENDOR_DIR.is_dir():
+        app.mount(
+            "/static/vendor",
+            StaticFiles(directory=_VENDOR_DIR),
+            name="vendor",
+        )
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
     def index() -> str:
