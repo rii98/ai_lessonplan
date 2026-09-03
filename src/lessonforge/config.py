@@ -400,7 +400,7 @@ def load_settings(path: str | Path | None = None) -> Settings:
     cfg_path = Path(path) if path else _default_config_path()
     raw: dict[str, Any] = {}
     if cfg_path.exists():
-        raw = yaml.safe_load(cfg_path.read_text()) or {}
+        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
     raw = _interpolate(raw)
     # BaseSettings merges env (LF__...) on top of the values passed in.
     return Settings(**raw)
