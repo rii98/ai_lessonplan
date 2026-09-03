@@ -221,9 +221,13 @@
         <span class="status" id="artifactStatus"></span>
       </div>
       <div class="hidden" id="artifactPanel" style="margin-top:8px">
-        <label class="f"><span>Generated <b id="artifactKindLabel"></b> — edit the JSON if you like, then export</span>
-          <textarea id="artifactJson" spellcheck="false" style="min-height:200px; font-family:ui-monospace,Menlo,Consolas,monospace"></textarea>
-        </label>
+        <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:2px">
+          <strong>Your <span id="artifactKindLabel"></span></strong>
+          <button class="small ghost refine-btn" id="artifactImproveAll">✨ Improve the whole thing</button>
+        </div>
+        <p class="sub">Edit any field by hand, or hit ✨ Improve to let the AI revise a part — it re-grounds in your reference material and shows the change to accept or discard. Then export.</p>
+        <div id="artifactEditor"></div>
+        <p class="sub" id="artifactSources" style="margin-top:6px"></p>
         <div class="row" style="gap:6px; align-items:center">
           <select id="artifactFmt"></select>
           <button class="primary" id="artifactExport">Export</button>
@@ -398,11 +402,16 @@ $("generate").addEventListener("click", async () => {
   finally { $("generate").disabled = false; }
 });
 
-// ── Targeted artifact generation (quiz / worksheet / slides) ─────────────────
-// Independent of the lesson pipeline: generate one artifact's editable IR from the
-// same brief, then export it. Formats come from /artifacts/manifest.
+// ── Targeted artifacts (quiz / worksheet / slides): interactive edit + AI improve
+// Independent of the lesson pipeline. `artifact` is the in-memory source of truth,
+// edited by hand or by the AI (which re-grounds), then exported.
 let artifactKind = null;
+let artifact = null;
 const artifactFormats = {};
+const ARTIFACT_LABELS = {
+  objectives: "Objectives", questions: "Questions", instructions: "Instructions",
+  tasks: "Tasks", slides: "Slides", subtitle: "Subtitle", "*": "the whole thing",
+};
 (async () => {
   try {
     const r = await api("GET", "/artifacts/manifest");
@@ -420,29 +429,152 @@ async function generateArtifact(kind) {
     if (!res.ok) { const e = await res.json().catch(() => ({}));
       st.className = "status err";
       st.textContent = "Failed: " + (typeof e.detail === "string" ? e.detail : res.status); return; }
-    const ir = await res.json();
+    artifact = await res.json();
     $("artifactKindLabel").textContent = kind;
-    $("artifactJson").value = JSON.stringify(ir, null, 2);
     const fmts = artifactFormats[kind] || ["docx"];
     $("artifactFmt").innerHTML = "";
     fmts.forEach((f) => $("artifactFmt").append(h("option", { value: f }, f)));
     $("artifactPanel").classList.remove("hidden");
-    st.textContent = kind + " ready — edit the JSON if you like, then export.";
+    renderArtifactEditor();
+    st.textContent = kind + " ready — edit it below or ✨ Improve, then export.";
   } catch (err) { st.className = "status err"; st.textContent = "Network error: " + err.message; }
   finally { document.querySelectorAll("[data-artifact]").forEach((b) => (b.disabled = false)); }
 }
 document.querySelectorAll("[data-artifact]").forEach((btn) =>
   btn.addEventListener("click", () => generateArtifact(btn.dataset.artifact)));
+$("artifactImproveAll").addEventListener("click", () => openArtifactImprove("*"));
+
+// a section heading with an inline "✨ Improve" button, for artifacts
+function artifactHead(title, target) {
+  return h("div", { class: "section-head" },
+    h("h3", { class: "section" }, title),
+    target ? h("button", { class: "small ghost refine-btn", title: "Ask the AI to improve this",
+      onclick: () => openArtifactImprove(target) }, "✨ Improve") : null);
+}
+function objectiveItem(o, rr) {
+  return itemCard(o.id || "objective",
+    () => { artifact.objectives.splice(artifact.objectives.indexOf(o), 1); rr(); },
+    h("div", { class: "grid" }, field("ID", bound(o, "id")), field("Bloom", boundSelect(o, "bloom", BLOOM))),
+    field("Statement", bound(o, "statement", { area: true })));
+}
+function questionItem(q, arr, rr) {
+  return itemCard(q.id || "question", () => { arr.splice(arr.indexOf(q), 1); rr(); },
+    h("div", { class: "grid" },
+      field("ID", bound(q, "id")),
+      field("Type", (() => { const s = boundSelect(q, "type", Q_TYPES); s.addEventListener("change", rr); return s; })())),
+    field("Prompt", bound(q, "prompt", { area: true })),
+    field("Answer", bound(q, "answer")),
+    csvField("Objective IDs", q, "objective_ids"),
+    q.type === "mcq" ? (() => { q.options = q.options || [""]; return h("div", {},
+      h("p", { class: "sub" }, "Options (MCQ)"), stringList(q.options, "option", rr)); })() : null);
+}
+function renderArtifactEditor() {
+  const root = $("artifactEditor"); root.textContent = "";
+  const rr = renderArtifactEditor, a = artifact;
+  root.append(h("div", { class: "grid" },
+    field("Topic", bound(a, "topic")),
+    field("Grade", bound(a.curriculum_ref, "grade", { type: "number" })),
+    field("Subject", bound(a.curriculum_ref, "subject"))));
+
+  if (artifactKind === "quiz" || artifactKind === "worksheet") {
+    const w = h("div", {});
+    w.append(artifactHead("Objectives", "objectives"));
+    a.objectives.forEach((o) => w.append(objectiveItem(o, rr)));
+    w.append(h("button", { class: "small", onclick: () => { a.objectives.push({ id: "", statement: "", bloom: "understand" }); rr(); } }, "+ add"));
+    root.append(w);
+  }
+  if (artifactKind === "worksheet") {
+    root.append(artifactHead("Tasks", "tasks"));
+    root.append(stringList(a.tasks, "a hands-on task", rr));
+  }
+  if (artifactKind === "quiz" || artifactKind === "worksheet") {
+    const w = h("div", {});
+    w.append(artifactHead("Questions", "questions"));
+    a.questions.forEach((q) => w.append(questionItem(q, a.questions, rr)));
+    w.append(h("button", { class: "small", onclick: () => { a.questions.push({ id: "", type: "short_answer", prompt: "", answer: "", objective_ids: [], options: null }); rr(); } }, "+ add"));
+    root.append(w);
+  }
+  if (artifactKind === "quiz") {
+    root.append(artifactHead("Instructions", "instructions"));
+    root.append(field("", bound(a, "instructions", { area: true })));
+  }
+  if (artifactKind === "slides") {
+    root.append(artifactHead("Subtitle", "subtitle"));
+    root.append(field("", bound(a, "subtitle")));
+    const w = h("div", {});
+    w.append(artifactHead("Slides", "slides"));
+    a.slides.forEach((s) => w.append(itemCard(s.heading || "slide",
+      () => { a.slides.splice(a.slides.indexOf(s), 1); rr(); },
+      field("Heading", bound(s, "heading")),
+      field("Subtitle", bound(s, "subtitle")),
+      h("p", { class: "sub" }, "Bullets"), stringList(s.bullets, "a bullet", rr))));
+    w.append(h("button", { class: "small", onclick: () => { a.slides.push({ heading: "", subtitle: null, bullets: [""] }); rr(); } }, "+ add slide"));
+    root.append(w);
+  }
+  const src = (a.grounding_sources || []);
+  $("artifactSources").textContent = src.length ? "Sources: " + src.join(" · ") : "";
+}
+
+function openArtifactImprove(target) {
+  const m = $("refineModal");
+  const label = ARTIFACT_LABELS[target] || target;
+  const ta = h("textarea", { placeholder: "e.g. make question 2 harder and tie it to the paddy field" });
+  const status = h("div", { class: "status" });
+  const results = h("div", {});
+  const improveBtn = h("button", { class: "primary" }, "✨ Improve");
+  improveBtn.addEventListener("click", async () => {
+    const instruction = ta.value.trim();
+    if (!instruction) { status.className = "status err"; status.textContent = "Describe what to improve."; return; }
+    status.className = "status"; status.innerHTML = '<span class="spinner"></span> Asking the AI (re-grounding)…';
+    improveBtn.disabled = true; results.textContent = "";
+    try {
+      const res = await api("POST", "/artifacts/" + artifactKind + "/refine", { artifact, target, instruction });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { status.className = "status err"; status.textContent = "Improve failed: " + (data.detail || res.status); return; }
+      status.textContent = "";
+      if (!data.ok) { results.append(rejectView(data)); return; }
+      results.append(artifactDiffView(data, () => { artifact = data.candidate; renderArtifactEditor(); closeRefine(); }));
+    } catch (err) { status.className = "status err"; status.textContent = "Network error: " + err.message; }
+    finally { improveBtn.disabled = false; }
+  });
+  const card = h("div", { class: "modal-card" },
+    h("header", {}, h("h3", {}, "Improve — " + label),
+      h("button", { class: "small ghost", onclick: closeRefine }, "✕")),
+    h("div", { class: "body" },
+      h("p", { class: "sub" }, "Tell the AI how to improve this. It reads the whole " + artifactKind + " for context, re-grounds in your reference material, and rewrites only this part — shown for you to accept or discard."),
+      ta, h("div", { class: "row", style: "margin-top:10px" }, improveBtn,
+        h("button", { class: "ghost", onclick: closeRefine }, "Cancel")),
+      status, results));
+  m.textContent = ""; m.append(card); m.classList.remove("hidden"); ta.focus();
+}
+function artifactDiffView(data, onAccept) {
+  const box = h("div", {});
+  if (data.cascaded && data.cascaded.length) {
+    box.append(h("p", { class: "sub" }, "Also adjusted to stay valid: " +
+      data.cascaded.map((n) => ARTIFACT_LABELS[n] || n).join(", ")));
+  }
+  const names = Object.keys(data.diff || {});
+  if (!names.length) { box.append(h("p", { class: "sub" }, "The AI returned no changes.")); return box; }
+  for (const name of names) {
+    const d = data.diff[name];
+    box.append(h("div", { class: "diff" },
+      h("div", { class: "diff-name" }, ARTIFACT_LABELS[name] || name),
+      h("pre", { class: "before" }, "− " + fmtVal(d.before)),
+      h("pre", { class: "after" }, "+ " + fmtVal(d.after))));
+  }
+  box.append(h("div", { class: "row", style: "margin-top:12px" },
+    h("button", { class: "primary", onclick: onAccept }, "Accept changes"),
+    h("button", { class: "ghost", onclick: closeRefine }, "Discard")));
+  return box;
+}
 
 $("artifactExport").addEventListener("click", async () => {
   const st = $("artifactExportStatus"); st.className = "status";
-  let ir;
-  try { ir = JSON.parse($("artifactJson").value); }
-  catch (e) { st.className = "status err"; st.textContent = "The JSON is invalid: " + e.message; return; }
+  if (!artifact) { st.className = "status err"; st.textContent = "Generate an artifact first."; return; }
   const fmt = $("artifactFmt").value;
   st.innerHTML = '<span class="spinner"></span> Rendering…';
   try {
-    const res = await api("POST", "/artifacts/" + artifactKind + "/export?fmt=" + encodeURIComponent(fmt), ir);
+    const res = await api("POST", "/artifacts/" + artifactKind + "/export?fmt=" + encodeURIComponent(fmt), artifact);
     if (!res.ok) { const e = await res.json().catch(() => ({}));
       st.className = "status err";
       st.textContent = "Export rejected: " + (typeof e.detail === "string" ? e.detail : "the artifact failed validation.");

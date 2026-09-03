@@ -25,6 +25,7 @@ from docx.text.run import Run
 
 from ..domain.artifacts import Quiz, Worksheet
 from ..domain.ldd import LessonDesignDocument, Question, QuestionType
+from ..rag.grounding import ensure_sources
 from .base import ArtifactKind, ExportOptions, RenderedArtifact, Renderer, timing_summary
 from .registry import register_renderer
 
@@ -86,6 +87,11 @@ class _DocxBase(Renderer):
         for it in items:
             p = doc.add_paragraph(style="List Bullet")
             _run(p, it, self.options)
+
+    def _sources(self, doc: Document, sources: list[str]) -> None:
+        """The mandatory Sources section every document carries."""
+        self._heading(doc, "Sources")
+        self._bullets(doc, ensure_sources(sources))
 
     def _save(self, doc: Document, ldd: LessonDesignDocument) -> RenderedArtifact:
         buf = io.BytesIO()
@@ -187,9 +193,7 @@ class DocxLessonPlan(_DocxBase):
             self._heading(doc, "Homework")
             self._bullets(doc, ldd.homework.instructions)
 
-        if ldd.quality.grounding_sources:
-            self._heading(doc, "Grounding Sources")
-            self._bullets(doc, ldd.quality.grounding_sources)
+        self._sources(doc, ldd.quality.grounding_sources)
 
         return self._save(doc, ldd)
 
@@ -255,6 +259,7 @@ class DocxWorksheet(_QuestionDoc):
         self._heading(doc, "Practice Questions")
         self._questions(doc, ws.questions)
         self._answer_key(doc, ws.questions)
+        self._sources(doc, ws.grounding_sources)
         return self._save(doc, ws)
 
 
@@ -273,4 +278,5 @@ class DocxQuiz(_QuestionDoc):
 
         self._questions(doc, quiz.questions)
         self._answer_key(doc, quiz.questions)
+        self._sources(doc, quiz.grounding_sources)
         return self._save(doc, quiz)

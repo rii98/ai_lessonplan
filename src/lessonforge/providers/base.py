@@ -65,6 +65,29 @@ class Embedder(ABC):
         return self.embed([text])[0]
 
 
+@dataclass(slots=True)
+class SparseVector:
+    """A sparse (lexical) embedding: parallel term-index and weight lists. This is
+    the shape Qdrant expects for a sparse vector, and what a BM25/SPLADE encoder
+    produces — the lexical half of hybrid search."""
+
+    indices: list[int] = field(default_factory=list)
+    values: list[float] = field(default_factory=list)
+
+
+class SparseEmbedder(ABC):
+    """Lexical encoder for hybrid retrieval (e.g. BM25 via FastEmbed). Optional:
+    only built and used when ``retrieval.hybrid`` is on. Kept a separate interface
+    from :class:`Embedder` so a backend can supply one, both, or neither."""
+
+    @abstractmethod
+    def embed_sparse(self, texts: list[str]) -> list[SparseVector]:
+        ...
+
+    def embed_sparse_one(self, text: str) -> SparseVector:
+        return self.embed_sparse([text])[0]
+
+
 # ── Reranking ────────────────────────────────────────────────────────────────
 @dataclass(slots=True)
 class RerankResult:
@@ -85,6 +108,9 @@ class VectorRecord:
     id: str
     vector: list[float]
     payload: dict[str, Any] = field(default_factory=dict)
+    # the lexical half, present only when hybrid ingestion is on; None keeps a
+    # collection dense-only (and dense-only stores/queries keep working).
+    sparse_vector: SparseVector | None = None
 
 
 @dataclass(slots=True)
@@ -104,8 +130,9 @@ class StoredRecord:
 
 class VectorStore(ABC):
     @abstractmethod
-    def ensure_collection(self, name: str, dim: int) -> None:
-        ...
+    def ensure_collection(self, name: str, dim: int, *, sparse: bool = False) -> None:
+        """Create the collection if absent. ``sparse`` also provisions a sparse
+        vector for hybrid search; a store that doesn't support sparse ignores it."""
 
     @abstractmethod
     def upsert(self, name: str, records: list[VectorRecord]) -> None:
@@ -120,6 +147,27 @@ class VectorStore(ABC):
         where: dict[str, Any] | None = None,
     ) -> list[ScoredRecord]:
         ...
+
+    @property
+    def supports_hybrid(self) -> bool:
+        """Whether this store can fuse a dense + sparse query. Default ``False``:
+        the base :meth:`hybrid_search` then falls back to dense-only, so hybrid
+        degrades safely on stores (and old collections) without a sparse index."""
+        return False
+
+    def hybrid_search(
+        self,
+        name: str,
+        dense_vector: list[float],
+        sparse_vector: SparseVector,
+        top_k: int,
+        where: dict[str, Any] | None = None,
+    ) -> list[ScoredRecord]:
+        """Fuse a dense (semantic) and sparse (lexical) query. The base
+        implementation ignores the sparse side and returns the dense results, so a
+        caller can always ask for hybrid and get sensible output regardless of
+        backend support."""
+        return self.search(name, dense_vector, top_k, where=where)
 
     # ── read-only browse / curation (admin surfaces, never the hot path) ──────
     @abstractmethod

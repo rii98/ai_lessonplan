@@ -18,6 +18,7 @@ from pptx.oxml.ns import qn
 from pptx.util import Inches, Pt
 
 from ..domain.artifacts import Slides
+from ..rag.grounding import ensure_sources
 from .base import ArtifactKind, ExportOptions, RenderedArtifact, Renderer
 from .registry import register_renderer
 
@@ -54,6 +55,8 @@ class PptxSlides(Renderer):
         self._title_slide(prs, deck.topic, deck.subtitle)
         for slide in deck.slides:
             self._bullet_slide(prs, slide.heading, slide.bullets, subtitle=slide.subtitle)
+        # mandatory Sources slide, last
+        self._bullet_slide(prs, "Sources", ensure_sources(deck.grounding_sources))
 
         buf = io.BytesIO()
         prs.save(buf)

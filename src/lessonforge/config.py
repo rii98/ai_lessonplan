@@ -69,6 +69,13 @@ class EmbeddingConfig(_ProviderBlock):
     dim: int | None = None  # auto-detected when None
 
 
+class SparseEmbeddingConfig(_ProviderBlock):
+    """The lexical encoder for hybrid search (e.g. BM25). Optional — only built and
+    used when ``retrieval.hybrid`` is on."""
+
+    model: str = "Qdrant/bm25"
+
+
 class RerankerConfig(_ProviderBlock):
     model: str | None = None
     endpoint: str | None = None  # for the http provider
@@ -139,6 +146,10 @@ class ProfileConfig(BaseModel):
 class RetrievalConfig(BaseModel):
     top_k: int = 20
     rerank_top_n: int = 5
+    # Hybrid = dense (semantic) ⊕ sparse (lexical/BM25), RRF-fused before rerank.
+    # On by default; degrades to dense-only for stores/collections without a sparse
+    # index, so it's safe before existing corpora are re-ingested.
+    hybrid: bool = True
 
 
 class ChunkingConfig(BaseModel):
@@ -218,6 +229,9 @@ class Settings(BaseSettings):
     # when absent, the fast stages reuse ``llm``. Same block shape as ``llm``.
     llm_fast: LLMConfig | None = None
     embedding: EmbeddingConfig
+    # Lexical encoder for hybrid search. Optional — when absent (and hybrid is on)
+    # a sensible BM25 default is built. Same ``provider``/``model`` block shape.
+    sparse_embedding: SparseEmbeddingConfig | None = None
     reranker: RerankerConfig
     vector_store: VectorStoreConfig
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)

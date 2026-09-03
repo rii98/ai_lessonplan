@@ -11,7 +11,7 @@ import uuid
 from typing import Any
 
 from ...config import VectorStoreConfig
-from ..base import ScoredRecord, StoredRecord, VectorRecord, VectorStore
+from ..base import ScoredRecord, SparseVector, StoredRecord, VectorRecord, VectorStore
 from ..registry import register_vector_store
 
 # Qdrant requires point IDs to be unsigned ints or UUIDs. Our interface uses
@@ -19,6 +19,11 @@ from ..registry import register_vector_store
 # and keep the original under this payload key for round-tripping.
 _ID_NAMESPACE = uuid.UUID("6f9619ff-8b86-d011-b42d-00cf4fc964ff")
 _SOURCE_ID_KEY = "_source_id"
+
+# Named-vector keys for hybrid collections. Dense-only collections (created before
+# hybrid, or with sparse=False) use Qdrant's unnamed vector for back-compat.
+_DENSE = "dense"
+_SPARSE = "text"
 
 
 def _point_id(raw: str) -> str:
@@ -32,10 +37,15 @@ class QdrantVectorStore(VectorStore):
         self.api_key = api_key or None
         self.prefix = collection_prefix
         self._client = None  # lazy
+        self._named: dict[str, bool] = {}  # cache: does collection use named vectors?
 
     @classmethod
     def from_config(cls, cfg: VectorStoreConfig) -> QdrantVectorStore:
         return cls(url=cfg.url, api_key=cfg.api_key, collection_prefix=cfg.collection_prefix)
+
+    @property
+    def supports_hybrid(self) -> bool:
+        return True
 
     def _c(self):
         if self._client is None:
@@ -47,33 +57,65 @@ class QdrantVectorStore(VectorStore):
     def _name(self, name: str) -> str:
         return f"{self.prefix}_{name}"
 
-    def ensure_collection(self, name: str, dim: int) -> None:
-        from qdrant_client.models import Distance, VectorParams
+    def _is_named(self, full: str) -> bool:
+        """Whether ``full`` uses the named dense+sparse layout (hybrid) vs Qdrant's
+        unnamed vector (a dense-only collection, incl. ones created before hybrid).
+        Detected from the live config once, then cached."""
+        if full not in self._named:
+            try:
+                vectors = self._c().get_collection(full).config.params.vectors
+                self._named[full] = isinstance(vectors, dict)  # named → {name: params}
+            except Exception:
+                self._named[full] = False
+        return self._named[full]
+
+    def ensure_collection(self, name: str, dim: int, *, sparse: bool = False) -> None:
+        from qdrant_client.models import (
+            Distance,
+            SparseVectorParams,
+            VectorParams,
+        )
 
         client = self._c()
         full = self._name(name)
-        if not client.collection_exists(full):
+        if client.collection_exists(full):
+            return
+        if sparse:
+            client.create_collection(
+                collection_name=full,
+                vectors_config={_DENSE: VectorParams(size=dim, distance=Distance.COSINE)},
+                sparse_vectors_config={_SPARSE: SparseVectorParams()},
+            )
+            self._named[full] = True
+        else:
             client.create_collection(
                 collection_name=full,
                 vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
             )
+            self._named[full] = False
 
     def upsert(self, name: str, records: list[VectorRecord]) -> None:
         from qdrant_client.models import PointStruct
+        from qdrant_client.models import SparseVector as QSparse
 
         if not records:
             return
-        self._c().upsert(
-            collection_name=self._name(name),
-            points=[
-                PointStruct(
-                    id=_point_id(r.id),
-                    vector=r.vector,
-                    payload={**r.payload, _SOURCE_ID_KEY: r.id},
-                )
-                for r in records
-            ],
-        )
+        full = self._name(name)
+        named = self._is_named(full)
+        points = []
+        for r in records:
+            if named:
+                vec: Any = {_DENSE: r.vector}
+                if r.sparse_vector is not None:
+                    vec[_SPARSE] = QSparse(
+                        indices=r.sparse_vector.indices, values=r.sparse_vector.values
+                    )
+            else:
+                vec = r.vector
+            points.append(
+                PointStruct(id=_point_id(r.id), vector=vec, payload={**r.payload, _SOURCE_ID_KEY: r.id})
+            )
+        self._c().upsert(collection_name=full, points=points)
 
     def search(
         self,
@@ -82,22 +124,57 @@ class QdrantVectorStore(VectorStore):
         top_k: int,
         where: dict[str, Any] | None = None,
     ) -> list[ScoredRecord]:
-        query_filter = self._build_filter(where)
+        full = self._name(name)
+        using = _DENSE if self._is_named(full) else None
         hits = self._c().query_points(
-            collection_name=self._name(name),
+            collection_name=full,
             query=vector,
+            using=using,
             limit=top_k,
-            query_filter=query_filter,
+            query_filter=self._build_filter(where),
             with_payload=True,
         ).points
-        return [
-            ScoredRecord(
-                id=(h.payload or {}).get(_SOURCE_ID_KEY, str(h.id)),
-                score=float(h.score),
-                payload=h.payload or {},
-            )
-            for h in hits
-        ]
+        return [self._scored(h) for h in hits]
+
+    def hybrid_search(
+        self,
+        name: str,
+        dense_vector: list[float],
+        sparse_vector: SparseVector,
+        top_k: int,
+        where: dict[str, Any] | None = None,
+    ) -> list[ScoredRecord]:
+        full = self._name(name)
+        if not self._is_named(full):
+            # a dense-only collection (not yet re-ingested) can't answer a sparse
+            # query — degrade to dense so old data keeps working.
+            return self.search(name, dense_vector, top_k, where=where)
+        from qdrant_client.models import Fusion, FusionQuery, Prefetch
+        from qdrant_client.models import SparseVector as QSparse
+
+        qfilter = self._build_filter(where)
+        hits = self._c().query_points(
+            collection_name=full,
+            prefetch=[
+                Prefetch(query=dense_vector, using=_DENSE, filter=qfilter, limit=top_k),
+                Prefetch(
+                    query=QSparse(indices=sparse_vector.indices, values=sparse_vector.values),
+                    using=_SPARSE, filter=qfilter, limit=top_k,
+                ),
+            ],
+            query=FusionQuery(fusion=Fusion.RRF),
+            limit=top_k,
+            with_payload=True,
+        ).points
+        return [self._scored(h) for h in hits]
+
+    @staticmethod
+    def _scored(h: Any) -> ScoredRecord:
+        return ScoredRecord(
+            id=(h.payload or {}).get(_SOURCE_ID_KEY, str(h.id)),
+            score=float(h.score),
+            payload=h.payload or {},
+        )
 
     def count(self, name: str) -> int:
         client = self._c()

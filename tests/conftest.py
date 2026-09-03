@@ -20,6 +20,8 @@ from lessonforge.providers.base import (
     Reranker,
     RerankResult,
     ScoredRecord,
+    SparseEmbedder,
+    SparseVector,
     StoredRecord,
     VectorRecord,
     VectorStore,
@@ -60,7 +62,7 @@ class FakeVectorStore(VectorStore):
     def __init__(self) -> None:
         self.data: dict[str, list[VectorRecord]] = {}
 
-    def ensure_collection(self, name: str, dim: int) -> None:
+    def ensure_collection(self, name: str, dim: int, *, sparse: bool = False) -> None:
         self.data.setdefault(name, [])
 
     def upsert(self, name: str, records: list[VectorRecord]) -> None:
@@ -97,6 +99,17 @@ class FakeVectorStore(VectorStore):
         return True
 
 
+class FakeSparseEmbedder(SparseEmbedder):
+    """Deterministic sparse vectors from token hashes — no model, no download."""
+
+    def embed_sparse(self, texts: list[str]) -> list[SparseVector]:
+        out = []
+        for t in texts:
+            toks = sorted({abs(hash(w)) % 1000 for w in t.lower().split()})
+            out.append(SparseVector(indices=toks, values=[1.0] * len(toks)))
+        return out
+
+
 class FakeReranker(Reranker):
     def rerank(self, query, documents, top_n) -> list[RerankResult]:
         # rank by keyword overlap with the query (deterministic, no model)
@@ -122,6 +135,11 @@ def fake_store() -> FakeVectorStore:
 @pytest.fixture
 def fake_reranker() -> FakeReranker:
     return FakeReranker()
+
+
+@pytest.fixture
+def fake_sparse_embedder() -> FakeSparseEmbedder:
+    return FakeSparseEmbedder()
 
 
 @pytest.fixture

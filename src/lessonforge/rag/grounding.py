@@ -23,6 +23,34 @@ from ..config import GroundingConfig
 from .documents import Collection
 from .retriever import RetrievedChunk, Retriever
 
+# Shown as the source when nothing was retrieved — so every document still quotes
+# an honest provenance (the model's own knowledge) rather than claiming a citation
+# it doesn't have, or leaving the field blank.
+NO_SOURCE_MARKER = "Model general knowledge (no reference material found)"
+
+
+def ensure_sources(sources: list[str]) -> list[str]:
+    """Guarantee a non-empty, de-duplicated source list: real retrieved sources
+    when present, else the honest 'model general knowledge' marker. This is what
+    makes 'every document quotes its source' always satisfiable."""
+    seen: dict[str, None] = {}
+    for s in sources:
+        s = str(s).strip()
+        if s:
+            seen.setdefault(s, None)
+    return list(seen) or [NO_SOURCE_MARKER]
+
+
+def merge_sources(existing: list[str], new: list[str]) -> list[str]:
+    """Union of two source lists, order-preserving — citations only grow, never
+    shrink or get fabricated (used when an AI edit re-grounds a document)."""
+    merged = [s for s in existing if s and s != NO_SOURCE_MARKER]
+    for s in new:
+        s = str(s).strip()
+        if s and s != NO_SOURCE_MARKER and s not in merged:
+            merged.append(s)
+    return merged or list(existing)
+
 
 @dataclass(slots=True)
 class GroundingBundle:

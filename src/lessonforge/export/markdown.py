@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from ..domain.artifacts import Quiz, Worksheet
 from ..domain.ldd import CurriculumRef, LessonDesignDocument, Question, QuestionType
+from ..rag.grounding import ensure_sources
 from .base import ArtifactKind, RenderedArtifact, Renderer, timing_summary
 from .registry import register_renderer
 
@@ -119,10 +120,10 @@ class MarkdownLessonPlan(Renderer):
             out += [f"- {ins}" for ins in ldd.homework.instructions]
             out.append("")
 
-        if ldd.quality.grounding_sources:
-            out += ["## Grounding Sources", ""]
-            out += [f"- {s}" for s in ldd.quality.grounding_sources]
-            out.append("")
+        # Sources are mandatory on every document.
+        out += ["## Sources", ""]
+        out += [f"- {s}" for s in ensure_sources(ldd.quality.grounding_sources)]
+        out.append("")
 
         return self._artifact(ldd, _encode(out))
 
@@ -173,6 +174,7 @@ class MarkdownWorksheet(Renderer):
         for i, q in enumerate(ws.questions, 1):
             out.append(f"{i}. {q.answer}")
         out.append("")
+        _md_sources(out, ws.grounding_sources)
 
         return self._artifact(ws, _encode(out))
 
@@ -196,5 +198,13 @@ class MarkdownQuiz(Renderer):
         for i, q in enumerate(quiz.questions, 1):
             out.append(f"{i}. {q.answer}")
         out.append("")
+        _md_sources(out, quiz.grounding_sources)
 
         return self._artifact(quiz, _encode(out))
+
+
+def _md_sources(out: list[str], sources: list[str]) -> None:
+    """Append the mandatory Sources section."""
+    out += ["## Sources", ""]
+    out += [f"- {s}" for s in ensure_sources(sources)]
+    out.append("")

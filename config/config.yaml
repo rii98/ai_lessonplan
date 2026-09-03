@@ -35,6 +35,11 @@ embedding:
   model: BAAI/bge-small-en-v1.5
   # dim is auto-detected from the model; override only if using a custom impl.
 
+sparse_embedding:
+  provider: fastembed                   # ← the lexical (BM25) half of hybrid search
+  model: Qdrant/bm25                    # lightweight, offline; no neural model
+  # Only built/used when retrieval.hybrid is true (below).
+
 reranker:
   provider: fastembed                   # ← swap: fastembed | http | noop
   model: Xenova/ms-marco-MiniLM-L-6-v2
@@ -50,6 +55,9 @@ vector_store:
 retrieval:
   top_k: 20                             # candidates pulled from vector search
   rerank_top_n: 5                       # kept after reranking
+  hybrid: true                          # dense ⊕ BM25 sparse, RRF-fused, then reranked
+  # Degrades to dense-only for stores/collections without a sparse index, so it's
+  # safe before existing corpora are re-ingested. Re-run ingest to light up sparse.
 
 chunking:
   # How documents are split before embedding. `default` applies to any source;

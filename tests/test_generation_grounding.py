@@ -50,6 +50,9 @@ def test_retrieved_sources_override_model_provenance(
 
 
 def test_generation_without_grounding_still_works(valid_ldd_dict):
+    from lessonforge.rag.grounding import NO_SOURCE_MARKER
+
     gen = LessonGenerator(llm=FakeLLM(response=valid_ldd_dict), grounding=None)
     ldd = gen.generate(NormalizedBrief(topic="Environment", grade=6, subject="Science"))
-    assert ldd.quality.grounding_sources == []  # nothing retrieved, nothing claimed
+    # citations are mandatory: nothing retrieved → the honest model-knowledge marker
+    assert ldd.quality.grounding_sources == [NO_SOURCE_MARKER]

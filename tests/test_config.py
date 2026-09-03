@@ -74,3 +74,17 @@ def test_shipped_config_is_valid():
     assert s.llm.provider
     assert s.embedding.provider
     assert s.vector_store.provider
+
+
+def test_hybrid_defaults(base_settings_dict):
+    from lessonforge.config import Settings
+
+    s = Settings(**base_settings_dict)  # no retrieval/sparse blocks given
+    assert s.retrieval.hybrid is True          # hybrid on by default
+    assert s.sparse_embedding is None          # optional; a BM25 default is built when needed
+
+
+def test_shipped_config_enables_hybrid_with_a_sparse_block():
+    s = load_settings()
+    assert s.retrieval.hybrid is True
+    assert s.sparse_embedding is not None and s.sparse_embedding.provider

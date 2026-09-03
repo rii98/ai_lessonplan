@@ -14,7 +14,7 @@ from typing import Any
 from ..domain.frameworks import FrameworkSpec, get_framework
 from ..domain.ldd import LessonDesignDocument, NormalizedBrief
 from ..providers.base import LLMClient
-from ..rag.grounding import GroundingBundle, GroundingRetriever
+from ..rag.grounding import GroundingBundle, GroundingRetriever, ensure_sources
 from .assemble import LDDAssembler
 
 # The framework-independent parts of a concrete, structurally-valid example.
@@ -183,8 +183,9 @@ class LessonGenerator:
         ldd = outcome.ldd
         if outcome.notes:  # transparency trail (survives the critique stamp)
             ldd.quality.adjustments = outcome.notes
-        # Provenance is authoritative: overwrite whatever the model claimed with
-        # the sources we actually retrieved, so citations are trustworthy.
-        if bundle.sources:
-            ldd.quality.grounding_sources = bundle.sources
+        # Provenance is authoritative AND mandatory: overwrite whatever the model
+        # claimed with the sources we actually retrieved; when nothing was
+        # retrieved, stamp the honest "model general knowledge" marker so every
+        # document still quotes a source.
+        ldd.quality.grounding_sources = ensure_sources(bundle.sources)
         return ldd

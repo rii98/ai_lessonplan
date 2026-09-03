@@ -26,3 +26,7 @@
 1. goat
 2. True
 3. rice plant
+
+## Sources
+
+- CDC Science Grade 6, Unit 2

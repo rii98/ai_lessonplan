@@ -20,14 +20,16 @@ from ..config import (
     EmbeddingConfig,
     LLMConfig,
     RerankerConfig,
+    SparseEmbeddingConfig,
     VectorStoreConfig,
 )
-from .base import Embedder, LLMClient, Reranker, VectorStore
+from .base import Embedder, LLMClient, Reranker, SparseEmbedder, VectorStore
 
 T = TypeVar("T")
 
 LLM_REGISTRY: dict[str, type[LLMClient]] = {}
 EMBEDDER_REGISTRY: dict[str, type[Embedder]] = {}
+SPARSE_EMBEDDER_REGISTRY: dict[str, type[SparseEmbedder]] = {}
 RERANKER_REGISTRY: dict[str, type[Reranker]] = {}
 VECTOR_STORE_REGISTRY: dict[str, type[VectorStore]] = {}
 
@@ -48,6 +50,10 @@ def register_llm(name: str):
 
 def register_embedder(name: str):
     return _register(EMBEDDER_REGISTRY, name)
+
+
+def register_sparse_embedder(name: str):
+    return _register(SPARSE_EMBEDDER_REGISTRY, name)
 
 
 def register_reranker(name: str):
@@ -75,6 +81,10 @@ def build_llm(cfg: LLMConfig) -> LLMClient:
 
 def build_embedder(cfg: EmbeddingConfig) -> Embedder:
     return _lookup(EMBEDDER_REGISTRY, cfg.provider, "embedding").from_config(cfg)  # type: ignore[attr-defined]
+
+
+def build_sparse_embedder(cfg: SparseEmbeddingConfig) -> SparseEmbedder:
+    return _lookup(SPARSE_EMBEDDER_REGISTRY, cfg.provider, "sparse_embedding").from_config(cfg)  # type: ignore[attr-defined]
 
 
 def build_reranker(cfg: RerankerConfig) -> Reranker:

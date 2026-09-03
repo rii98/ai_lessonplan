@@ -44,6 +44,7 @@ from ..domain.sections import (
     validate_fragment,
 )
 from ..providers.base import LLMClient
+from ..rag.grounding import GroundingRetriever, merge_sources
 from ..util import extract_json
 from .critique import Critic
 
@@ -105,19 +106,26 @@ class Refiner:
         *,
         llm: LLMClient | None,
         critic: Critic,
+        grounding: GroundingRetriever | None = None,
         sections: dict[str, Section] | None = None,
         max_cascade: int = 2,
     ) -> None:
         self.llm = llm
         self.critic = critic
+        self.grounding = grounding
         self.sections = sections or LDD_SECTIONS
         self.max_cascade = max(0, max_cascade)
 
     @classmethod
     def from_config(
-        cls, cfg: RefineConfig, *, llm: LLMClient | None, critic: Critic
+        cls,
+        cfg: RefineConfig,
+        *,
+        llm: LLMClient | None,
+        critic: Critic,
+        grounding: GroundingRetriever | None = None,
     ) -> Refiner:
-        return cls(llm=llm, critic=critic, max_cascade=cfg.max_cascade)
+        return cls(llm=llm, critic=critic, grounding=grounding, max_cascade=cfg.max_cascade)
 
     # ── public API ───────────────────────────────────────────────────────────
     def refine(self, ldd: LessonDesignDocument, request: RefineRequest) -> RefineResult:
@@ -145,9 +153,13 @@ class Refiner:
         if candidate is None:
             return self._reject(request, before.scores, errors, cascaded)
 
-        # Provenance is authoritative: a reprompt can improve wording but must not
-        # invent citations. Carry the original grounding sources across verbatim.
-        candidate.quality.grounding_sources = ldd.quality.grounding_sources
+        # Provenance is authoritative AND live: a content edit re-grounds in the
+        # reference material and MERGES the new sources (union — citations grow to
+        # cover the change, never shrink or get invented). Without a grounding
+        # retriever (or on a cosmetic target) the originals carry across verbatim.
+        candidate.quality.grounding_sources = self._merged_sources(
+            ldd, candidate, target, request.instruction
+        )
         after = self.critic.critique(candidate)
         note = f"refined {target}; overall {before.overall:.2f} → {after.overall:.2f}"
         if cascaded:
@@ -237,6 +249,28 @@ class Refiner:
         except Exception as exc:
             return None, [], [f"the model's rewrite was not a valid lesson: {exc}"]
         return candidate, [], []
+
+    def _merged_sources(
+        self, before: LessonDesignDocument, after: LessonDesignDocument,
+        target: str, instruction: str,
+    ) -> list[str]:
+        base = list(before.quality.grounding_sources)
+        grounds = target == WHOLE_DOCUMENT or self.sections.get(
+            target, Section(target)
+        ).grounded
+        if self.grounding is None or not grounds:
+            return base  # carry across verbatim (no retriever, or a cosmetic edit)
+        try:
+            bundle = self.grounding.ground(
+                query=f"{instruction} {after.topic}"[:400],
+                grade=after.curriculum_ref.grade,
+                subject=after.curriculum_ref.subject,
+                framework=after.framework,
+            )
+            new = bundle.sources
+        except Exception:
+            new = []
+        return merge_sources(base, new)
 
     def _reject(
         self,

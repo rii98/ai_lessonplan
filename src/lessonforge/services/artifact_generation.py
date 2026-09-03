@@ -30,7 +30,7 @@ from ..domain.artifacts import Quiz, Slides, Worksheet
 from ..domain.ldd import NormalizedBrief
 from ..export.base import ArtifactKind
 from ..providers.base import LLMClient
-from ..rag.grounding import GroundingBundle, GroundingRetriever
+from ..rag.grounding import GroundingBundle, GroundingRetriever, ensure_sources
 from .model_assembler import assemble_model
 from .normalize import normalize_artifact
 
@@ -117,9 +117,11 @@ class ArtifactGenerator(ABC):
                 f"could not generate a valid {self.kind.value}: " + "; ".join(outcome.errors)
             )
         obj = outcome.obj
-        # provenance is authoritative: stamp the sources we actually retrieved.
-        if bundle.sources and hasattr(obj, "grounding_sources"):
-            obj.grounding_sources = bundle.sources
+        # provenance is authoritative AND mandatory: stamp the sources we actually
+        # retrieved, or the honest "model general knowledge" marker when there were
+        # none — so every generated artifact quotes a source.
+        if hasattr(obj, "grounding_sources"):
+            obj.grounding_sources = ensure_sources(bundle.sources)
         return obj
 
 

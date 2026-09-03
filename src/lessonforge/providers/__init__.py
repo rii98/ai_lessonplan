@@ -14,6 +14,8 @@ from .base import (
     Reranker,
     RerankResult,
     ScoredRecord,
+    SparseEmbedder,
+    SparseVector,
     VectorRecord,
     VectorStore,
 )
@@ -27,6 +29,7 @@ from .registry import (
     build_embedder,
     build_llm,
     build_reranker,
+    build_sparse_embedder,
     build_vector_store,
 )
 
@@ -34,6 +37,9 @@ from .registry import (
 from .reranking import fastembed as _fe_rerank  # noqa: F401
 from .reranking import http as _http_rerank  # noqa: F401
 from .reranking import noop as _noop_rerank  # noqa: F401
+
+# Sparse embedders (hybrid search)
+from .sparse import fastembed as _fe_sparse  # noqa: F401
 
 # Vector stores
 from .vectorstore import qdrant as _qdrant  # noqa: F401
@@ -45,10 +51,13 @@ __all__ = [
     "RerankResult",
     "Reranker",
     "ScoredRecord",
+    "SparseEmbedder",
+    "SparseVector",
     "VectorRecord",
     "VectorStore",
     "build_embedder",
     "build_llm",
     "build_reranker",
+    "build_sparse_embedder",
     "build_vector_store",
 ]

@@ -64,6 +64,6 @@ By the end of the lesson, students will be able to:
 - Draw four things and label B/A
 - Mark producers, consumers, decomposers
 
-## Grounding Sources
+## Sources
 
 - CDC Science Grade 6, Unit 2

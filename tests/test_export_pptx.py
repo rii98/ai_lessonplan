@@ -26,11 +26,12 @@ def test_deck_opens_and_is_hook_first(export_ldd):
     art = build_renderer(ArtifactKind.slides, "pptx").render(export_ldd)
     assert art.media_type.endswith("presentationml.presentation")
     slides = _slides_text(art.content)
-    # title, hook, objectives, 3 phases, check = 7
-    assert len(slides) == 3 + len(export_ldd.phases) + 1
+    # title, hook, objectives, 3 phases, check, + mandatory Sources slide
+    assert len(slides) == 3 + len(export_ldd.phases) + 1 + 1
     assert export_ldd.topic in slides[0]              # title first
     assert export_ldd.engagement_hook.prompt in slides[1]   # hook BEFORE objectives
     assert "What we'll be able to do" in slides[2]    # objectives after the hook
+    assert "Sources" in slides[-1]                    # citations last, mandatory
 
 
 def test_every_phase_becomes_a_slide(export_ldd):

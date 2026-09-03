@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from functools import cache
 from typing import Any
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from .ldd import LessonDesignDocument
 
@@ -34,16 +34,22 @@ WHOLE_DOCUMENT = "*"
 
 @dataclass(frozen=True)
 class Section:
-    """One reprompt-able slice of the LDD.
+    """One reprompt-able slice of a source-of-truth document (LDD or an artifact IR).
 
     ``coupled`` names the neighbour sections a change here may invalidate through
-    the LDD's structural validators; the reviser tries to repair them in order.
+    the document's structural validators; the reviser tries to repair them in order.
     A section with no coupled neighbours is a *leaf*: editing it can never break
     another section, so it is the zero-risk, single-round-trip case.
+
+    ``grounded`` marks a section whose content is *factual* — editing it should
+    re-retrieve grounding so an AI change stays anchored in the reference material
+    and its citation stays real. Cosmetic sections (a title, instructions) set it
+    ``False`` to skip the retrieval on a purely structural edit.
     """
 
     name: str
     coupled: tuple[str, ...] = ()
+    grounded: bool = True
 
     @property
     def is_leaf(self) -> bool:
@@ -71,28 +77,38 @@ def is_valid_target(target: str, sections: dict[str, Section] | None = None) -> 
     return target == WHOLE_DOCUMENT or target in (sections or LDD_SECTIONS)
 
 
+# ── generic (any model) section helpers ──────────────────────────────────────
 @cache
-def _adapter(target: str) -> TypeAdapter[Any]:
-    """A validator/schema for one section, derived from the LDD field's own type
-    annotation so the section schema can never drift from the document schema."""
-    return TypeAdapter(LessonDesignDocument.model_fields[target].annotation)
+def _adapter_for(model: type[BaseModel], target: str) -> TypeAdapter[Any]:
+    """A validator/schema for one section of ``model``, derived from that field's
+    own type annotation so the section schema can never drift from the document."""
+    return TypeAdapter(model.model_fields[target].annotation)
 
 
-def fragment_schema(target: str) -> dict[str, Any]:
-    """JSON schema for a single section's value — handed to the model so it emits
-    exactly the shape that will splice back into the LDD."""
-    return _adapter(target).json_schema()
+def fragment_schema_for(model: type[BaseModel], target: str) -> dict[str, Any]:
+    return _adapter_for(model, target).json_schema()
 
 
-def validate_fragment(target: str, fragment: Any) -> str:
-    """Layer-1 check: is this section value well-formed on its own? Returns a
-    short error string, or ``""`` when valid. Coupling is checked separately by
-    re-validating the assembled whole document."""
+def validate_fragment_for(model: type[BaseModel], target: str, fragment: Any) -> str:
     try:
-        _adapter(target).validate_python(fragment)
+        _adapter_for(model, target).validate_python(fragment)
         return ""
     except ValidationError as exc:
         return first_error(exc)
+
+
+# ── LDD-specific wrappers (unchanged public API) ──────────────────────────────
+def fragment_schema(target: str) -> dict[str, Any]:
+    """JSON schema for a single LDD section's value — handed to the model so it
+    emits exactly the shape that will splice back into the LDD."""
+    return fragment_schema_for(LessonDesignDocument, target)
+
+
+def validate_fragment(target: str, fragment: Any) -> str:
+    """Layer-1 check: is this LDD section value well-formed on its own? Returns a
+    short error string, or ``""`` when valid. Coupling is checked separately by
+    re-validating the assembled whole document."""
+    return validate_fragment_for(LessonDesignDocument, target, fragment)
 
 
 def first_error(exc: ValidationError) -> str:

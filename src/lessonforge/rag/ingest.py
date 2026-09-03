@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..providers.base import Embedder, VectorRecord, VectorStore
+from ..providers.base import Embedder, SparseEmbedder, VectorRecord, VectorStore
 from .chunkers import CHUNKER_REGISTRY, Chunker, ParagraphChunker, build_chunker
 from .documents import Chunk, Collection, Document
 from .loaders import build_loader, document_from_record
@@ -83,6 +83,8 @@ class Ingestor:
         vector_store: VectorStore,
         chunker: Chunker | None = None,
         chunker_policy: ChunkerPolicy | None = None,
+        sparse_embedder: SparseEmbedder | None = None,
+        hybrid: bool = False,
         batch_size: int = 64,
     ) -> None:
         self.embedder = embedder
@@ -91,7 +93,15 @@ class Ingestor:
         # format when set (e.g. markdown → structure-aware). Either may be omitted.
         self.chunker = chunker or ParagraphChunker()
         self.chunker_policy = chunker_policy
+        self.sparse_embedder = sparse_embedder
+        self.hybrid = hybrid
         self.batch_size = batch_size
+
+    @property
+    def hybrid_active(self) -> bool:
+        """Ingest sparse vectors only when asked for AND a sparse encoder is wired;
+        so the collection is created hybrid-ready and queries can fuse."""
+        return bool(self.hybrid and self.sparse_embedder is not None)
 
     # ── core ────────────────────────────────────────────────────────────────
     def ingest_documents(
@@ -116,15 +126,21 @@ class Ingestor:
                 )
             )
 
+        hybrid = self.hybrid_active
         for target, chunks in by_collection.items():
             if not chunks:
                 continue
-            self.vector_store.ensure_collection(target.value, self.embedder.dim)
+            self.vector_store.ensure_collection(target.value, self.embedder.dim, sparse=hybrid)
             for batch in _batched(chunks, self.batch_size):
-                vectors = self.embedder.embed([c.text for c in batch])
+                texts = [c.text for c in batch]
+                vectors = self.embedder.embed(texts)
+                sparse = (
+                    self.sparse_embedder.embed_sparse(texts)  # type: ignore[union-attr]
+                    if hybrid else [None] * len(batch)
+                )
                 records = [
-                    VectorRecord(id=c.id, vector=v, payload=c.payload())
-                    for c, v in zip(batch, vectors, strict=True)
+                    VectorRecord(id=c.id, vector=v, payload=c.payload(), sparse_vector=s)
+                    for c, v, s in zip(batch, vectors, sparse, strict=True)
                 ]
                 self.vector_store.upsert(target.value, records)
                 report.chunks += len(records)
@@ -211,6 +227,8 @@ def _build_default_ingestor() -> Ingestor:
         embedder=c.embedder,
         vector_store=c.vector_store,
         chunker_policy=ChunkerPolicy.from_config(c.settings.chunking),
+        sparse_embedder=c.sparse_embedder,
+        hybrid=c.settings.retrieval.hybrid,
     )
 
 

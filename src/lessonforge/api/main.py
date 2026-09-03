@@ -393,6 +393,56 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _file_response(art)
 
+    @app.get("/artifacts/{kind}/refine/targets", tags=["artifacts"])
+    def artifact_refine_targets(kind: ArtifactKind) -> dict[str, object]:
+        """The reprompt-able parts of an artifact and their edit blast radius — what
+        the UI renders its per-part "✨ Improve" controls from."""
+        _generatable(kind)
+        from ..domain.artifact_sections import ARTIFACT_SECTIONS
+
+        return {
+            "sections": [
+                {"target": s.name, "coupled": list(s.coupled), "leaf": s.is_leaf,
+                 "grounded": s.grounded}
+                for s in ARTIFACT_SECTIONS[kind.value].values()
+            ],
+            "whole_document": "*",
+        }
+
+    @app.post("/artifacts/{kind}/refine", tags=["artifacts"])
+    def refine_artifact(
+        kind: ArtifactKind,
+        payload: dict[str, Any] = Body(...),
+        c: Container = Depends(get_container),
+    ):
+        """Reprompt one part of an artifact (or "*" for the whole thing) and PROPOSE
+        an improved, re-validated IR — the teacher accepts or rejects. A content
+        edit re-grounds in the reference book and merges the new sources; a change
+        that would break a guardrail is cascade-repaired or rejected with reason."""
+        _generatable(kind)
+        target = str(payload.get("target", "")).strip()
+        instruction = str(payload.get("instruction", "")).strip()
+        if not target or not instruction:
+            raise HTTPException(status_code=422, detail="`target` and `instruction` are required")
+        try:
+            ir = _ARTIFACT_MODELS[kind].model_validate(payload.get("artifact", {}))
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=_format_errors(exc)) from exc
+        try:
+            result = c.artifact_refiner(kind).refine(ir, target, instruction)
+        except ValueError as exc:  # unknown target
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {
+            "ok": result.ok,
+            "target": result.target,
+            "instruction": result.instruction,
+            "candidate": result.candidate.model_dump() if result.candidate else None,
+            "diff": result.diff,
+            "cascaded": result.cascaded,
+            "errors": result.errors,
+            "notes": result.notes,
+        }
+
     # ── corpus manager: grow & curate the grounding knowledge base ───────────
     @app.get("/corpus", response_class=HTMLResponse, include_in_schema=False)
     def corpus_page() -> str:

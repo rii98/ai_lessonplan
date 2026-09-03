@@ -10,20 +10,22 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from . import providers  # noqa: F401  (import triggers adapter registration)
-from .config import Settings, load_settings
+from .config import Settings, SparseEmbeddingConfig, load_settings
 from .export import ExportService
 from .export.base import ArtifactKind
-from .providers.base import Embedder, LLMClient, Reranker, VectorStore
+from .providers.base import Embedder, LLMClient, Reranker, SparseEmbedder, VectorStore
 from .providers.registry import (
     build_embedder,
     build_llm,
     build_reranker,
+    build_sparse_embedder,
     build_vector_store,
 )
 from .rag.grounding import GroundingRetriever
 from .rag.ingest import ChunkerPolicy, Ingestor
 from .rag.retriever import Retriever
 from .services.artifact_generation import ArtifactGenerator, build_generator
+from .services.artifact_refine import ArtifactRefiner
 from .services.critique import Critic
 from .services.generation import LessonGenerator
 from .services.intake import Intake
@@ -45,6 +47,7 @@ class Container:
     grounding: GroundingRetriever
     generator: LessonGenerator
     exporter: ExportService
+    sparse_embedder: SparseEmbedder | None = None  # hybrid search; None = dense-only
     ingestor: Ingestor | None = None
     # M4 stages — optional so existing call sites keep working; ``__post_init__``
     # wires any left unset from ``settings`` (+ the fast model / reasoning model).
@@ -64,6 +67,8 @@ class Container:
                 embedder=self.embedder,
                 vector_store=self.vector_store,
                 chunker_policy=ChunkerPolicy.from_config(self.settings.chunking),
+                sparse_embedder=self.sparse_embedder,
+                hybrid=self.settings.retrieval.hybrid,
             )
         if self.profile_store is None:
             self.profile_store = build_profile_store(self.settings.profile)
@@ -77,7 +82,8 @@ class Container:
             )
         if self.refiner is None:
             self.refiner = Refiner.from_config(
-                self.settings.refine, llm=self.llm, critic=self.critic
+                self.settings.refine, llm=self.llm, critic=self.critic,
+                grounding=self.grounding,
             )
         if self.pipeline is None:
             self.pipeline = LessonPipeline(
@@ -96,6 +102,22 @@ class Container:
             max_repairs=self.settings.generation.max_repairs,
         )
 
+    def artifact_refiner(self, kind: ArtifactKind) -> ArtifactRefiner:
+        """Build the AI "Improve" refiner for a targeted artifact — wired with the
+        reasoning LLM and the shared (hybrid) grounding retriever, so a content edit
+        re-grounds in the reference book. Per request; holds no state."""
+        from .domain.artifact_sections import ARTIFACT_MODELS, ARTIFACT_SECTIONS
+
+        k = kind.value
+        return ArtifactRefiner(
+            kind=k,
+            model=ARTIFACT_MODELS[k],
+            sections=ARTIFACT_SECTIONS[k],
+            llm=self.llm,
+            grounding=self.grounding,
+            max_cascade=self.settings.refine.max_cascade,
+        )
+
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> Container:
         settings = settings or load_settings()
@@ -106,10 +128,18 @@ class Container:
         embedder = build_embedder(settings.embedding)
         reranker = build_reranker(settings.reranker)
         vector_store = build_vector_store(settings.vector_store)
+        # the lexical encoder for hybrid search — built only when hybrid is on, with
+        # a BM25 default when no sparse_embedding block is configured.
+        sparse_embedder = (
+            build_sparse_embedder(settings.sparse_embedding or SparseEmbeddingConfig(provider="fastembed"))
+            if settings.retrieval.hybrid else None
+        )
         retriever = Retriever(
             embedder=embedder,
             vector_store=vector_store,
             reranker=reranker,
+            sparse_embedder=sparse_embedder,
+            hybrid=settings.retrieval.hybrid,
             top_k=settings.retrieval.top_k,
             rerank_top_n=settings.retrieval.rerank_top_n,
         )
@@ -123,6 +153,7 @@ class Container:
             llm=llm,
             llm_fast=llm_fast,
             embedder=embedder,
+            sparse_embedder=sparse_embedder,
             reranker=reranker,
             vector_store=vector_store,
             retriever=retriever,

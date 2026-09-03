@@ -89,6 +89,37 @@ def test_lesson_plan_is_not_generatable_standalone(client):
     assert "not generatable" in resp.json()["detail"]
 
 
+def test_refine_targets_endpoint(client):
+    body = client.get("/artifacts/quiz/refine/targets").json()
+    targets = {s["target"] for s in body["sections"]}
+    assert {"objectives", "questions", "instructions"} <= targets
+    instr = next(s for s in body["sections"] if s["target"] == "instructions")
+    assert instr["grounded"] is False  # cosmetic → no re-grounding
+
+
+def test_refine_artifact_roundtrip():
+    # a section-shaped LLM reply so the reprompt of "instructions" succeeds
+    c = _client({"section": "Read each question carefully before answering."})
+    quiz = {
+        "topic": "Sound", "curriculum_ref": {"board": "CDC", "grade": 7, "subject": "Science"},
+        "objectives": [{"id": "O1", "statement": "explain sound is a vibration", "bloom": "understand"}],
+        "questions": [{"id": "Q1", "type": "short_answer", "prompt": "cause?",
+                       "answer": "vibration", "objective_ids": ["O1"]}],
+        "instructions": "Answer.",
+    }
+    resp = c.post("/artifacts/quiz/refine",
+                  json={"artifact": quiz, "target": "instructions", "instruction": "clearer"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] and body["candidate"]["instructions"].startswith("Read each")
+    assert set(body["diff"]) == {"instructions"}
+
+
+def test_refine_rejects_missing_instruction(client):
+    resp = client.post("/artifacts/quiz/refine", json={"artifact": {}, "target": "questions"})
+    assert resp.status_code == 422
+
+
 def test_generate_worksheet_and_slides():
     ws_resp = {
         "topic": "Sound", "curriculum_ref": {"board": "CDC", "grade": 7, "subject": "Science"},
