@@ -115,3 +115,33 @@ export:
   # renders in Word/PowerPoint (not tofu boxes).
   body_font: Calibri
   devanagari_font: Noto Sans Devanagari
+
+chat:
+  # The QA chatbot — a streaming, persistent, advanced-RAG assistant over the
+  # collections. Every stage below is tuneable; flip a flag to disable a technique.
+  store:
+    provider: sqlite                    # ← swap: memory | sqlite | postgres
+    path: .lessonforge/chat.db          # for provider: sqlite
+    url: ${CHAT_DB_URL:-}               # for provider: postgres (DSN via env; docker sets it)
+  retrieval:
+    collections: [reference, curriculum, pedagogical, exemplar, local_context]
+    per_collection_top_n: 4             # candidates pulled from each collection, per query
+    top_k: 20                           # dense/hybrid candidate pool (from retrieval.top_k)
+    rerank_top_n: 6                     # kept after fusing + reranking across queries
+    filter_fields: [grade, subject, class]   # which default tags become scoped-mode filters
+    default_mode: scoped                # scoped (apply tag filters) | broad (search everything)
+  query_transform:
+    provider: llm                       # ← swap: llm | passthrough (no LLM)
+    condense_history: true              # rewrite follow-ups into standalone queries
+    expansions: 3                       # multi-query paraphrases; 0 disables
+    hyde: false                         # retrieve with a hypothetical answer passage
+  context:
+    max_chars: 6000                     # grounding budget fed to the answer model
+    compression: false                  # LLM sentence-level relevance filtering (extra cost)
+  memory:
+    window_turns: 8                     # recent turns kept verbatim (1 turn = user+assistant)
+    summarize: true                     # roll older turns into a running summary
+    summary_trigger_turns: 12           # start summarizing once the thread exceeds this
+  synthesis:
+    temperature: 0.3
+    require_citations: true             # instruct the model to cite [n] from the sources

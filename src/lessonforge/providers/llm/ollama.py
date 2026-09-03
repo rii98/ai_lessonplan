@@ -8,6 +8,7 @@ valid JSON; the caller still validates against the Pydantic model.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import Any
 
 import httpx
@@ -77,6 +78,49 @@ class OllamaLLM(LLMClient):
             except (httpx.HTTPError, json.JSONDecodeError) as exc:  # pragma: no cover - network
                 last_exc = exc
         raise RuntimeError(f"Ollama request failed after retries: {last_exc}") from last_exc
+
+    def stream(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        temperature: float | None = None,
+    ) -> Iterator[str]:
+        """Stream free-form answer text as NDJSON deltas from Ollama's
+        ``/api/generate`` (``stream: true``). Each line is a JSON object with a
+        ``response`` fragment; the final line carries ``done: true``. Network
+        errors surface as a RuntimeError so the caller can emit an error event —
+        streaming has no retry loop (a partially-sent answer can't be replayed)."""
+        body: dict[str, Any] = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": True,
+            "options": {
+                "temperature": self.temperature if temperature is None else temperature
+            },
+        }
+        if system:
+            body["system"] = system
+        try:
+            with (
+                httpx.Client(timeout=self.timeout_s) as client,
+                client.stream("POST", f"{self.base_url}/api/generate", json=body) as resp,
+            ):
+                resp.raise_for_status()
+                for line in resp.iter_lines():
+                    if not line:
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:  # pragma: no cover - defensive
+                        continue
+                    piece = chunk.get("response")
+                    if piece:
+                        yield piece
+                    if chunk.get("done"):
+                        break
+        except httpx.HTTPError as exc:  # pragma: no cover - network
+            raise RuntimeError(f"Ollama stream failed: {exc}") from exc
 
     def health(self) -> bool:
         try:

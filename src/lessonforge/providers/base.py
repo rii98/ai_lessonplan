@@ -9,6 +9,7 @@ of these interfaces plus a one-line ``@register_*`` decorator.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -34,6 +35,22 @@ class LLMClient(ABC):
     ) -> LLMResult:
         """Return a completion. If ``json_schema`` is given, the backend is asked
         to emit JSON conforming to it (best effort; caller still validates)."""
+
+    def stream(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        temperature: float | None = None,
+    ) -> Iterator[str]:
+        """Yield the completion as incremental text deltas (for streaming UIs).
+
+        The default implementation calls :meth:`complete` and yields the whole
+        result once — so every existing adapter streams correctly (if not
+        incrementally) with no change. A backend with a native token stream
+        overrides this to yield real deltas. Structured/JSON generation stays on
+        :meth:`complete`; streaming is for free-form answer text."""
+        yield self.complete(prompt, system=system, temperature=temperature).text
 
     @abstractmethod
     def health(self) -> bool:

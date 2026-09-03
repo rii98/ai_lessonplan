@@ -241,11 +241,51 @@ curl -s http://localhost:8000/lessons/generate -H 'content-type: application/jso
   -d '{"topic":"The Water Cycle"}' | jq '.curriculum_ref, .local_context'
 ```
 
+## Chat — an advanced-RAG assistant over the corpus
+
+A second, standalone product surface: a **persistent, streaming chatbot** that
+answers free-form questions grounded in the same collections. It's a real
+retrieval pipeline, not a naive lookup — and every stage is config-tuneable
+(`chat:` block), degrading to plain retrieval by flipping a flag:
+
+```
+condense follow-up ─► multi-query expand ─► [HyDE] ─► hybrid retrieve
+   ─► RRF fuse across queries+collections ─► rerank ─► [compress] ─► stream answer
+```
+
+```bash
+uvicorn lessonforge.api.main:app --reload
+# → http://localhost:8000/chat
+```
+
+- **Two modes** — a conversation stores default tag filters (grade/subject/class/
+  collections); **Scoped** applies them (with the same lenient fallback as lesson
+  grounding), **Broad** searches everything. Each message can override the mode.
+- **Streaming** — answers arrive token-by-token over SSE
+  (`POST /chat/conversations/{id}/message`).
+- **Cited, with previews** — every answer carries numbered `[n]` citations whose
+  exact retrieved chunk (text + metadata + source) is shown in a click-to-preview
+  drawer; provenance is never invented.
+- **Memory** — a verbatim recent-turn window plus a rolling LLM summary of older
+  turns keeps long conversations coherent without resending the transcript.
+- **Persistence** behind a pluggable `ChatStore` port — `memory` (tests) ·
+  `sqlite` (local default, one file) · `postgres` (Docker) — a one-line
+  `chat.store.provider` swap. The DSN is env-driven (`CHAT_DB_URL`), never in YAML.
+
+The whole subsystem is wired in the `Container` from the shared retriever + LLMs,
+each stage a single-responsibility class behind a narrow interface (SOLID) — a new
+query-transform or store backend is a new class plus a registry decorator.
+
 ## Full stack in Docker
 
 ```bash
-docker compose up --build     # qdrant + api; api reaches host Ollama
+docker compose up --build     # qdrant + postgres + api; api reaches host Ollama
 ```
+
+Postgres backs the chatbot's persistence in Docker (the api service sets
+`LF__CHAT__STORE__PROVIDER=postgres` + `CHAT_DB_URL`); the lesson pipeline itself
+needs only Qdrant. Swap the chat store back to sqlite/memory in config and the
+`postgres` service is simply unused.
 
 The reranker and embedder run in-process (FastEmbed, no server). The only
 external services are Qdrant and Ollama.

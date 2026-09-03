@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Query, Response
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from ..container import Container
 from ..domain.artifacts import Quiz, Slides, Worksheet
+from ..domain.chat import (
+    ChatMessageRequest,
+    Conversation,
+    CreateConversationRequest,
+    UpdateConversationRequest,
+)
 from ..domain.ldd import IntakeRequest, LessonDesignDocument, NormalizedBrief
 from ..domain.profile import TeacherProfile
 from ..domain.refine import RefineRequest, RefineResult
@@ -21,6 +28,7 @@ from ..rag.chunkers import CHUNKER_REGISTRY, build_chunker
 from ..rag.documents import COLLECTION_KEY, SOURCE_KEY, TEXT_KEY, Collection, Document
 from ..rag.loaders import split_front_matter
 from ..services.artifact_generation import generatable_kinds
+from ..services.chat.pipeline import ChatEvent
 from .deps import get_container
 
 # Maps a targeted artifact kind to the IR model its generate/export endpoints use.
@@ -32,6 +40,7 @@ _ARTIFACT_MODELS: dict[ArtifactKind, type] = {
 
 _UI_INDEX = Path(__file__).parent / "static" / "index.html"
 _UI_CORPUS = Path(__file__).parent / "static" / "corpus.html"
+_UI_CHAT = Path(__file__).parent / "static" / "chat.html"
 
 # Payload keys that carry the record's own text/source/collection or store
 # internals — surfaced as dedicated fields, so they're stripped from the
@@ -564,7 +573,118 @@ def create_app() -> FastAPI:
         deleted = c.vector_store.delete(name.value, req.ids)
         return {"deleted": deleted, "count": c.vector_store.count(name.value)}
 
+    # ── QA chatbot: streaming, persistent, advanced-RAG over the collections ──
+    @app.get("/chat", response_class=HTMLResponse, include_in_schema=False)
+    def chat_page() -> str:
+        """The chatbot web app — a single self-contained page (streaming answers,
+        citation previews, scoped/broad modes)."""
+        if _UI_CHAT.exists():
+            return _UI_CHAT.read_text(encoding="utf-8")
+        return "<h1>LessonForge chat</h1><p>UI asset missing. See /docs for the API.</p>"
+
+    def _get_conversation(c: Container, conversation_id: str) -> Conversation:
+        conv = c.chat_store.get(conversation_id)
+        if conv is None:
+            raise HTTPException(status_code=404, detail="conversation not found")
+        return conv
+
+    @app.get("/chat/config", tags=["chat"])
+    def chat_config(c: Container = Depends(get_container)) -> dict[str, object]:
+        """What the chat UI needs to render its controls: the searchable
+        collections, which tags become scoped-mode filters, and the default mode."""
+        r = c.settings.chat.retrieval
+        return {
+            "collections": r.collections,
+            "filter_fields": r.filter_fields,
+            "default_mode": r.default_mode,
+        }
+
+    @app.get("/chat/conversations", response_model=list[Conversation], tags=["chat"])
+    def list_conversations(
+        c: Container = Depends(get_container), owner_id: str = Query(default="default")
+    ) -> list[Conversation]:
+        """A teacher's conversations, most-recently-updated first."""
+        return c.chat_store.list(owner_id)
+
+    @app.post("/chat/conversations", response_model=Conversation, tags=["chat"])
+    def create_conversation(
+        req: CreateConversationRequest, c: Container = Depends(get_container)
+    ) -> Conversation:
+        """Start a conversation with its default retrieval scope (grade/subject/
+        class/collections + scoped|broad mode)."""
+        conv = Conversation(
+            owner_id=req.owner_id,
+            title=req.title or "New chat",
+            defaults=req.defaults,
+        )
+        return c.chat_store.create(conv)
+
+    @app.get("/chat/conversations/{conversation_id}", tags=["chat"])
+    def get_conversation(
+        conversation_id: str, c: Container = Depends(get_container)
+    ) -> dict[str, object]:
+        """A conversation with its full message history (for reloading a thread)."""
+        conv = _get_conversation(c, conversation_id)
+        msgs = c.chat_store.messages(conversation_id)
+        return {
+            "conversation": conv.model_dump(by_alias=True),
+            "messages": [m.model_dump() for m in msgs],
+        }
+
+    @app.patch("/chat/conversations/{conversation_id}", response_model=Conversation, tags=["chat"])
+    def update_conversation(
+        conversation_id: str,
+        req: UpdateConversationRequest,
+        c: Container = Depends(get_container),
+    ) -> Conversation:
+        """Rename a conversation and/or change its default retrieval scope."""
+        _get_conversation(c, conversation_id)
+        updated = c.chat_store.update(
+            conversation_id, title=req.title, defaults=req.defaults
+        )
+        if updated is None:  # pragma: no cover - race: deleted between get and update
+            raise HTTPException(status_code=404, detail="conversation not found")
+        return updated
+
+    @app.delete("/chat/conversations/{conversation_id}", tags=["chat"])
+    def delete_conversation(
+        conversation_id: str, c: Container = Depends(get_container)
+    ) -> dict[str, bool]:
+        """Delete a conversation and all its messages."""
+        return {"deleted": c.chat_store.delete(conversation_id)}
+
+    @app.post("/chat/conversations/{conversation_id}/message", tags=["chat"])
+    def send_message(
+        conversation_id: str,
+        req: ChatMessageRequest,
+        c: Container = Depends(get_container),
+    ) -> StreamingResponse:
+        """Ask a question and stream the grounded answer back as Server-Sent
+        Events: ``token`` deltas, then a ``sources`` event carrying the citations
+        (each with its chunk text for preview), then ``done`` (or ``error``). The
+        optional ``mode``/``filters`` in the body override the conversation's
+        default scope for this one message (the two-modes control)."""
+        conv = _get_conversation(c, conversation_id)
+
+        def event_stream():
+            try:
+                for event in c.chat_pipeline.stream(conv, req):
+                    yield _sse(event)
+            except Exception as exc:  # pragma: no cover - defensive top-level guard
+                yield _sse(ChatEvent("error", {"message": str(exc)}))
+
+        return StreamingResponse(
+            event_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
     return app
+
+
+def _sse(event: ChatEvent) -> str:
+    """Encode one pipeline event as an SSE frame."""
+    return f"event: {event.type}\ndata: {json.dumps(event.data)}\n\n"
 
 
 app = create_app()

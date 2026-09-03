@@ -26,13 +26,25 @@ from .rag.ingest import ChunkerPolicy, Ingestor
 from .rag.retriever import Retriever
 from .services.artifact_generation import ArtifactGenerator, build_generator
 from .services.artifact_refine import ArtifactRefiner
+from .services.chat.context import ContextBuilder
+from .services.chat.memory import ConversationMemory
+from .services.chat.pipeline import ChatPipeline
+from .services.chat.retrieve import ChatRetriever
+from .services.chat.store import ChatStore
+from .services.chat.synthesize import AnswerSynthesizer
+from .services.chat.transform import build_query_transformer
 from .services.critique import Critic
 from .services.generation import LessonGenerator
 from .services.intake import Intake
 from .services.pipeline import LessonPipeline
 from .services.profile import ProfileStore
 from .services.refine import Refiner
-from .services.registry import build_critic, build_intake, build_profile_store
+from .services.registry import (
+    build_chat_store,
+    build_critic,
+    build_intake,
+    build_profile_store,
+)
 from .services.revise import Reviser
 
 
@@ -58,6 +70,10 @@ class Container:
     refiner: Refiner | None = None
     pipeline: LessonPipeline | None = field(default=None)
     profile_store: ProfileStore | None = None
+    # The QA chatbot subsystem — persistence + the streaming RAG pipeline. Optional
+    # so existing call sites/tests keep working; wired from ``settings.chat`` below.
+    chat_store: ChatStore | None = None
+    chat_pipeline: ChatPipeline | None = None
 
     def __post_init__(self) -> None:
         # intake uses the cheap fast model; critique/revise use the reasoning model.
@@ -88,6 +104,22 @@ class Container:
         if self.pipeline is None:
             self.pipeline = LessonPipeline(
                 intake=self.intake, generator=self.generator, reviser=self.reviser
+            )
+        # ── QA chatbot: persistence + the advanced-RAG streaming pipeline ────────
+        chat = self.settings.chat
+        if self.chat_store is None:
+            self.chat_store = build_chat_store(chat.store)
+        if self.chat_pipeline is None:
+            # cheap/fast model for query understanding, compression, and summaries;
+            # the reasoning model streams the final grounded answer.
+            self.chat_pipeline = ChatPipeline(
+                store=self.chat_store,
+                memory=ConversationMemory(self.chat_store, chat.memory, llm=self.llm_fast),
+                transformer=build_query_transformer(chat.query_transform, llm=self.llm_fast),
+                retriever=ChatRetriever(self.retriever, chat.retrieval),
+                context_builder=ContextBuilder(chat.context, llm=self.llm_fast),
+                synthesizer=AnswerSynthesizer(self.llm, chat.synthesis),
+                config=chat,
             )
 
     def artifact_generator(self, kind: ArtifactKind) -> ArtifactGenerator:

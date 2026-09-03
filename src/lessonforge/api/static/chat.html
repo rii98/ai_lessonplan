@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LessonForge — chat</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1a2230; --muted: #667085;
+    --line: #e3e7ee; --brand: #2f6f4f; --brand-ink: #ffffff; --accent: #1f6feb;
+    --warn: #b42318; --warn-bg: #fef3f2; --ok: #05803e; --ok-bg: #ecfdf3;
+    --chip: #eef2f7; --user-bg: #2f6f4f; --user-ink: #ffffff;
+    --ai-bg: #ffffff; --radius: 12px; --shadow: 0 1px 2px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --panel: #171b22; --ink: #e6eaf0; --muted: #9aa4b2;
+      --line: #262d38; --brand: #4c9e75; --brand-ink: #08130d; --accent: #6ea8fe;
+      --warn: #ff9a8f; --warn-bg: #2a1512; --ok: #6ee7a8; --ok-bg: #0f2318;
+      --chip: #212834; --user-bg: #315e46; --user-ink: #eafff3;
+      --ai-bg: #1b2029; --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Devanagari", sans-serif;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  header.top {
+    padding: 12px 18px; border-bottom: 1px solid var(--line); background: var(--panel);
+    display: flex; align-items: center; gap: 12px; flex: 0 0 auto;
+  }
+  header.top .brand { display: flex; align-items: center; gap: 9px; font-weight: 700; letter-spacing: -.01em; }
+  header.top .brand .dot { width: 20px; height: 20px; border-radius: 6px;
+    background: linear-gradient(135deg, var(--brand), var(--accent)); }
+  header.top nav { margin-left: auto; display: flex; gap: 4px; }
+  header.top nav a {
+    color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 600;
+    padding: 6px 11px; border-radius: 8px;
+  }
+  header.top nav a:hover { background: var(--chip); color: var(--ink); }
+  header.top nav a.active { color: var(--ink); background: var(--chip); }
+
+  .app { flex: 1 1 auto; display: flex; min-height: 0; }
+
+  /* ── sidebar ─────────────────────────────────────────────────────────────── */
+  aside {
+    width: 270px; flex: 0 0 auto; border-right: 1px solid var(--line);
+    background: var(--panel); display: flex; flex-direction: column; min-height: 0;
+  }
+  aside .side-head { padding: 12px; border-bottom: 1px solid var(--line); }
+  aside .convos { overflow-y: auto; flex: 1 1 auto; padding: 8px; }
+  .convo {
+    padding: 9px 10px; border-radius: 9px; cursor: pointer; margin-bottom: 3px;
+    display: flex; align-items: center; gap: 8px; color: var(--ink);
+  }
+  .convo:hover { background: var(--chip); }
+  .convo.active { background: var(--chip); box-shadow: inset 2px 0 0 var(--brand); }
+  .convo .title { flex: 1 1 auto; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .convo .del { opacity: 0; border: none; background: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 2px 4px; border-radius: 6px; }
+  .convo:hover .del { opacity: 1; }
+  .convo .del:hover { color: var(--warn); background: var(--warn-bg); }
+  .empty { color: var(--muted); font-size: 13px; text-align: center; padding: 24px 12px; }
+
+  /* ── main column ─────────────────────────────────────────────────────────── */
+  main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+  /* scope bar */
+  .scope {
+    flex: 0 0 auto; border-bottom: 1px solid var(--line); background: var(--panel);
+    padding: 9px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--bg); }
+  .seg button { border: none; background: none; padding: 6px 14px; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--muted); cursor: pointer; }
+  .seg button.on { background: var(--brand); color: var(--brand-ink); }
+  .scope .filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .scope.broad .filters { opacity: .4; pointer-events: none; }
+  .scope label { font-size: 11px; color: var(--muted); display: inline-flex; flex-direction: column; gap: 2px; }
+  .scope input, .scope select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); font: inherit; font-size: 13px; width: 96px; }
+  .scope .cols-btn { margin-left: 2px; }
+  .scope .spacer { flex: 1 1 auto; }
+  button {
+    font: inherit; font-weight: 600; padding: 7px 13px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); }
+  button.primary:hover { filter: brightness(1.05); }
+  button.small { padding: 5px 10px; font-size: 12.5px; }
+  button.ghost { background: transparent; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* transcript */
+  .transcript { flex: 1 1 auto; overflow-y: auto; padding: 22px 0; }
+  .thread { max-width: 820px; margin: 0 auto; padding: 0 20px; }
+  .welcome { text-align: center; color: var(--muted); margin-top: 8vh; }
+  .welcome h2 { color: var(--ink); font-size: 22px; margin: 0 0 6px; letter-spacing: -.01em; }
+  .welcome .suggest { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-top: 22px; }
+  .welcome .suggest button { background: var(--panel); font-weight: 500; font-size: 13.5px; max-width: 240px; text-align: left; color: var(--ink); }
+
+  .msg { display: flex; gap: 12px; margin-bottom: 22px; }
+  .msg .avatar {
+    flex: 0 0 auto; width: 30px; height: 30px; border-radius: 8px; font-size: 14px;
+    display: grid; place-items: center; font-weight: 700;
+  }
+  .msg.user .avatar { background: var(--user-bg); color: var(--user-ink); }
+  .msg.ai .avatar { background: linear-gradient(135deg, var(--brand), var(--accent)); color: #fff; }
+  .msg .body { flex: 1 1 auto; min-width: 0; }
+  .msg .who { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 3px; }
+  .bubble { border-radius: var(--radius); }
+  .msg.ai .bubble { background: var(--ai-bg); border: 1px solid var(--line); padding: 13px 15px; box-shadow: var(--shadow); }
+  .msg.user .bubble { background: var(--user-bg); color: var(--user-ink); padding: 11px 14px; display: inline-block; }
+  .prose { word-wrap: break-word; overflow-wrap: anywhere; }
+  .prose p { margin: 0 0 10px; } .prose p:last-child { margin-bottom: 0; }
+  .prose ul, .prose ol { margin: 0 0 10px; padding-left: 22px; }
+  .prose li { margin: 2px 0; }
+  .prose code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  .prose pre { background: var(--chip); padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin: 0 0 10px; }
+  .prose pre code { background: none; padding: 0; }
+  .prose h1, .prose h2, .prose h3 { font-size: 15px; margin: 12px 0 6px; }
+  .prose strong { font-weight: 700; }
+  .cite {
+    display: inline-block; vertical-align: super; font-size: 10px; font-weight: 700;
+    color: var(--accent); background: var(--chip); border-radius: 5px; padding: 0 4px;
+    margin: 0 1px; cursor: pointer; line-height: 1.6; text-decoration: none;
+  }
+  .cite:hover { background: var(--accent); color: #fff; }
+  .refs { margin-top: 11px; padding-top: 11px; border-top: 1px dashed var(--line); }
+  .refs .refs-h { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 7px; }
+  .ref {
+    display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: 8px;
+    cursor: pointer; font-size: 13px;
+  }
+  .ref:hover { background: var(--chip); }
+  .ref .num { flex: 0 0 auto; font-weight: 700; color: var(--accent); font-size: 12px; }
+  .ref .meta { flex: 1 1 auto; min-width: 0; }
+  .ref .meta .snip { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ref .meta .prov { color: var(--muted); font-size: 11.5px; margin-top: 1px; }
+  .tag { display: inline-block; background: var(--chip); color: var(--muted); border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 600; margin-right: 5px; }
+  .typing { display: inline-flex; gap: 3px; padding: 3px 0; }
+  .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
+  .typing i:nth-child(2){ animation-delay: .2s } .typing i:nth-child(3){ animation-delay: .4s }
+  @keyframes blink { 0%,60%,100%{ opacity:.25 } 30%{ opacity:1 } }
+
+  /* composer */
+  .composer { flex: 0 0 auto; border-top: 1px solid var(--line); background: var(--panel); padding: 12px 20px 16px; }
+  .composer .box { max-width: 820px; margin: 0 auto; display: flex; gap: 10px; align-items: flex-end;
+    border: 1px solid var(--line); border-radius: 14px; background: var(--bg); padding: 8px 8px 8px 14px; }
+  .composer .box:focus-within { border-color: var(--accent); }
+  .composer textarea { flex: 1 1 auto; border: none; background: none; resize: none; font: inherit;
+    color: var(--ink); max-height: 180px; padding: 6px 0; outline: none; }
+  .composer .send { flex: 0 0 auto; width: 38px; height: 38px; border-radius: 10px; padding: 0; font-size: 17px; }
+  .composer .hint { max-width: 820px; margin: 6px auto 0; color: var(--muted); font-size: 11.5px; text-align: center; }
+
+  /* preview drawer */
+  .scrim { position: fixed; inset: 0; background: rgba(16,24,40,.4); z-index: 30; opacity: 0; pointer-events: none; transition: opacity .15s; }
+  .scrim.show { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; top: 0; right: 0; height: 100vh; width: min(460px, 92vw); z-index: 31;
+    background: var(--panel); border-left: 1px solid var(--line); box-shadow: -8px 0 30px rgba(16,24,40,.18);
+    transform: translateX(100%); transition: transform .18s ease; display: flex; flex-direction: column;
+  }
+  .drawer.show { transform: none; }
+  .drawer header { padding: 14px 16px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 8px; }
+  .drawer header h3 { margin: 0; font-size: 15px; flex: 1 1 auto; }
+  .drawer .content { padding: 16px; overflow-y: auto; }
+  .drawer .content .src { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+  .drawer .content .chunk { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 14px; white-space: pre-wrap; font-size: 14px; line-height: 1.6; }
+  .drawer .content .kv { margin-top: 14px; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12.5px; }
+  .drawer .content .kv dt { color: var(--muted); } .drawer .content .kv dd { margin: 0; }
+  .x { border: none; background: none; font-size: 18px; color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+  .x:hover { background: var(--chip); color: var(--ink); }
+
+  /* modal (collections + rename) */
+  .modal-scrim { position: fixed; inset: 0; background: rgba(16,24,40,.45); z-index: 40; display: none; align-items: center; justify-content: center; padding: 20px; }
+  .modal-scrim.show { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); width: 100%; max-width: 420px; box-shadow: 0 12px 40px rgba(16,24,40,.3); }
+  .modal header { padding: 14px 16px; border-bottom: 1px solid var(--line); font-weight: 700; }
+  .modal .content { padding: 16px; }
+  .modal .content label.chk { display: flex; align-items: center; gap: 9px; padding: 7px 0; font-size: 14px; cursor: pointer; }
+  .modal .content label.chk input { width: auto; }
+  .modal footer { padding: 12px 16px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn); padding: 9px 16px; border-radius: 10px; font-size: 13px; z-index: 50; display: none; }
+  .toast.show { display: block; }
+  @media (max-width: 720px) { aside { display: none; } }
+</style>
+</head>
+<body>
+  <header class="top">
+    <span class="brand"><span class="dot"></span> LessonForge</span>
+    <nav>
+      <a href="/">Lesson editor</a>
+      <a href="/corpus">Corpus</a>
+      <a href="/chat" class="active">Chat</a>
+    </nav>
+  </header>
+
+  <div class="app">
+    <aside>
+      <div class="side-head">
+        <button class="primary" id="newChat" style="width:100%">＋ New chat</button>
+      </div>
+      <div class="convos" id="convos"></div>
+    </aside>
+
+    <main>
+      <div class="scope" id="scope">
+        <div class="seg" id="modeSeg">
+          <button data-mode="scoped">Scoped</button>
+          <button data-mode="broad">Broad</button>
+        </div>
+        <div class="filters" id="filters">
+          <label>Grade <input id="fGrade" type="number" min="1" max="12" placeholder="any" /></label>
+          <label>Subject <input id="fSubject" type="text" placeholder="any" /></label>
+          <label>Class <input id="fClass" type="text" placeholder="any" /></label>
+        </div>
+        <button class="small ghost cols-btn" id="colsBtn">Collections ▾</button>
+        <div class="spacer"></div>
+        <button class="small ghost" id="saveScope" title="Save this scope as the conversation's default">Save default</button>
+      </div>
+
+      <div class="transcript" id="transcript">
+        <div class="thread" id="thread"></div>
+      </div>
+
+      <div class="composer">
+        <div class="box">
+          <textarea id="input" rows="1" placeholder="Ask about the curriculum, pedagogy, or a topic in the corpus…"></textarea>
+          <button class="primary send" id="send" title="Send">➤</button>
+        </div>
+        <div class="hint">Answers are grounded in your collections and cite their sources. Enter to send · Shift+Enter for a newline.</div>
+      </div>
+    </main>
+  </div>
+
+  <div class="scrim" id="scrim"></div>
+  <div class="drawer" id="drawer" aria-hidden="true">
+    <header><h3 id="drawerTitle">Reference</h3><button class="x" id="drawerClose">✕</button></header>
+    <div class="content" id="drawerBody"></div>
+  </div>
+
+  <div class="modal-scrim" id="colsModal">
+    <div class="modal">
+      <header>Collections to search</header>
+      <div class="content" id="colsList"></div>
+      <footer>
+        <button class="ghost small" id="colsCancel">Cancel</button>
+        <button class="primary small" id="colsApply">Apply</button>
+      </footer>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = (s, r=document) => r.querySelector(s);
+const el = (t, c) => { const e = document.createElement(t); if (c) e.className = c; return e; };
+const api = async (m, url, body) => {
+  const r = await fetch(url, { method: m, headers: body ? {"content-type":"application/json"} : {}, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) throw new Error((await r.json().catch(()=>({detail:r.statusText}))).detail || r.statusText);
+  return r.status === 204 ? null : r.json();
+};
+const toast = (m) => { const t = $("#toast"); t.textContent = m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"), 3200); };
+
+const state = {
+  config: { collections: [], filter_fields: [], default_mode: "scoped" },
+  convos: [], currentId: null, current: null, streaming: false,
+  scope: { mode: "scoped", grade: null, subject: null, class: null, collections: null },
+};
+
+// ── minimal, safe markdown → HTML (escapes first, then a few inline/block rules) ──
+function esc(s){ return s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function renderMarkdown(src, citations){
+  let t = esc(src || "");
+  // fenced code
+  t = t.replace(/```([\s\S]*?)```/g, (_,c)=>`<pre><code>${c.replace(/^\n/,"")}</code></pre>`);
+  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+  t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  // citations [n] → clickable superscript
+  t = t.replace(/\[(\d+)\]/g, (m,n)=>`<a class="cite" data-n="${n}">${n}</a>`);
+  // lists + paragraphs
+  const lines = t.split(/\n/); let html = "", inUl = false, inOl = false, para = [];
+  const flushP = () => { if (para.length){ html += `<p>${para.join(" ")}</p>`; para = []; } };
+  const closeLists = () => { if (inUl){ html += "</ul>"; inUl=false; } if (inOl){ html += "</ol>"; inOl=false; } };
+  for (let ln of lines){
+    if (/^\s*[-*]\s+/.test(ln)) { flushP(); if(inOl){html+="</ol>";inOl=false;} if(!inUl){html+="<ul>";inUl=true;} html += `<li>${ln.replace(/^\s*[-*]\s+/,"")}</li>`; }
+    else if (/^\s*\d+\.\s+/.test(ln)) { flushP(); if(inUl){html+="</ul>";inUl=false;} if(!inOl){html+="<ol>";inOl=true;} html += `<li>${ln.replace(/^\s*\d+\.\s+/,"")}</li>`; }
+    else if (/^\s*#{1,3}\s+/.test(ln)) { flushP(); closeLists(); html += `<h3>${ln.replace(/^\s*#{1,3}\s+/,"")}</h3>`; }
+    else if (ln.trim() === "") { flushP(); closeLists(); }
+    else if (/<pre>|<\/pre>/.test(ln)) { flushP(); closeLists(); html += ln; }
+    else para.push(ln);
+  }
+  flushP(); closeLists();
+  return html;
+}
+
+// ── sidebar ──────────────────────────────────────────────────────────────────
+function renderConvos(){
+  const box = $("#convos"); box.innerHTML = "";
+  if (!state.convos.length){ box.innerHTML = `<div class="empty">No conversations yet.<br/>Start one above.</div>`; return; }
+  for (const c of state.convos){
+    const row = el("div", "convo" + (c.id === state.currentId ? " active" : ""));
+    const title = el("span", "title"); title.textContent = c.title || "New chat";
+    const del = el("button", "del"); del.textContent = "🗑"; del.title = "Delete";
+    del.onclick = (e) => { e.stopPropagation(); deleteConvo(c.id); };
+    row.append(title, del);
+    row.onclick = () => selectConvo(c.id);
+    box.appendChild(row);
+  }
+}
+async function loadConvos(){ state.convos = await api("GET", "/chat/conversations"); renderConvos(); }
+
+async function newConvo(){
+  const conv = await api("POST", "/chat/conversations", { title: "New chat", defaults: scopeToDefaults() });
+  state.convos.unshift(conv); state.currentId = conv.id; state.current = conv;
+  renderConvos(); renderThread([]); $("#input").focus();
+}
+async function deleteConvo(id){
+  await api("DELETE", `/chat/conversations/${id}`);
+  state.convos = state.convos.filter(c => c.id !== id);
+  if (state.currentId === id){ state.currentId = null; state.current = null; renderThread([]); }
+  renderConvos();
+}
+async function selectConvo(id){
+  const data = await api("GET", `/chat/conversations/${id}`);
+  state.currentId = id; state.current = data.conversation;
+  defaultsToScope(data.conversation.defaults || {});
+  renderConvos(); renderThread(data.messages);
+}
+
+// ── scope controls ─────────────────────────────────────────────────────────────
+function scopeToDefaults(){
+  const s = state.scope;
+  return { mode: s.mode, grade: s.grade, subject: s.subject, class: s.class, collections: s.collections };
+}
+function defaultsToScope(d){
+  state.scope.mode = d.mode || state.config.default_mode;
+  state.scope.grade = d.grade ?? null; state.scope.subject = d.subject ?? null; state.scope.class = d.class ?? null;
+  state.scope.collections = d.collections ?? null;
+  syncScopeUI();
+}
+function syncScopeUI(){
+  const s = state.scope;
+  $("#scope").classList.toggle("broad", s.mode === "broad");
+  for (const b of $("#modeSeg").children) b.classList.toggle("on", b.dataset.mode === s.mode);
+  $("#fGrade").value = s.grade ?? ""; $("#fSubject").value = s.subject ?? ""; $("#fClass").value = s.class ?? "";
+}
+function readFilterInputs(){
+  const g = $("#fGrade").value.trim(), sub = $("#fSubject").value.trim(), cl = $("#fClass").value.trim();
+  state.scope.grade = g ? parseInt(g,10) : null;
+  state.scope.subject = sub || null; state.scope.class = cl || null;
+}
+function currentFilters(){
+  const f = {}; const s = state.scope;
+  if (s.grade != null) f.grade = s.grade;
+  if (s.subject) f.subject = s.subject;
+  if (s.class) f["class"] = s.class;
+  return f;
+}
+
+// ── transcript ─────────────────────────────────────────────────────────────────
+function renderThread(messages){
+  const thread = $("#thread"); thread.innerHTML = "";
+  if (!messages.length){ thread.appendChild(welcome()); return; }
+  for (const m of messages) thread.appendChild(bubble(m.role, m.content, m.citations || []));
+  scrollDown();
+}
+function welcome(){
+  const w = el("div","welcome");
+  w.innerHTML = `<h2>Ask your knowledge base</h2><p>Grounded, cited answers from your curriculum, pedagogy, and reference collections.</p>`;
+  const sug = el("div","suggest");
+  ["What misconceptions do Grade 6 students have about photosynthesis?",
+   "Summarise the learning outcomes for Grade 7 Science.",
+   "Give me a local-context hook for teaching fractions."].forEach(q => {
+    const b = el("button"); b.textContent = q; b.onclick = () => { $("#input").value = q; send(); }; sug.appendChild(b);
+  });
+  w.appendChild(sug); return w;
+}
+function bubble(role, content, citations){
+  const wrap = el("div", "msg " + (role === "user" ? "user" : "ai"));
+  const av = el("div","avatar"); av.textContent = role === "user" ? "You"[0] : "◆";
+  const body = el("div","body");
+  const who = el("div","who"); who.textContent = role === "user" ? "You" : "Assistant";
+  const bub = el("div","bubble");
+  const prose = el("div","prose");
+  if (role === "user") prose.textContent = content; else prose.innerHTML = renderMarkdown(content, citations);
+  bub.appendChild(prose);
+  body.append(who, bub);
+  if (role !== "user"){
+    const refs = el("div","refs"); refs.hidden = !(citations && citations.length);
+    if (citations && citations.length) renderRefs(refs, citations);
+    body.appendChild(refs);
+    wireCitations(prose, citations || []);
+  }
+  wrap.append(av, body);
+  wrap._prose = prose; wrap._refs = body.querySelector(".refs");
+  return wrap;
+}
+function renderRefs(container, citations){
+  container.innerHTML = `<div class="refs-h">${citations.length} reference${citations.length>1?"s":""}</div>`;
+  citations.forEach(c => {
+    const r = el("div","ref"); r.onclick = () => openDrawer(c);
+    const num = el("div","num"); num.textContent = "["+c.n+"]";
+    const meta = el("div","meta");
+    const snip = el("div","snip"); snip.textContent = (c.text||"").slice(0,110);
+    const prov = el("div","prov"); prov.innerHTML = `<span class="tag">${esc(c.collection||"")}</span>${esc(c.source||"")}`;
+    meta.append(snip, prov); r.append(num, meta); container.appendChild(r);
+  });
+}
+function wireCitations(prose, citations){
+  const byN = {}; citations.forEach(c => byN[c.n] = c);
+  prose.querySelectorAll(".cite").forEach(a => {
+    a.onclick = () => { const c = byN[a.dataset.n]; if (c) openDrawer(c); };
+  });
+}
+function scrollDown(){ const t = $("#transcript"); t.scrollTop = t.scrollHeight; }
+
+// ── reference preview drawer ────────────────────────────────────────────────────
+function openDrawer(c){
+  $("#drawerTitle").textContent = `Reference [${c.n}]`;
+  const body = $("#drawerBody");
+  const meta = c.metadata || {};
+  const kv = Object.entries(meta).filter(([k])=>!k.startsWith("_"))
+    .map(([k,v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join("");
+  body.innerHTML = `
+    <div class="src"><span class="tag">${esc(c.collection||"")}</span> ${esc(c.source||"unknown source")}</div>
+    <div class="chunk">${esc(c.text||"")}</div>
+    ${kv ? `<dl class="kv">${kv}</dl>` : ""}`;
+  $("#scrim").classList.add("show"); $("#drawer").classList.add("show");
+}
+function closeDrawer(){ $("#scrim").classList.remove("show"); $("#drawer").classList.remove("show"); }
+
+// ── send + stream ────────────────────────────────────────────────────────────────
+async function send(){
+  const input = $("#input"); const text = input.value.trim();
+  if (!text || state.streaming) return;
+  readFilterInputs();
+  if (!state.currentId) await newConvo();
+  input.value = ""; autoGrow(input);
+  const thread = $("#thread");
+  if (thread.querySelector(".welcome")) thread.innerHTML = "";
+  thread.appendChild(bubble("user", text, []));
+  const ai = bubble("assistant", "", []);
+  thread.appendChild(ai);
+  ai._prose.innerHTML = `<span class="typing"><i></i><i></i><i></i></span>`;
+  scrollDown();
+  state.streaming = true; $("#send").disabled = true;
+
+  let answer = "", citations = [];
+  try {
+    const resp = await fetch(`/chat/conversations/${state.currentId}/message`, {
+      method: "POST", headers: {"content-type":"application/json"},
+      body: JSON.stringify({ message: text, mode: state.scope.mode, filters: currentFilters() }),
+    });
+    if (!resp.ok || !resp.body) throw new Error("stream failed ("+resp.status+")");
+    const reader = resp.body.getReader(); const dec = new TextDecoder();
+    let buf = "";
+    for(;;){
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const frames = buf.split("\n\n"); buf = frames.pop();
+      for (const frame of frames){
+        const ev = parseSSE(frame); if (!ev) continue;
+        if (ev.event === "token"){
+          answer += ev.data;
+          ai._prose.innerHTML = renderMarkdown(answer, citations);
+          scrollDown();
+        } else if (ev.event === "sources"){
+          citations = ev.data || [];
+          ai._prose.innerHTML = renderMarkdown(answer, citations);
+          wireCitations(ai._prose, citations);
+          if (citations.length){ ai._refs.hidden = false; renderRefs(ai._refs, citations); }
+        } else if (ev.event === "done"){
+          if (ev.data && ev.data.title){ // first message named the conversation
+            const c = state.convos.find(x => x.id === state.currentId); if (c){ c.title = ev.data.title; renderConvos(); }
+          }
+        } else if (ev.event === "error"){
+          toast(ev.data && ev.data.message ? ev.data.message : "Something went wrong.");
+        }
+      }
+    }
+    if (!answer) ai._prose.innerHTML = `<em style="color:var(--muted)">No answer was produced.</em>`;
+  } catch(err){
+    ai._prose.innerHTML = `<em style="color:var(--warn)">${esc(err.message||"stream error")}</em>`;
+  } finally {
+    state.streaming = false; $("#send").disabled = false; input.focus();
+  }
+}
+function parseSSE(frame){
+  let event = "message", data = "";
+  for (const line of frame.split("\n")){
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data += line.slice(5).trim();
+  }
+  if (!data) return null;
+  try { return { event, data: JSON.parse(data) }; } catch { return { event, data }; }
+}
+
+// ── collections modal ────────────────────────────────────────────────────────────
+function openCols(){
+  const list = $("#colsList"); list.innerHTML = "";
+  const chosen = state.scope.collections; // null = all
+  for (const name of state.config.collections){
+    const on = chosen == null || chosen.includes(name);
+    const lab = el("label","chk");
+    lab.innerHTML = `<input type="checkbox" value="${esc(name)}" ${on?"checked":""}/> ${esc(name)}`;
+    list.appendChild(lab);
+  }
+  $("#colsModal").classList.add("show");
+}
+function applyCols(){
+  const boxes = [...$("#colsList").querySelectorAll("input")];
+  const chosen = boxes.filter(b=>b.checked).map(b=>b.value);
+  state.scope.collections = (chosen.length === state.config.collections.length) ? null : chosen;
+  $("#colsModal").classList.remove("show");
+}
+
+async function saveScope(){
+  if (!state.currentId){ toast("Start a conversation first."); return; }
+  readFilterInputs();
+  await api("PATCH", `/chat/conversations/${state.currentId}`, { defaults: scopeToDefaults() });
+  toast("Scope saved as the conversation default.");
+}
+
+// ── wiring ───────────────────────────────────────────────────────────────────────
+function autoGrow(t){ t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; }
+function init(){
+  $("#newChat").onclick = newConvo;
+  $("#send").onclick = send;
+  $("#input").addEventListener("input", e => autoGrow(e.target));
+  $("#input").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); send(); } });
+  $("#modeSeg").onclick = e => { const b = e.target.closest("button"); if (!b) return; state.scope.mode = b.dataset.mode; syncScopeUI(); };
+  $("#colsBtn").onclick = openCols;
+  $("#colsApply").onclick = applyCols;
+  $("#colsCancel").onclick = () => $("#colsModal").classList.remove("show");
+  $("#saveScope").onclick = saveScope;
+  $("#drawerClose").onclick = closeDrawer; $("#scrim").onclick = closeDrawer;
+  document.addEventListener("keydown", e => { if (e.key === "Escape"){ closeDrawer(); $("#colsModal").classList.remove("show"); } });
+}
+
+(async function(){
+  init();
+  try {
+    state.config = await api("GET", "/chat/config");
+    state.scope.mode = state.config.default_mode || "scoped";
+    syncScopeUI();
+    await loadConvos();
+    renderThread([]);
+  } catch(err){ toast("Failed to load: " + err.message); }
+})();
+</script>
+</body>
+</html>

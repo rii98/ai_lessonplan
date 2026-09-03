@@ -24,6 +24,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # Persistent store for the chatbot's conversations + messages. The lesson
+  # pipeline needs only Qdrant; the chat subsystem adds this. Swap the chat store
+  # back to sqlite/memory in config and this service is simply unused.
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: lessonforge
+      POSTGRES_PASSWORD: lessonforge
+      POSTGRES_DB: lessonforge
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lessonforge -d lessonforge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   api:
     build: .
     ports:
@@ -34,10 +53,15 @@ services:
       QDRANT_URL: http://qdrant:6333
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       LF_ENV: docker
+      # Use the Docker-backed Postgres for chat persistence.
+      LF__CHAT__STORE__PROVIDER: postgres
+      CHAT_DB_URL: postgresql://lessonforge:lessonforge@postgres:5432/lessonforge
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach host Ollama on Linux
     depends_on:
       qdrant:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     volumes:
       - fastembed_cache:/app/.cache/fastembed
@@ -63,3 +87,4 @@ services:
 volumes:
   qdrant_data:
   fastembed_cache:
+  pg_data:
