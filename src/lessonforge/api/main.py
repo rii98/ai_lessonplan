@@ -595,7 +595,7 @@ def create_app() -> FastAPI:
         return "<h1>LessonForge chat</h1><p>UI asset missing. See /docs for the API.</p>"
 
     def _get_conversation(c: Container, conversation_id: str) -> Conversation:
-        conv = c.chat_store.get(conversation_id)
+        conv = c.get_chat_store().get(conversation_id)
         if conv is None:
             raise HTTPException(status_code=404, detail="conversation not found")
         return conv
@@ -616,7 +616,7 @@ def create_app() -> FastAPI:
         c: Container = Depends(get_container), owner_id: str = Query(default="default")
     ) -> list[Conversation]:
         """A teacher's conversations, most-recently-updated first."""
-        return c.chat_store.list(owner_id)
+        return c.get_chat_store().list(owner_id)
 
     @app.post("/chat/conversations", response_model=Conversation, tags=["chat"])
     def create_conversation(
@@ -629,7 +629,7 @@ def create_app() -> FastAPI:
             title=req.title or "New chat",
             defaults=req.defaults,
         )
-        return c.chat_store.create(conv)
+        return c.get_chat_store().create(conv)
 
     @app.get("/chat/conversations/{conversation_id}", tags=["chat"])
     def get_conversation(
@@ -637,7 +637,7 @@ def create_app() -> FastAPI:
     ) -> dict[str, object]:
         """A conversation with its full message history (for reloading a thread)."""
         conv = _get_conversation(c, conversation_id)
-        msgs = c.chat_store.messages(conversation_id)
+        msgs = c.get_chat_store().messages(conversation_id)
         return {
             "conversation": conv.model_dump(by_alias=True),
             "messages": [m.model_dump() for m in msgs],
@@ -651,7 +651,7 @@ def create_app() -> FastAPI:
     ) -> Conversation:
         """Rename a conversation and/or change its default retrieval scope."""
         _get_conversation(c, conversation_id)
-        updated = c.chat_store.update(
+        updated = c.get_chat_store().update(
             conversation_id, title=req.title, defaults=req.defaults
         )
         if updated is None:  # pragma: no cover - race: deleted between get and update
@@ -663,7 +663,7 @@ def create_app() -> FastAPI:
         conversation_id: str, c: Container = Depends(get_container)
     ) -> dict[str, bool]:
         """Delete a conversation and all its messages."""
-        return {"deleted": c.chat_store.delete(conversation_id)}
+        return {"deleted": c.get_chat_store().delete(conversation_id)}
 
     @app.post("/chat/conversations/{conversation_id}/message", tags=["chat"])
     def send_message(
@@ -680,7 +680,7 @@ def create_app() -> FastAPI:
 
         def event_stream():
             try:
-                for event in c.chat_pipeline.stream(conv, req):
+                for event in c.get_chat_pipeline().stream(conv, req):
                     yield _sse(event)
             except Exception as exc:  # pragma: no cover - defensive top-level guard
                 yield _sse(ChatEvent("error", {"message": str(exc)}))

@@ -105,22 +105,39 @@ class Container:
             self.pipeline = LessonPipeline(
                 intake=self.intake, generator=self.generator, reviser=self.reviser
             )
-        # ── QA chatbot: persistence + the advanced-RAG streaming pipeline ────────
-        chat = self.settings.chat
+        # NB: the QA chatbot subsystem (chat_store + chat_pipeline) is built LAZILY,
+        # not here — see ``get_chat_store`` / ``get_chat_pipeline``. It talks to its
+        # own backend (e.g. Postgres via psycopg) whose failure must degrade *chat*,
+        # not the lesson/corpus surfaces that share this container. Building it eagerly
+        # would let a chat-store misconfiguration abort the whole container and 500
+        # every endpoint (get_container is @lru_cache'd, so the failure would recur).
+
+    # ── QA chatbot: lazily built so its backend can fail in isolation ────────────
+    def get_chat_store(self) -> ChatStore:
+        """The conversation store, built on first use and cached. Injectable via the
+        ``chat_store`` field (tests/fakes); otherwise built from ``settings.chat.store``.
+        Kept lazy so a store-backend failure surfaces only on ``/chat`` requests."""
         if self.chat_store is None:
-            self.chat_store = build_chat_store(chat.store)
+            self.chat_store = build_chat_store(self.settings.chat.store)
+        return self.chat_store
+
+    def get_chat_pipeline(self) -> ChatPipeline:
+        """The advanced-RAG streaming chat pipeline, built on first use and cached.
+        Uses the cheap/fast model for query understanding, compression, and summaries;
+        the reasoning model streams the final grounded answer."""
         if self.chat_pipeline is None:
-            # cheap/fast model for query understanding, compression, and summaries;
-            # the reasoning model streams the final grounded answer.
+            chat = self.settings.chat
+            store = self.get_chat_store()
             self.chat_pipeline = ChatPipeline(
-                store=self.chat_store,
-                memory=ConversationMemory(self.chat_store, chat.memory, llm=self.llm_fast),
+                store=store,
+                memory=ConversationMemory(store, chat.memory, llm=self.llm_fast),
                 transformer=build_query_transformer(chat.query_transform, llm=self.llm_fast),
                 retriever=ChatRetriever(self.retriever, chat.retrieval),
                 context_builder=ContextBuilder(chat.context, llm=self.llm_fast),
                 synthesizer=AnswerSynthesizer(self.llm, chat.synthesis),
                 config=chat,
             )
+        return self.chat_pipeline
 
     def artifact_generator(self, kind: ArtifactKind) -> ArtifactGenerator:
         """Build a targeted-artifact generator (quiz/worksheet/slides/…) for
