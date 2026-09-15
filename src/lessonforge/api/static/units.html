@@ -289,6 +289,24 @@ function dayCard(day, idx) {
     body.append(h("div", {}, ...day.materials.map((m) => h("span", { class: "chip" }, m))));
   }
 
+  // Per-day provenance: the SAME retrieval the generator ran for this day's
+  // sub-topic (lazy — fetched only when the teacher opens it, so rendering a unit
+  // doesn't fire one lookup per day at once).
+  const ref = day.curriculum_ref || {};
+  const grounded = h("details", { class: "day-grounding", style: "margin-top:12px" });
+  grounded.append(h("summary", { style: "cursor:pointer;color:var(--muted);font-size:13px" },
+    "Grounded in — retrieved context for this day"));
+  const gbox = h("div", { style: "margin-top:8px" });
+  grounded.append(gbox);
+  let gLoaded = false;
+  grounded.addEventListener("toggle", () => {
+    if (grounded.open && !gLoaded) {
+      gLoaded = true;
+      loadGrounding(gbox, { topic: day.topic, grade: ref.grade, subject: ref.subject, framework: day.framework });
+    }
+  });
+  body.append(grounded);
+
   const regenStatus = h("span", { class: "status" });
   const regenBtn = h("button", { class: "small ghost",
     onclick: () => regenerateDay(idx + 1, regenBtn, regenStatus) }, "↻ Regenerate this day");
@@ -331,7 +349,8 @@ function renderUnit(unit, doc) {
     framework: (unit.days[0] || {}).framework,
   });
   body.append(h("p", { class: "sub", style: "margin-top:4px" },
-    "Unit-level view. Each day also re-grounds on its own sub-topic when generated."));
+    "Unit-level view (grounded on the whole topic). Each day below has its own "
+    + "“Grounded in” panel showing the sources retrieved for that day's sub-topic."));
 
   body.append(h("h3", { class: "section" }, "Daily lessons"));
   unit.days.forEach((d, i) => body.append(dayCard(d, i)));
