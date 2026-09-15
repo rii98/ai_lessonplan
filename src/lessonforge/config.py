@@ -191,6 +191,12 @@ class GroundingConfig(BaseModel):
     # via its sub-headings is preserved (its path is truncated up to this depth), so
     # raising granularity never *loses* a topic — it only splits coarse ones finer.
     coverage_depth: int = 1
+    # A unit maps to ONE chapter: the coverage outline enumerates the chapter the
+    # most anchors point to, and includes a second chapter only when it is
+    # co-dominant — its anchor count is at least this fraction of the top chapter's.
+    # Keeps a lesson on "Wave" from dragging in a few "Magnetism" sections that
+    # merely ranked, while still covering a unit that genuinely spans two chapters.
+    coverage_chapter_min_ratio: float = 0.5
     # Default retrieval granularity for authoritative collections: narrow (the
     # reranked chunks), section (each hit expanded to its whole section), or broad
     # (expanded to its whole chapter). narrow keeps today's behaviour; a planner

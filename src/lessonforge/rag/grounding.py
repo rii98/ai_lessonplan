@@ -16,6 +16,7 @@ grounding strategy is a config edit, not a code change.
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -374,18 +375,20 @@ class GroundingRetriever:
         subject: str | None = None,
         collection: str | None = None,
     ) -> CoverageOutline:
-        """Anchor-then-enumerate: the complete section list for the chapter(s) a
-        unit spans.
+        """Anchor-then-enumerate: the full section list for the chapter a unit maps
+        to.
 
         A vector query only *locates* the chapter — it does not decide coverage.
-        The top ``coverage_anchors`` hits are read (not just the best one, so a
-        chapter whose strongest chunk ranks a few places down is still found),
-        their distinct ``(doc_id, chapter)`` pairs are unioned, and each chapter's
-        FULL section list is then pulled by deterministic metadata scroll
-        (:meth:`skeleton`). This is what guarantees no topic is dropped:
-        completeness never depends on what the reranker surfaced. Over-inclusion (a
-        stray extra chapter, a duplicate) is acceptable and de-duplicated here; a
-        missing section is not.
+        The top ``coverage_anchors`` hits are read (not just the best one) and
+        their ``(doc_id, chapter)`` pairs are TALLIED. The chapter the most anchors
+        point to wins (so a single mis-ranked hit can't pick the wrong chapter),
+        and a chapter that only caught a stray hit is pruned — otherwise a lesson
+        on "Wave" would drag in a few "Magnetism" sections that happened to rank.
+        A second chapter is kept only when it is co-dominant (``coverage_chapter_
+        min_ratio`` of the top chapter's anchor count), for the rare unit that
+        genuinely spans two chapters. Each kept chapter's FULL section list is then
+        pulled by deterministic metadata scroll (:meth:`skeleton`) — so within the
+        chosen chapter no topic is ever dropped.
 
         ``collection`` defaults to the first authoritative collection (the real
         book). Returns an empty outline — never raises — when nothing anchors or
@@ -397,17 +400,20 @@ class GroundingRetriever:
         where = self._filter({"grade": grade, "subject": subject})
         anchors = self._anchor_hits(col, query, where)
 
-        keys: list[tuple[str, str]] = []  # (doc_id, chapter), rank order, distinct
-        seen_keys: set[tuple[str, str]] = set()
+        # Tally anchors per (doc_id, chapter), preserving first-seen (best) rank.
+        counts: dict[tuple[str, str], int] = {}
+        order: list[tuple[str, str]] = []
         for c in anchors:
             doc_id = str(c.payload.get(DOC_ID_KEY, "")).strip()
             chapter = str(c.payload.get(CHAPTER_KEY, "")).strip()
             if not doc_id or not chapter:
                 continue  # a flat source with no hierarchy can't be enumerated
             key = (doc_id, chapter)
-            if key not in seen_keys:
-                seen_keys.add(key)
-                keys.append(key)
+            if key not in counts:
+                counts[key] = 0
+                order.append(key)
+            counts[key] += 1
+        keys = self._dominant_chapters(counts, order)
 
         depth = self.config.coverage_depth
         out = CoverageOutline()
@@ -428,6 +434,22 @@ class GroundingRetriever:
                     seen_sections.add(key)
                     out.sections.append(label)
         return out
+
+    def _dominant_chapters(
+        self, counts: dict[tuple[str, str], int], order: list[tuple[str, str]]
+    ) -> list[tuple[str, str]]:
+        """The chapter(s) to actually enumerate: the one the most anchors point to,
+        plus any co-dominant chapter (>= ``coverage_chapter_min_ratio`` of its anchor
+        count AND at least two anchors). This prunes a stray single hit into a
+        neighbouring chapter while keeping the plurality winner even when it isn't
+        the top-ranked hit."""
+        if not order:
+            return []
+        top = max(counts.values())
+        # primary: most anchors, ties broken by best (earliest) rank
+        primary = min(order, key=lambda k: (-counts[k], order.index(k)))
+        threshold = max(2, math.ceil(top * self.config.coverage_chapter_min_ratio))
+        return [k for k in order if k == primary or counts[k] >= threshold]
 
     def _anchor_hits(
         self, collection: str, query: str, where: dict[str, Any] | None

@@ -208,20 +208,63 @@ def test_outline_enumerates_the_whole_chapter_a_single_anchor_located(
     assert "Force > Newton's Laws" not in outline.sections
 
 
-def test_outline_unions_chapters_across_several_anchors(
+def test_outline_prunes_a_stray_chapter_to_the_dominant_one(
     fake_embedder, fake_store, fake_reranker
 ):
-    """Reading several anchors (not just the top one) unions the chapters a topic
-    spans — over-inclusion is fine, a dropped section is not — de-duplicated."""
+    """A unit maps to ONE chapter: a chapter that only caught a stray anchor
+    (Force, 1 hit) is pruned in favour of the dominant one (Scientific Study, 2) —
+    so the outline is that chapter's sections, not a cross-chapter mix."""
     r = _retriever(fake_embedder, fake_store, fake_reranker)
     gr = GroundingRetriever(r, GroundingConfig(coverage_anchors=8))
     outline = gr.outline(query="variable newton force units", grade=10, subject="Science")
     assert outline.sections == [
         "Scientific Study > Variables",
         "Scientific Study > Fundamental Units",
-        "Force > Newton's Laws",
     ]
-    assert len(outline.sections) == len(set(outline.sections))  # de-duplicated
+    assert outline.chapters == ["Scientific Study"]
+    assert "Force > Newton's Laws" not in outline.sections  # the stray chapter is pruned
+
+
+_TWO_CHAPTER_BOOK = """\
+# Optics
+
+## Reflection
+
+Light bounces off a surface.
+
+## Refraction
+
+Light bends passing between media.
+
+# Sound
+
+## Wavelength
+
+Sound travels as a wave.
+
+## Frequency
+
+Pitch depends on frequency.
+"""
+
+
+def test_outline_keeps_two_co_dominant_chapters(fake_embedder, fake_store, fake_reranker):
+    """A unit that genuinely spans two chapters (each with equal anchor weight) is
+    NOT pruned — both chapters' sections are enumerated in full."""
+    ing = Ingestor(embedder=fake_embedder, vector_store=fake_store)
+    ing.ingest_documents(
+        Collection.reference,
+        [Document(id="g10phys", text=_TWO_CHAPTER_BOOK, source="Grade 10 Physics",
+                  metadata={"grade": 10, "subject": "Science"})],
+        chunker=MarkdownChunker(max_chars=200),
+    )
+    r = Retriever(embedder=fake_embedder, vector_store=fake_store, reranker=fake_reranker)
+    gr = GroundingRetriever(r, GroundingConfig(coverage_anchors=8))
+    outline = gr.outline(query="reflection sound wave", grade=10, subject="Science")
+    assert set(outline.sections) == {
+        "Optics > Reflection", "Optics > Refraction",
+        "Sound > Wavelength", "Sound > Frequency",
+    }
 
 
 def test_outline_is_empty_for_a_flat_source_without_hierarchy(
