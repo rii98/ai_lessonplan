@@ -133,45 +133,69 @@ async function previewPlan() {
 
 function renumberDays() { currentPlan.days.forEach((d, i) => { d.day = i + 1; }); }
 
+// which day cards are expanded (persists across structural re-renders, keyed by
+// day number). Progressive disclosure so a long arc isn't a wall of open fields.
+let openDays = null;
+
 // Fully editable spine — this object is sent back to /units/generate as `plan`.
 function renderPlan() {
   const plan = currentPlan;
   const rr = renderPlan;
   const body = $("planBody");
+  const scrollY = window.scrollY;
   body.textContent = "";
+  if (openDays === null) openDays = new Set([1]);
 
+  // ── unit framing ──────────────────────────────────────────────────────────
   body.append(field("Unit title", bound(plan, "title")));
   body.append(field("Big idea", bound(plan, "big_idea", { area: true })));
   body.append(field("Running thread (a worked example carried across days)", bound(plan, "thread")));
   body.append(h("h3", { class: "section" }, "Unit outcomes"));
-  body.append(stringList(plan.unit_outcomes, "an outcome for the whole unit", rr));
+  body.append(lineList(plan.unit_outcomes, "an outcome for the whole unit…", renderCoverage));
 
-  body.append(h("h3", { class: "section" }, "Day-by-day spine"));
-  const spine = h("div", { class: "spine" });
+  // ── day-by-day spine (accordion) ──────────────────────────────────────────
+  body.append(h("div", { class: "ed-toolbar", style: "margin-top:18px" },
+    h("span", { class: "ed-kicker" }, "Day-by-day spine · " + plural(plan.days.length, "day")),
+    h("div", { class: "ed-toolbar-r" },
+      h("button", { class: "small ghost", type: "button",
+        onclick: () => { plan.days.forEach((d) => openDays.add(d.day)); rr(); } }, "Expand all"),
+      h("button", { class: "small ghost", type: "button",
+        onclick: () => { openDays.clear(); rr(); } }, "Collapse all"))));
+
   plan.days.forEach((d, i) => {
-    spine.append(
-      h("div", { class: "day-no" }, String(d.day)),
-      h("div", { class: "day-body" },
+    const remove = h("button", { class: "item-x", type: "button", title: "Remove day",
+      disabled: plan.days.length <= 1 ? "disabled" : null,
+      onclick: () => { plan.days.splice(i, 1); renumberDays(); openDays.delete(plan.days.length + 1); rr(); } }, "×");
+    const nSeeds = d.objective_seeds.length;
+    body.append(collapsible({
+      icon: String(d.day),
+      title: "Day " + d.day,
+      summary: (d.topic ? truncate(d.topic, 40) : "untitled") + " · " + plural(nSeeds, "objective"),
+      ok: !!(d.topic || "").trim() && nSeeds > 0,
+      open: openDays.has(d.day),
+      onToggle: (o) => { if (o) openDays.add(d.day); else openDays.delete(d.day); },
+      actions: [remove],
+    }, (b) => {
+      b.append(
         field("Topic", bound(d, "topic")),
-        h("label", { class: "f" }, h("span", {}, "Objective seeds"), stringList(d.objective_seeds, "an objective for this day", rr)),
-        field("Builds on", bound(d, "builds_on")),
-        field("Sets up", bound(d, "sets_up")),
-        h("button", { class: "small ghost danger", onclick: () => {
-          if (plan.days.length <= 1) return;
-          plan.days.splice(i, 1); renumberDays(); rr();
-        } }, "✕ Remove day"),
-      )
-    );
+        h("label", { class: "f" }, h("span", {}, "Objective seeds"),
+          lineList(d.objective_seeds, "an objective for this day…", renderCoverage)),
+        h("div", { class: "grid" },
+          field("Builds on", bound(d, "builds_on", { area: true })),
+          field("Sets up", bound(d, "sets_up", { area: true }))));
+    }));
   });
-  body.append(spine);
-  body.append(h("div", { class: "row", style: "margin-top:10px" },
-    h("button", { class: "small", onclick: () => {
+
+  body.append(h("div", { class: "row", style: "margin-top:12px" },
+    h("button", { class: "add-btn", type: "button", style: "width:auto", onclick: () => {
       plan.days.push({ day: plan.days.length + 1, topic: "", objective_seeds: [], builds_on: "", sets_up: "" });
-      renumberDays(); rr();
-    } }, "+ add day"),
-    h("button", { class: "small ghost", onclick: previewPlan }, "↻ Re-plan (discard edits)")));
+      renumberDays(); openDays.add(plan.days.length); rr();
+    } }, "+ Add day"),
+    h("button", { class: "small ghost", type: "button", onclick: previewPlan }, "↻ Re-plan (discard edits)")));
+
   renderCoverage();   // recompute gaps against the (possibly edited) spine
   $("planCard").classList.remove("hidden");
+  window.scrollTo({ top: scrollY });
 }
 
 // ── Syllabus coverage ─────────────────────────────────────────────────────────

@@ -46,13 +46,18 @@ function field(labelText, control) {
   return h("label", { class: "f" }, h("span", {}, labelText), control);
 }
 
-/* bind an <input>/<textarea> to obj[key], mutating in place (no re-render). */
+/* bind an <input>/<textarea> to obj[key], mutating in place (no re-render).
+   Textareas auto-grow to fit their content so long text wraps instead of being
+   clipped in a fixed box. */
 function bound(obj, key, { type = "text", placeholder = "", area = false } = {}) {
-  const el = area ? h("textarea", { placeholder }) : h("input", { type, placeholder });
+  const el = area ? h("textarea", { class: "grow", rows: "1", placeholder }) : h("input", { type, placeholder });
   el.value = obj[key] ?? "";
+  const grow = area ? () => { el.style.height = "auto"; el.style.height = (el.scrollHeight + 2) + "px"; } : null;
+  if (grow) setTimeout(grow, 0);
   el.addEventListener("input", () => {
     if (type === "number") { const n = el.value.trim(); obj[key] = n === "" ? null : Number(n); }
     else obj[key] = el.value;
+    if (grow) grow();
   });
   return el;
 }
@@ -70,6 +75,106 @@ function stringList(arr, placeholder, rerender) {
   });
   box.append(h("button", { class: "small", onclick: () => { arr.push(""); rerender(); } }, "+ add"));
   return box;
+}
+
+const truncate = (s, n) => { s = String(s || "").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+/* A collapsible section (progressive disclosure). `cfg`:
+   {icon, title, summary, ok (bool|undefined), open (bool), onToggle(open), actions:[el]}
+   `buildBody(bodyEl)` fills the body lazily when the section is (or becomes) open.
+   Action buttons in the header don't toggle the section. */
+function collapsible(cfg, buildBody) {
+  const sec = h("div", { class: "ed-sec" + (cfg.open ? " open" : "") });
+  const body = h("div", { class: "ed-body" });
+  (cfg.actions || []).forEach((a) => a.addEventListener("click", (e) => e.stopPropagation()));
+  const head = h("div", { class: "ed-head", role: "button", tabindex: "0" },
+    h("div", { class: "ed-head-l" },
+      h("span", { class: "ed-chev" }, "▾"),
+      cfg.icon != null ? h("span", { class: "ed-icon" }, cfg.icon) : null,
+      h("span", { class: "ed-title" }, cfg.title),
+      cfg.ok === undefined ? null : h("span", { class: "ed-dot " + (cfg.ok ? "ok" : "warn"),
+        title: cfg.ok ? "looks complete" : "needs attention" })),
+    h("div", { class: "ed-head-r" },
+      cfg.summary ? h("span", { class: "ed-sum" }, cfg.summary) : null,
+      ...(cfg.actions || [])));
+  let isOpen = !!cfg.open;
+  const fill = () => { body.textContent = ""; buildBody(body); };
+  const toggle = () => {
+    isOpen = !isOpen;
+    if (isOpen) { sec.classList.add("open"); fill(); }
+    else { sec.classList.remove("open"); body.textContent = ""; }
+    if (cfg.onToggle) cfg.onToggle(isOpen);
+  };
+  head.addEventListener("click", toggle);
+  head.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+  if (isOpen) fill();
+  sec.append(head, body);
+  return sec;
+}
+
+/* tag-style editor for a list of SHORT strings (materials, tags…). Mutates `arr`
+   in place and manages its own DOM — no parent re-render, so scroll/focus survive
+   typing. Enter adds, Backspace-on-empty pops. `onChange` (optional) fires after
+   any add/remove/edit, e.g. to recompute a live derived view. */
+function chipInput(arr, placeholder, onChange) {
+  const wrap = h("div", { class: "chips" });
+  const changed = () => { if (onChange) onChange(); };
+  const build = () => {
+    wrap.textContent = "";
+    arr.forEach((_, i) => {
+      const inp = h("input", { class: "chip-inp filled" });
+      inp.value = arr[i];
+      const size = () => { inp.style.width = Math.max(40, (inp.value.length || 4) * 7.6 + 8) + "px"; };
+      size();
+      inp.addEventListener("input", () => { arr[i] = inp.value; size(); changed(); });
+      const x = h("button", { class: "chip-x", type: "button", title: "Remove",
+        onclick: () => { arr.splice(i, 1); build(); changed(); } }, "×");
+      wrap.append(h("span", { class: "chip-ed" }, inp, x));
+    });
+    const add = h("input", { class: "chip-inp add", placeholder });
+    const commit = (keepFocus) => {
+      const v = add.value.trim();
+      if (!v) return;
+      arr.push(v); build(); changed();
+      if (keepFocus) wrap.querySelector(".chip-inp.add").focus();
+    };
+    add.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(true); }
+      else if (e.key === "Backspace" && add.value === "" && arr.length) { arr.pop(); build(); changed(); wrap.querySelector(".chip-inp.add").focus(); }
+    });
+    add.addEventListener("blur", () => commit(false));
+    wrap.append(add);
+  };
+  build();
+  return wrap;
+}
+
+/* stacked editor for a list of SENTENCE-length strings (activities, seeds,
+   instructions). Each row is a full-width auto-growing textarea so long text
+   wraps instead of overflowing a chip. Mutates `arr` in place; self-managed.
+   `onChange` (optional) fires after any add/remove/edit. */
+function lineList(arr, placeholder, onChange) {
+  const wrap = h("div", { class: "linelist" });
+  const changed = () => { if (onChange) onChange(); };
+  const build = () => {
+    wrap.textContent = "";
+    arr.forEach((_, i) => {
+      const ta = h("textarea", { class: "line-inp", rows: "1", placeholder });
+      ta.value = arr[i];
+      const grow = () => { ta.style.height = "auto"; ta.style.height = (ta.scrollHeight + 2) + "px"; };
+      ta.addEventListener("input", () => { arr[i] = ta.value; grow(); changed(); });
+      setTimeout(grow, 0);
+      const x = h("button", { class: "line-x", type: "button", title: "Remove",
+        onclick: () => { arr.splice(i, 1); build(); changed(); } }, "×");
+      wrap.append(h("div", { class: "line-row" }, ta, x));
+    });
+    wrap.append(h("button", { class: "line-add", type: "button",
+      onclick: () => { arr.push(""); build(); changed(); const t = wrap.querySelectorAll(".line-inp"); t[t.length - 1].focus(); } },
+      "+ Add"));
+  };
+  build();
+  return wrap;
 }
 
 /* status line: setStatus(el, "working…", "busy" | "err" | "ok" | "") */

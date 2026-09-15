@@ -55,6 +55,7 @@
     background: var(--bg); color: var(--ink); font: inherit;
   }
   textarea { resize: vertical; min-height: 64px; }
+  textarea.grow { min-height: 40px; resize: none; overflow: hidden; line-height: 1.5; }
   input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0 14px; }
   button {
@@ -151,6 +152,100 @@
     background: var(--bg); border-radius: 0 8px 8px 0; font-size: 13px; line-height: 1.5;
     white-space: pre-wrap; word-break: break-word; color: var(--ink); max-height: 320px; overflow-y: auto;
   }
+  /* ── editor: the "lesson blueprint" accordion ─────────────────────────────── */
+  .ed-toolbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+    padding: 10px 12px; margin-bottom: 14px; background: var(--bg);
+    border: 1px solid var(--line); border-radius: 10px;
+  }
+  .ed-kicker { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+  .ed-toolbar-r { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  .ed-sec {
+    border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+    margin-bottom: 10px; overflow: hidden; transition: border-color .15s, box-shadow .15s;
+  }
+  .ed-sec.open { box-shadow: var(--shadow); border-color: color-mix(in srgb, var(--brand) 26%, var(--line)); }
+  .ed-sec:not(.open):hover { border-color: color-mix(in srgb, var(--muted) 45%, var(--line)); }
+  .ed-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 12px 14px; cursor: pointer; user-select: none;
+  }
+  .ed-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .ed-head-l { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .ed-head-r { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .ed-chev { color: var(--muted); font-size: 11px; transition: transform .18s; flex: 0 0 auto; transform: rotate(-90deg); }
+  .ed-sec.open .ed-chev { transform: rotate(0); }
+  .ed-icon {
+    font-size: 15px; line-height: 1; width: 28px; height: 28px; flex: 0 0 auto;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--chip); border-radius: 8px;
+  }
+  .ed-sec.open .ed-icon { background: color-mix(in srgb, var(--brand) 16%, transparent); }
+  .ed-title { font-weight: 700; font-size: 14px; letter-spacing: -.01em; }
+  .ed-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+  .ed-dot.ok { background: var(--ok); }
+  .ed-dot.warn { background: #e0a415; }
+  .ed-sum {
+    font-size: 12.5px; color: var(--muted); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; max-width: 44vw;
+  }
+  .ed-sec.open .ed-sum { display: none; }
+  .ed-improve {
+    font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--line); background: transparent; color: var(--accent); flex: 0 0 auto;
+  }
+  .ed-improve:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .ed-body { padding: 4px 14px 16px; border-top: 1px solid var(--line); animation: edin .18s ease; }
+  @keyframes edin { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+  .ed-body > .sub:first-child { margin-top: 10px; }
+  .sublabel { font-size: 12px; color: var(--muted); font-weight: 600; margin: 12px 0 6px; }
+
+  /* chip / tag inputs — the list fields (materials, prior knowledge, context) */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .chip-ed {
+    display: inline-flex; align-items: center; gap: 2px; background: var(--chip);
+    border-radius: 999px; padding: 2px 4px 2px 12px; border: 1px solid transparent;
+  }
+  .chip-ed:focus-within { border-color: var(--accent); background: var(--panel); }
+  .chip-inp { width: auto; border: none; background: transparent; padding: 5px 2px; min-width: 40px; font-size: 13px; border-radius: 0; }
+  .chip-inp:focus { outline: none; }
+  .chip-inp.add {
+    border: 1px dashed var(--line); border-radius: 999px; padding: 6px 14px;
+    background: var(--bg); min-width: 170px; color: var(--ink);
+  }
+  .chip-inp.add:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .chip-x {
+    border: none; background: transparent; color: var(--muted); font-size: 16px; line-height: 1;
+    padding: 0 5px; cursor: pointer; border-radius: 50%; font-weight: 700;
+  }
+  .chip-x:hover { color: var(--warn); }
+
+  /* line list — sentence-length items (activities, instructions, differentiation) */
+  .linelist { display: flex; flex-direction: column; gap: 8px; }
+  .line-row { display: flex; gap: 8px; align-items: flex-start; }
+  .line-inp { flex: 1 1 auto; min-width: 0; min-height: 40px; resize: none; overflow: hidden; line-height: 1.5; }
+  .line-x {
+    flex: 0 0 auto; border: none; background: transparent; color: var(--muted); font-size: 18px;
+    width: 32px; height: 38px; border-radius: 8px; cursor: pointer; margin-top: 1px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .line-x:hover { color: var(--warn); background: var(--warn-bg); }
+  .line-add { align-self: flex-start; border-style: dashed; color: var(--muted); padding: 7px 14px; }
+  .line-add:hover { color: var(--brand); border-color: var(--brand); background: var(--ok-bg); }
+
+  /* item cards (objectives, phases, checks, misconceptions) */
+  .item { border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin: 10px 0; background: var(--bg); }
+  .item .item-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 8px; }
+  .item .item-head strong { font-size: 11px; color: var(--brand); text-transform: uppercase; letter-spacing: .05em; font-weight: 700; }
+  .item-x {
+    border: none; background: transparent; color: var(--muted); font-size: 18px; line-height: 1;
+    width: 28px; height: 28px; border-radius: 8px; cursor: pointer; flex: 0 0 auto;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .item-x:hover { color: var(--warn); background: var(--warn-bg); }
+  .add-btn { border-style: dashed; color: var(--muted); width: 100%; padding: 10px; margin-top: 4px; }
+  .add-btn:hover { color: var(--brand); border-color: var(--brand); background: var(--ok-bg); }
 </style>
 </head>
 <body>
@@ -323,13 +418,17 @@ function h(tag, attrs, ...kids) {
   for (const kid of kids.flat()) if (kid != null) e.append(kid.nodeType ? kid : document.createTextNode(kid));
   return e;
 }
-// bind a text/number/textarea input to obj[key], mutating in place (no re-render)
+// bind a text/number/textarea input to obj[key], mutating in place (no re-render).
+// Textareas auto-grow so long text wraps instead of being clipped.
 function bound(obj, key, { type = "text", placeholder = "", area = false } = {}) {
-  const el = area ? h("textarea", { placeholder }) : h("input", { type, placeholder });
+  const el = area ? h("textarea", { class: "grow", rows: "1", placeholder }) : h("input", { type, placeholder });
   el.value = obj[key] ?? "";
+  const grow = area ? () => { el.style.height = "auto"; el.style.height = (el.scrollHeight + 2) + "px"; } : null;
+  if (grow) setTimeout(grow, 0);
   el.addEventListener("input", () => {
     if (type === "number") { const n = el.value.trim(); obj[key] = n === "" ? null : Number(n); }
     else obj[key] = el.value;
+    if (grow) grow();
   });
   return el;
 }
@@ -431,11 +530,19 @@ $("generate").addEventListener("click", async () => {
     $("reviewCard").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (err) { st.className = "status err"; st.textContent = "Network error: " + err.message; }
   finally { $("generate").disabled = false; }
-  if (ldd) loadGrounding($("groundingTree"), {
-    topic: ldd.topic, grade: ldd.curriculum_ref && ldd.curriculum_ref.grade,
-    subject: ldd.curriculum_ref && ldd.curriculum_ref.subject, framework: ldd.framework,
-  });
+  loadEditorGrounding();
 });
+
+// Populate the editor's "Sources & retrieved context" panel for the current `ldd`.
+// Same lookup the generator ran — used after both generate AND bootEdit, so a
+// lesson (or unit day) opened for editing still shows what it's grounded in.
+function loadEditorGrounding() {
+  if (!ldd) return;
+  const ref = ldd.curriculum_ref || {};
+  loadGrounding($("groundingTree"), {
+    topic: ldd.topic, grade: ref.grade, subject: ref.subject, framework: ldd.framework,
+  });
+}
 
 // ── grounding provenance: which chunks (and hierarchy) ground a lesson ─────────
 function prettyBreadcrumb(s) {
@@ -674,8 +781,109 @@ $("artifactExport").addEventListener("click", async () => {
 function itemCard(label, onRemove, ...body) {
   return h("div", { class: "item" },
     h("div", { class: "item-head" }, h("strong", {}, label),
-      h("button", { class: "small ghost", onclick: onRemove }, "Remove")),
+      h("button", { class: "item-x", type: "button", title: "Remove", onclick: onRemove }, "×")),
     ...body);
+}
+const truncate = (s, n) => { s = String(s || "").trim(); return s.length > n ? s.slice(0, n - 1) + "…" : s; };
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+
+// tag-style editor for a list of short strings; mutates `arr` in place, manages its
+// own DOM (no full re-render) so accordion/scroll state is preserved while typing.
+function chipInput(arr, placeholder) {
+  const wrap = h("div", { class: "chips" });
+  const build = () => {
+    wrap.textContent = "";
+    arr.forEach((_, i) => {
+      const inp = h("input", { class: "chip-inp filled" });
+      inp.value = arr[i];
+      const size = () => { inp.style.width = Math.max(40, (inp.value.length || 4) * 7.6 + 8) + "px"; };
+      size();
+      inp.addEventListener("input", () => { arr[i] = inp.value; size(); });
+      const x = h("button", { class: "chip-x", type: "button", title: "Remove",
+        onclick: () => { arr.splice(i, 1); build(); } }, "×");
+      wrap.append(h("span", { class: "chip-ed" }, inp, x));
+    });
+    const add = h("input", { class: "chip-inp add", placeholder });
+    const commit = (keepFocus) => {
+      const v = add.value.trim();
+      if (!v) return;
+      arr.push(v); build();
+      if (keepFocus) wrap.querySelector(".chip-inp.add").focus();
+    };
+    add.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); commit(true); }
+      else if (e.key === "Backspace" && add.value === "" && arr.length) { arr.pop(); build(); wrap.querySelector(".chip-inp.add").focus(); }
+    });
+    add.addEventListener("blur", () => commit(false));
+    wrap.append(add);
+  };
+  build();
+  return wrap;
+}
+
+// stacked editor for a list of sentence-length strings (activities, instructions,
+// differentiation) — each row is a full-width auto-growing textarea, so long text
+// wraps instead of overflowing the way a tag chip would. Self-managed DOM.
+function lineList(arr, placeholder) {
+  const wrap = h("div", { class: "linelist" });
+  const build = () => {
+    wrap.textContent = "";
+    arr.forEach((_, i) => {
+      const ta = h("textarea", { class: "line-inp", rows: "1", placeholder });
+      ta.value = arr[i];
+      const grow = () => { ta.style.height = "auto"; ta.style.height = (ta.scrollHeight + 2) + "px"; };
+      ta.addEventListener("input", () => { arr[i] = ta.value; grow(); });
+      setTimeout(grow, 0);
+      const x = h("button", { class: "line-x", type: "button", title: "Remove",
+        onclick: () => { arr.splice(i, 1); build(); } }, "×");
+      wrap.append(h("div", { class: "line-row" }, ta, x));
+    });
+    wrap.append(h("button", { class: "line-add", type: "button",
+      onclick: () => { arr.push(""); build(); const t = wrap.querySelectorAll(".line-inp"); t[t.length - 1].focus(); } },
+      "+ Add"));
+  };
+  build();
+  return wrap;
+}
+
+// which accordion sections are expanded (persists across structural re-renders)
+let openSections = null;
+const SEC_ORDER = ["overview","engagement_hook","objectives","prior_knowledge","local_context",
+  "materials","misconceptions","phases","differentiation","formative_checks","homework"];
+
+// one collapsible section of the blueprint. `cfg`: {icon,title,summary,target,ok}
+function edSection(key, cfg, buildBody) {
+  const sec = h("div", { class: "ed-sec" + (openSections.has(key) ? " open" : ""), id: "sec-" + key });
+  const body = h("div", { class: "ed-body" });
+  const head = h("div", { class: "ed-head", role: "button", tabindex: "0" },
+    h("div", { class: "ed-head-l" },
+      h("span", { class: "ed-chev" }, "▾"),
+      h("span", { class: "ed-icon" }, cfg.icon),
+      h("span", { class: "ed-title" }, cfg.title),
+      cfg.ok === undefined ? null : h("span", { class: "ed-dot " + (cfg.ok ? "ok" : "warn"),
+        title: cfg.ok ? "looks complete" : "needs attention" })),
+    h("div", { class: "ed-head-r" },
+      cfg.summary ? h("span", { class: "ed-sum" }, cfg.summary) : null,
+      cfg.target ? h("button", { class: "ed-improve", type: "button", title: "Ask the AI to improve this section",
+        onclick: (e) => { e.stopPropagation(); openRefine(cfg.target); } }, "✨ Improve") : null));
+  const fill = () => { body.textContent = ""; buildBody(body); };
+  const toggle = () => {
+    if (openSections.has(key)) { openSections.delete(key); sec.classList.remove("open"); body.textContent = ""; }
+    else { openSections.add(key); sec.classList.add("open"); fill(); }
+  };
+  head.addEventListener("click", toggle);
+  head.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } });
+  if (openSections.has(key)) fill();
+  sec.append(head, body);
+  return sec;
+}
+
+// render a list of item cards + a full-width "add" button into a section body
+function listBody(b, arr, hint, factory, template, rr) {
+  if (hint) b.append(h("p", { class: "sub" }, hint));
+  arr.forEach((it, i) => b.append(factory(it, i)));
+  b.append(h("button", { class: "add-btn", type: "button",
+    onclick: () => { arr.push(structuredClone(template)); rr(); } }, "+ Add"));
 }
 function listSection(title, hint, arr, factory, template, rerender, target) {
   const wrap = h("div", {});
@@ -795,103 +1003,140 @@ $("refineModal").addEventListener("click", (ev) => { if (ev.target.id === "refin
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape") closeRefine(); });
 
 function renderEditor() {
-  const root = $("editor"); root.textContent = "";
+  const root = $("editor"); const scrollY = window.scrollY; root.textContent = "";
+  if (openSections === null) openSections = new Set(["overview", "engagement_hook", "objectives"]);
   const rr = renderEditor;
+  const hook = ldd.engagement_hook, dif = ldd.differentiation;
 
-  // whole-lesson refine — the escape hatch for a cross-cutting instruction
-  root.append(h("div", { class: "row", style: "justify-content:flex-end;margin-bottom:4px" },
-    h("button", { class: "small ghost refine-btn", onclick: () => openRefine("*") }, "✨ Improve whole lesson")));
+  // section toolbar — expand/collapse the whole blueprint + cross-cutting refine
+  root.append(h("div", { class: "ed-toolbar" },
+    h("span", { class: "ed-kicker" }, "Lesson blueprint"),
+    h("div", { class: "ed-toolbar-r" },
+      h("button", { class: "small ghost", type: "button",
+        onclick: () => { SEC_ORDER.forEach((k) => openSections.add(k)); rr(); } }, "Expand all"),
+      h("button", { class: "small ghost", type: "button",
+        onclick: () => { openSections.clear(); rr(); } }, "Collapse all"),
+      h("button", { class: "small ghost refine-btn", type: "button",
+        onclick: () => openRefine("*") }, "✨ Improve whole lesson"))));
 
-  // framing — duration is an int Literal, so its select round-trips through String
-  const durSel = h("select", {}, ...["30","45","60"].map((o) => h("option", { value: o }, o)));
-  durSel.value = String(ldd.duration_min);
-  durSel.addEventListener("change", () => { ldd.duration_min = Number(durSel.value); });
-  root.append(h("div", { class: "grid" },
-    field("Topic", bound(ldd, "topic")),
-    field("Grade", bound(ldd.curriculum_ref, "grade", { type: "number" })),
-    field("Subject", bound(ldd.curriculum_ref, "subject")),
-    field("Duration", durSel),
-    field("Language", boundSelect(ldd, "language", ["en","ne","en-ne"])),
-    field("Framework", boundSelect(ldd, "framework", ["5E","gradual_release","inquiry"])),
-  ));
+  // ── overview ────────────────────────────────────────────────────────────
+  root.append(edSection("overview", { icon: "📋", title: "Lesson overview",
+    summary: `Grade ${ldd.curriculum_ref.grade ?? "—"} · ${ldd.curriculum_ref.subject || "—"} · ${ldd.duration_min}m · ${ldd.framework}` },
+    (b) => {
+      const durSel = h("select", {}, ...["30", "45", "60"].map((o) => h("option", { value: o }, o)));
+      durSel.value = String(ldd.duration_min);
+      durSel.addEventListener("change", () => { ldd.duration_min = Number(durSel.value); });
+      b.append(h("div", { class: "grid" },
+        field("Topic", bound(ldd, "topic")),
+        field("Grade", bound(ldd.curriculum_ref, "grade", { type: "number" })),
+        field("Subject", bound(ldd.curriculum_ref, "subject")),
+        field("Duration", durSel),
+        field("Language", boundSelect(ldd, "language", ["en", "ne", "en-ne"])),
+        field("Framework", boundSelect(ldd, "framework", ["5E", "gradual_release", "inquiry"]))));
+    }));
 
-  // engagement hook
-  root.append(sectionHead("Engagement hook", "engagement_hook"));
-  root.append(h("p", { class: "sub" }, "Must open with curiosity — a scenario, question, prediction or demonstration, never a definition."));
-  root.append(h("div", {},
-    field("Prompt", bound(ldd.engagement_hook, "prompt", { area: true })),
-    field("Kind", boundSelect(ldd.engagement_hook, "kind", HOOK_KINDS)),
-  ));
+  // ── engagement hook ─────────────────────────────────────────────────────
+  root.append(edSection("engagement_hook", { icon: "🎣", title: "Engagement hook", target: "engagement_hook",
+    ok: !!(hook.prompt || "").trim(),
+    summary: (hook.kind || "") + (hook.prompt ? " · " + truncate(hook.prompt, 48) : "") },
+    (b) => b.append(
+      h("p", { class: "sub" }, "Must open with curiosity — a scenario, question, prediction or demonstration, never a definition."),
+      field("Prompt", bound(hook, "prompt", { area: true })),
+      field("Kind", boundSelect(hook, "kind", HOOK_KINDS)))));
 
-  // objectives
-  root.append(listSection("Objectives", "Every objective must be taught in a phase AND assessed by a check.",
-    ldd.objectives,
-    (o) => itemCard(o.id || "objective", () => { ldd.objectives.splice(ldd.objectives.indexOf(o), 1); rr(); },
-      h("div", { class: "grid" }, field("ID", bound(o, "id")), field("Bloom", boundSelect(o, "bloom", BLOOM))),
-      field("Statement", bound(o, "statement", { area: true }))),
-    { id: "", statement: "", bloom: "understand" }, rr, "objectives"));
+  // ── objectives ──────────────────────────────────────────────────────────
+  root.append(edSection("objectives", { icon: "🎯", title: "Objectives", target: "objectives",
+    ok: ldd.objectives.length > 0, summary: plural(ldd.objectives.length, "objective") },
+    (b) => listBody(b, ldd.objectives, "Every objective must be taught in a phase AND assessed by a check.",
+      (o, i) => itemCard(o.id || ("Objective " + (i + 1)),
+        () => { ldd.objectives.splice(ldd.objectives.indexOf(o), 1); rr(); },
+        h("div", { class: "grid" }, field("ID", bound(o, "id")), field("Bloom", boundSelect(o, "bloom", BLOOM))),
+        field("Statement", bound(o, "statement", { area: true }))),
+      { id: "", statement: "", bloom: "understand" }, rr)));
 
-  // prior knowledge & local context & materials (string lists)
-  root.append(sectionHead("Prior knowledge", "prior_knowledge"));
-  root.append(stringList(ldd.prior_knowledge, "what students already know", rr));
-  root.append(sectionHead("Local context", "local_context"));
-  root.append(h("p", { class: "sub" }, "Local anchors students recognize — the anti-generic signal."));
-  root.append(stringList(ldd.local_context, "e.g. temple bell, millet field", rr));
-  root.append(sectionHead("Materials", "materials"));
-  root.append(stringList(ldd.materials, "e.g. rubber band", rr));
+  // ── prior knowledge / local context / materials (tag inputs) ─────────────
+  root.append(edSection("prior_knowledge", { icon: "🧠", title: "Prior knowledge", target: "prior_knowledge",
+    summary: plural(ldd.prior_knowledge.length, "item") },
+    (b) => b.append(h("p", { class: "sub" }, "What students already know coming in — type and press Enter to add."),
+      chipInput(ldd.prior_knowledge, "add prior knowledge…"))));
 
-  // misconceptions
-  root.append(listSection("Misconceptions", "Grade-specific wrong ideas and how to correct them.",
-    ldd.misconceptions,
-    (m) => itemCard("misconception", () => { ldd.misconceptions.splice(ldd.misconceptions.indexOf(m), 1); rr(); },
-      field("Misconception", bound(m, "statement", { area: true })),
-      field("Correction", bound(m, "correction", { area: true }))),
-    { statement: "", correction: "", source: null }, rr, "misconceptions"));
+  root.append(edSection("local_context", { icon: "📍", title: "Local context", target: "local_context",
+    summary: plural(ldd.local_context.length, "anchor") },
+    (b) => b.append(h("p", { class: "sub" }, "Local anchors students recognize — the anti-generic signal."),
+      chipInput(ldd.local_context, "e.g. temple bell, millet field…"))));
 
-  // phases
-  root.append(listSection("Phases", "The teaching sequence. objective_ids tie each phase to what it teaches.",
-    ldd.phases,
-    (p) => itemCard(p.name_en || "phase", () => { ldd.phases.splice(ldd.phases.indexOf(p), 1); rr(); },
-      h("div", { class: "grid" },
-        field("Name (EN)", bound(p, "name_en")),
-        field("Name (NE)", bound(p, "name_ne")),
-        field("Minutes", bound(p, "minutes", { type: "number" }))),
-      csvField("Objective IDs", p, "objective_ids"),
-      h("p", { class: "sub" }, "Teacher activities"), stringList(p.teacher_activities, "what the teacher does", rr),
-      h("p", { class: "sub" }, "Student activities"), stringList(p.student_activities, "what students do", rr)),
-    { name_en: "", name_ne: "", teacher_activities: [""], student_activities: [""], minutes: 5, objective_ids: [] }, rr, "phases"));
+  root.append(edSection("materials", { icon: "🧰", title: "Materials", target: "materials",
+    summary: plural(ldd.materials.length, "item") },
+    (b) => b.append(h("p", { class: "sub" }, "Everything the teacher needs on hand."),
+      chipInput(ldd.materials, "e.g. rubber band…"))));
 
-  // differentiation
-  root.append(sectionHead("Differentiation", "differentiation"));
-  root.append(h("div", {},
-    h("p", { class: "sub" }, "Struggling"), stringList(ldd.differentiation.struggling, "support", rr),
-    h("p", { class: "sub" }, "On level"), stringList(ldd.differentiation.on_level, "core task", rr),
-    h("p", { class: "sub" }, "Advanced"), stringList(ldd.differentiation.advanced, "extension", rr)));
+  // ── misconceptions ──────────────────────────────────────────────────────
+  root.append(edSection("misconceptions", { icon: "⚠️", title: "Misconceptions", target: "misconceptions",
+    summary: plural(ldd.misconceptions.length, "item") },
+    (b) => listBody(b, ldd.misconceptions, "Grade-specific wrong ideas and how to correct them.",
+      (m) => itemCard("Misconception", () => { ldd.misconceptions.splice(ldd.misconceptions.indexOf(m), 1); rr(); },
+        field("Misconception", bound(m, "statement", { area: true })),
+        field("Correction", bound(m, "correction", { area: true }))),
+      { statement: "", correction: "", source: null }, rr)));
 
-  // formative checks
-  root.append(listSection("Formative checks", "Every objective needs at least one. MCQ requires options.",
-    ldd.formative_checks,
-    (q) => itemCard(q.id || "question", () => { ldd.formative_checks.splice(ldd.formative_checks.indexOf(q), 1); rr(); },
-      h("div", { class: "grid" },
-        field("ID", bound(q, "id")),
-        field("Type", (() => { const s = boundSelect(q, "type", Q_TYPES); s.addEventListener("change", rr); return s; })())),
-      field("Prompt", bound(q, "prompt", { area: true })),
-      field("Answer", bound(q, "answer")),
-      csvField("Objective IDs", q, "objective_ids"),
-      q.type === "mcq" ? (() => { q.options = q.options || [""]; return h("div", {},
-        h("p", { class: "sub" }, "Options (MCQ)"), stringList(q.options, "option", rr)); })() : null),
-    { id: "", type: "short_answer", prompt: "", answer: "", objective_ids: [], options: null }, rr, "formative_checks"));
+  // ── phases ──────────────────────────────────────────────────────────────
+  const totMin = ldd.phases.reduce((s, p) => s + (Number(p.minutes) || 0), 0);
+  root.append(edSection("phases", { icon: "🧭", title: "Phases", target: "phases",
+    ok: ldd.phases.length > 0 && totMin === ldd.duration_min,
+    summary: `${plural(ldd.phases.length, "phase")} · ${totMin}/${ldd.duration_min} min` },
+    (b) => listBody(b, ldd.phases, "The teaching sequence. Objective IDs tie each phase to what it teaches.",
+      (p, i) => itemCard(p.name_en || ("Phase " + (i + 1)),
+        () => { ldd.phases.splice(ldd.phases.indexOf(p), 1); rr(); },
+        h("div", { class: "grid" },
+          field("Name (EN)", bound(p, "name_en")),
+          field("Name (NE)", bound(p, "name_ne")),
+          field("Minutes", bound(p, "minutes", { type: "number" }))),
+        csvField("Objective IDs", p, "objective_ids"),
+        h("p", { class: "sublabel" }, "Teacher activities"), lineList(p.teacher_activities, "what the teacher does…"),
+        h("p", { class: "sublabel" }, "Student activities"), lineList(p.student_activities, "what students do…")),
+      { name_en: "", name_ne: "", teacher_activities: [], student_activities: [], minutes: 5, objective_ids: [] }, rr)));
 
-  // homework (optional)
-  root.append(sectionHead("Homework", "homework"));
-  if (ldd.homework) {
-    root.append(h("div", {},
-      h("p", { class: "sub" }, "Instructions"), stringList(ldd.homework.instructions, "task", rr),
-      csvField("Objective IDs", ldd.homework, "objective_ids"),
-      h("button", { class: "small ghost", onclick: () => { ldd.homework = null; rr(); } }, "Remove homework")));
-  } else {
-    root.append(h("button", { class: "small", onclick: () => { ldd.homework = { instructions: [""], objective_ids: [] }; rr(); } }, "+ add homework"));
-  }
+  // ── differentiation ─────────────────────────────────────────────────────
+  const difN = dif.struggling.length + dif.on_level.length + dif.advanced.length;
+  root.append(edSection("differentiation", { icon: "🪜", title: "Differentiation", target: "differentiation",
+    summary: plural(difN, "strategy") },
+    (b) => b.append(
+      h("p", { class: "sublabel" }, "Struggling"), lineList(dif.struggling, "support for students who need it…"),
+      h("p", { class: "sublabel" }, "On level"), lineList(dif.on_level, "the core task…"),
+      h("p", { class: "sublabel" }, "Advanced"), lineList(dif.advanced, "an extension for fast finishers…"))));
+
+  // ── formative checks ────────────────────────────────────────────────────
+  root.append(edSection("formative_checks", { icon: "✅", title: "Formative checks", target: "formative_checks",
+    ok: ldd.formative_checks.length > 0, summary: plural(ldd.formative_checks.length, "check") },
+    (b) => listBody(b, ldd.formative_checks, "Every objective needs at least one. MCQ requires options.",
+      (q, i) => itemCard(q.id || ("Check " + (i + 1)),
+        () => { ldd.formative_checks.splice(ldd.formative_checks.indexOf(q), 1); rr(); },
+        h("div", { class: "grid" },
+          field("ID", bound(q, "id")),
+          field("Type", (() => { const s = boundSelect(q, "type", Q_TYPES); s.addEventListener("change", rr); return s; })())),
+        field("Prompt", bound(q, "prompt", { area: true })),
+        field("Answer", bound(q, "answer")),
+        csvField("Objective IDs", q, "objective_ids"),
+        q.type === "mcq" ? (() => { q.options = q.options || []; return h("div", {},
+          h("p", { class: "sublabel" }, "Options (MCQ)"), lineList(q.options, "an answer option…")); })() : null),
+      { id: "", type: "short_answer", prompt: "", answer: "", objective_ids: [], options: null }, rr)));
+
+  // ── homework (optional) ─────────────────────────────────────────────────
+  root.append(edSection("homework", { icon: "📝", title: "Homework", target: "homework",
+    summary: ldd.homework ? plural(ldd.homework.instructions.length, "task") : "none" },
+    (b) => {
+      if (ldd.homework) {
+        b.append(h("p", { class: "sublabel" }, "Instructions"), lineList(ldd.homework.instructions, "a homework task…"),
+          csvField("Objective IDs", ldd.homework, "objective_ids"),
+          h("button", { class: "small ghost", type: "button", style: "margin-top:8px",
+            onclick: () => { ldd.homework = null; rr(); } }, "Remove homework"));
+      } else {
+        b.append(h("button", { class: "add-btn", type: "button",
+          onclick: () => { ldd.homework = { instructions: [], objective_ids: [] }; rr(); } }, "+ Add homework"));
+      }
+    }));
+
+  window.scrollTo({ top: scrollY });
 }
 
 function renderQuality() {
@@ -981,7 +1226,7 @@ async function bootEdit() {
       ldd = view.unit.days[day - 1];
       if (!ldd) throw new Error("day " + day + " not found");
       editMode = { kind: "unit-day", unitId, day, title: view.unit.title };
-      renderEditor(); renderQuality();
+      renderEditor(); renderQuality(); loadEditorGrounding();
       enterEditUI(`Editing Day ${day} of “${view.unit.title}”`);
     } else if (docId) {
       const res = await api("GET", "/documents/" + encodeURIComponent(docId));
@@ -989,7 +1234,7 @@ async function bootEdit() {
       const view = await res.json();
       ldd = view.ldd;
       editMode = { kind: "lesson", docId };
-      renderEditor(); renderQuality();
+      renderEditor(); renderQuality(); loadEditorGrounding();
       enterEditUI(`Editing “${view.document.title}”`);
     }
   } catch (e) {

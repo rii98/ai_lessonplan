@@ -65,6 +65,7 @@ input, select, textarea {
   background: var(--bg); color: var(--ink); font: inherit;
 }
 textarea { resize: vertical; min-height: 64px; }
+textarea.grow { min-height: 40px; resize: none; overflow: hidden; line-height: 1.5; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 0 14px; }
 
@@ -120,6 +121,85 @@ code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size:
 }
 .tag.unit { background: color-mix(in srgb, var(--brand) 18%, transparent); color: var(--brand); }
 .tag.lesson { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+
+/* ── collapsible "accordion" section (progressive disclosure) ──────────────── */
+.ed-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  padding: 10px 12px; margin-bottom: 14px; background: var(--bg);
+  border: 1px solid var(--line); border-radius: 10px;
+}
+.ed-kicker { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.ed-toolbar-r { display: flex; gap: 6px; flex-wrap: wrap; }
+.ed-sec {
+  border: 1px solid var(--line); border-radius: 12px; background: var(--panel);
+  margin-bottom: 10px; overflow: hidden; transition: border-color .15s, box-shadow .15s;
+}
+.ed-sec.open { box-shadow: var(--shadow); border-color: color-mix(in srgb, var(--brand) 26%, var(--line)); }
+.ed-sec:not(.open):hover { border-color: color-mix(in srgb, var(--muted) 45%, var(--line)); }
+.ed-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; cursor: pointer; user-select: none; }
+.ed-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ed-head-l, .ed-head-r { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ed-chev { color: var(--muted); font-size: 11px; transition: transform .18s; flex: 0 0 auto; transform: rotate(-90deg); }
+.ed-sec.open .ed-chev { transform: rotate(0); }
+.ed-icon {
+  font-size: 15px; line-height: 1; width: 28px; height: 28px; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center; background: var(--chip); border-radius: 8px;
+}
+.ed-sec.open .ed-icon { background: color-mix(in srgb, var(--brand) 16%, transparent); }
+.ed-title { font-weight: 700; font-size: 14px; letter-spacing: -.01em; }
+.ed-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.ed-dot.ok { background: var(--ok); }
+.ed-dot.warn { background: #e0a415; }
+.ed-sum { font-size: 12.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 44vw; }
+.ed-sec.open .ed-sum { display: none; }
+.ed-improve {
+  font-size: 12px; font-weight: 600; padding: 5px 11px; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent; color: var(--accent); flex: 0 0 auto;
+}
+.ed-improve:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.ed-body { padding: 4px 14px 16px; border-top: 1px solid var(--line); animation: edin .18s ease; }
+@keyframes edin { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.ed-body > .sub:first-child { margin-top: 10px; }
+.sublabel { font-size: 12px; color: var(--muted); font-weight: 600; margin: 12px 0 6px; }
+
+/* ── chip / tag inputs (short strings) ────────────────────────────────────── */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chip-ed {
+  display: inline-flex; align-items: center; gap: 2px; background: var(--chip);
+  border-radius: 999px; padding: 2px 4px 2px 12px; border: 1px solid transparent;
+}
+.chip-ed:focus-within { border-color: var(--accent); background: var(--panel); }
+.chip-inp { width: auto; border: none; background: transparent; padding: 5px 2px; min-width: 40px; font-size: 13px; border-radius: 0; }
+.chip-inp:focus { outline: none; }
+.chip-inp.add { border: 1px dashed var(--line); border-radius: 999px; padding: 6px 14px; background: var(--bg); min-width: 170px; color: var(--ink); }
+.chip-inp.add:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.chip-x { border: none; background: transparent; color: var(--muted); font-size: 16px; line-height: 1; padding: 0 5px; cursor: pointer; border-radius: 50%; font-weight: 700; }
+.chip-x:hover { color: var(--warn); }
+
+/* ── line list (sentence-length strings) ──────────────────────────────────── */
+.linelist { display: flex; flex-direction: column; gap: 8px; }
+.line-row { display: flex; gap: 8px; align-items: flex-start; }
+.line-inp { flex: 1 1 auto; min-width: 0; min-height: 40px; resize: none; overflow: hidden; line-height: 1.5; }
+.line-x {
+  flex: 0 0 auto; border: none; background: transparent; color: var(--muted); font-size: 18px;
+  width: 32px; height: 38px; border-radius: 8px; cursor: pointer; margin-top: 1px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.line-x:hover { color: var(--warn); background: var(--warn-bg); }
+.line-add { align-self: flex-start; border-style: dashed; color: var(--muted); padding: 7px 14px; }
+.line-add:hover { color: var(--brand); border-color: var(--brand); background: var(--ok-bg); }
+
+/* refreshed item cards + full-width add button */
+.item { border-radius: 10px; padding: 14px; }
+.item .item-head strong { color: var(--brand); font-weight: 700; }
+.item-x {
+  border: none; background: transparent; color: var(--muted); font-size: 18px; line-height: 1;
+  width: 28px; height: 28px; border-radius: 8px; cursor: pointer; flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.item-x:hover { color: var(--warn); background: var(--warn-bg); }
+.add-btn { border-style: dashed; color: var(--muted); width: 100%; padding: 10px; margin-top: 4px; }
+.add-btn:hover { color: var(--brand); border-color: var(--brand); background: var(--ok-bg); }
 
 /* expandable retrieved-chunk rows in the grounding provenance panel */
 details.gchunk { margin: 2px 0 2px 4px; }
