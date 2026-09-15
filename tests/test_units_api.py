@@ -139,6 +139,15 @@ def test_edit_day_out_of_range_is_422(client):
     assert client.put(f"/units/{doc_id}/days/99", json=day).status_code == 422
 
 
+def test_grounding_preview_returns_a_provenance_tree(client):
+    r = client.post("/grounding/preview",
+                    json={"topic": "Scientific Study", "grade": 10, "subject": "Science"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert {"grounded", "has_authoritative", "sources", "collections"} <= set(body)
+    assert isinstance(body["collections"], list)
+
+
 def test_edit_day_with_mismatched_grade_is_422(client):
     doc_id = client.post("/units/generate", json=_req()).json()["document"]["id"]
     edited = dict(client.get(f"/units/{doc_id}").json()["unit"]["days"][0])

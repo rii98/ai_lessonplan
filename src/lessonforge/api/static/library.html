@@ -129,6 +129,17 @@ function renderDetail(doc, content, versions) {
   if (doc.kind === "unit") renderUnitSummary(body, content.unit);
   else renderLessonSummary(body, content.ldd);
 
+  // ── sources & retrieved context (live lookup on the topic) ────────────
+  body.append(h("h3", { class: "section" }, "Sources & retrieved context"));
+  const grounding = h("div", {});
+  body.append(grounding);
+  const gc = doc.kind === "unit" ? content.unit : content.ldd;
+  loadGrounding(grounding, {
+    topic: doc.kind === "unit" ? gc.title : gc.topic,
+    grade: ref && ref.grade, subject: ref && ref.subject,
+    framework: doc.kind === "unit" ? (gc.days[0] || {}).framework : gc.framework,
+  });
+
   // ── actions ──────────────────────────────────────────────────────────
   const actStatus = h("span", { class: "status" });
   body.append(h("h3", { class: "section" }, "Actions"));

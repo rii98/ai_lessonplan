@@ -117,3 +117,19 @@ code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size:
 }
 .tag.unit { background: color-mix(in srgb, var(--brand) 18%, transparent); color: var(--brand); }
 .tag.lesson { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+
+/* expandable retrieved-chunk rows in the grounding provenance panel */
+details.gchunk { margin: 2px 0 2px 4px; }
+details.gchunk > summary {
+  list-style: none; cursor: pointer; font-size: 13px; color: var(--muted);
+  padding: 3px 0; display: flex; gap: 6px; align-items: baseline;
+}
+details.gchunk > summary::-webkit-details-marker { display: none; }
+details.gchunk > summary::before { content: "▸"; color: var(--muted); font-size: 11px; }
+details.gchunk[open] > summary::before { content: "▾"; }
+details.gchunk > summary:hover { color: var(--ink); }
+.gchunk-text {
+  margin: 4px 0 8px 16px; padding: 10px 12px; border-left: 2px solid var(--line);
+  background: var(--bg); border-radius: 0 8px 8px 0; font-size: 13px; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word; color: var(--ink); max-height: 320px; overflow-y: auto;
+}

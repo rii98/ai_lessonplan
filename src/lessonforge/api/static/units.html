@@ -32,8 +32,11 @@
     <h2>Plan a multi-day unit</h2>
     <div class="body">
       <p class="sub">One chapter or topic, spread across several days as a coherent arc — each day builds on the last. Preview the spine cheaply, then expand every day into a full lesson.</p>
+      <label class="f"><span>What do you want to teach? — a topic, a chapter, or a fuller prompt</span>
+        <textarea id="u_topic" rows="3" style="min-height:72px"
+          placeholder="e.g. Electricity and Magnetism&#10;&#10;or: Teach current electricity for a mixed-ability class, starting from a load-shedding story, and end with a simple circuit they build themselves."></textarea>
+      </label>
       <div class="grid">
-        <label class="f"><span>Topic / chapter</span><input id="u_topic" placeholder="e.g. Electricity and Magnetism" /></label>
         <label class="f"><span>Grade</span><input id="u_grade" type="number" min="1" max="12" placeholder="10" /></label>
         <label class="f"><span>Subject</span><input id="u_subject" placeholder="Science" /></label>
         <label class="f"><span>Days</span><input id="u_num_days" type="number" min="1" max="20" value="5" /></label>
@@ -59,6 +62,7 @@
   <div class="card hidden" id="planCard">
     <h2>The arc <span class="q-name muted" style="font-weight:400;font-size:13px">— review before expanding</span></h2>
     <div class="body" id="planBody"></div>
+    <div class="body" id="planSources" style="border-top:1px solid var(--line)"></div>
   </div>
 
   <!-- ── Generated unit ────────────────────────────────────────────────── -->
@@ -108,6 +112,14 @@ async function previewPlan() {
   try {
     currentPlan = await apiJSON("POST", "/units/plan", b);
     renderPlan();
+    // show what this unit will ground in (kept out of #planBody so editing the
+    // spine doesn't re-fetch it).
+    const src = $("planSources");
+    src.textContent = "";
+    src.append(h("h3", { class: "section", style: "margin-top:0" }, "Sources & retrieved context"));
+    const tree = h("div", {});
+    src.append(tree);
+    loadGrounding(tree, { topic: b.topic, grade: b.grade, subject: b.subject, framework: b.framework });
     setStatus($("briefStatus"), "Edit the arc below, then Generate — your edits drive the expansion.", "");
     $("planCard").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (e) {
@@ -256,6 +268,17 @@ function renderUnit(unit, doc) {
 
   const coh = renderCoherence(unit.coherence);
   if (coh) body.append(coh);
+
+  // What reference material this unit is grounded in (live lookup on the topic).
+  body.append(h("h3", { class: "section" }, "Sources & retrieved context"));
+  const grounding = h("div", {});
+  body.append(grounding);
+  loadGrounding(grounding, {
+    topic: unit.title, grade: ref.grade, subject: ref.subject,
+    framework: (unit.days[0] || {}).framework,
+  });
+  body.append(h("p", { class: "sub", style: "margin-top:4px" },
+    "Unit-level view. Each day also re-grounds on its own sub-topic when generated."));
 
   body.append(h("h3", { class: "section" }, "Daily lessons"));
   unit.days.forEach((d, i) => body.append(dayCard(d, i)));

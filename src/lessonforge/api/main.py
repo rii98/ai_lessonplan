@@ -28,7 +28,16 @@ from ..domain.sections import LDD_SECTIONS, WHOLE_DOCUMENT
 from ..domain.unit import UnitDesignDocument, UnitPlan, UnitRequest
 from ..export import ArtifactKind, RenderedArtifact, formats_for
 from ..rag.chunkers import CHUNKER_REGISTRY, build_chunker
-from ..rag.documents import COLLECTION_KEY, SOURCE_KEY, TEXT_KEY, Collection, Document
+from ..rag.documents import (
+    CHAPTER_KEY,
+    CHUNK_INDEX_KEY,
+    COLLECTION_KEY,
+    HEADING_PATH_KEY,
+    SOURCE_KEY,
+    TEXT_KEY,
+    Collection,
+    Document,
+)
 from ..rag.loaders import split_front_matter
 from ..services.artifact_generation import generatable_kinds
 from ..services.chat.pipeline import ChatEvent
@@ -186,6 +195,17 @@ class CorpusDeleteRequest(BaseModel):
     ids: list[str] = Field(..., min_length=1)
 
 
+class GroundingPreviewRequest(BaseModel):
+    """Inspect what grounding a topic retrieves — the same deterministic retrieval
+    generation uses — so the UI can show WHICH chunks (and their heading hierarchy)
+    a lesson is grounded in, without re-running the LLM or quoting the text."""
+
+    topic: str = Field(..., min_length=1, examples=["Electricity and Magnetism"])
+    grade: int | None = Field(default=None, ge=1, le=12)
+    subject: str | None = None
+    framework: str | None = None
+
+
 class DocumentIngestRequest(BaseModel):
     """Ingest ONE whole document (a book chapter, an exemplar lesson) as raw text,
     split by a structure-aware chunker. Unlike the JSONL path (one record → one
@@ -247,6 +267,41 @@ def _document_from_request(req: DocumentIngestRequest) -> Document:
         meta = merged
     return Document(id=source or "ui-document", text=text.strip(),
                     source=source or "ui-upload", metadata=meta)
+
+
+def _grounding_tree(bundle: Any) -> dict[str, Any]:
+    """Shape a GroundingBundle into a compact provenance tree for the UI: collection
+    → document (source) → chunk breadcrumbs (heading_path/chapter + rerank score).
+    Identity and hierarchy only — NO chunk text, so it shows *what* grounded a lesson
+    without quoting the material. Authoritative collections sort first."""
+    collections: list[dict[str, Any]] = []
+    for name, chunks in bundle.chunks.items():
+        if not chunks:
+            continue
+        docs: dict[str, list[dict[str, Any]]] = {}
+        for c in chunks:
+            p = c.payload or {}
+            src = str(p.get(SOURCE_KEY) or "unknown source")
+            docs.setdefault(src, []).append({
+                "heading_path": p.get(HEADING_PATH_KEY),
+                "chapter": p.get(CHAPTER_KEY),
+                "chunk_index": p.get(CHUNK_INDEX_KEY),
+                "score": round(float(c.score), 3),
+                "text": c.text,  # shown only on demand (expand a chunk)
+            })
+        collections.append({
+            "name": name,
+            "authoritative": name in bundle.authoritative,
+            "count": sum(len(v) for v in docs.values()),
+            "documents": [{"source": s, "chunks": cs} for s, cs in docs.items()],
+        })
+    collections.sort(key=lambda col: (not col["authoritative"], -col["count"]))
+    return {
+        "grounded": not bundle.is_empty,
+        "has_authoritative": bundle.has_authoritative,
+        "sources": list(bundle.sources),
+        "collections": collections,
+    }
 
 
 def _chunk_view(chunk: Any) -> dict[str, Any]:
@@ -393,6 +448,30 @@ def create_app() -> FastAPI:
         except ValidationError as exc:
             return ValidationResult(valid=False, errors=_format_errors(exc))
         return ValidationResult(valid=True)
+
+    @app.post("/grounding/preview", tags=["grounding"])
+    def grounding_preview(
+        req: GroundingPreviewRequest, c: Container = Depends(get_container)
+    ) -> dict[str, Any]:
+        """Show WHICH chunks — and their heading hierarchy — a lesson on this topic
+        grounds in. Runs the SAME deterministic retrieval generation uses (no LLM,
+        no chunk text). A live view: it reflects the corpus as it is now."""
+        empty = {"grounded": False, "has_authoritative": False, "sources": [], "collections": []}
+        grounding = getattr(c, "grounding", None)
+        if grounding is None:
+            return empty
+        # mirror the generator's query so the preview matches what actually grounds.
+        query = (
+            f"{req.topic} grade {req.grade} {req.subject}"
+            if req.grade and req.subject else req.topic
+        )
+        try:
+            bundle = grounding.ground(
+                query=query, grade=req.grade, subject=req.subject, framework=req.framework
+            )
+        except Exception:
+            return empty
+        return _grounding_tree(bundle)
 
     # ── documents: persisted lessons with version history (revisit/edit/undo) ─
     @app.post("/documents/lessons", response_model=SavedLesson, tags=["documents"])

@@ -136,6 +136,21 @@
   }
   .diff pre.before { color: var(--warn); background: var(--warn-bg); border-bottom: 1px dashed var(--line); }
   .diff pre.after { color: var(--ok); background: var(--ok-bg); }
+  /* ── grounding provenance: expandable retrieved chunks ────────────────────── */
+  details.gchunk { margin: 2px 0 2px 4px; }
+  details.gchunk > summary {
+    list-style: none; cursor: pointer; font-size: 13px; color: var(--muted);
+    padding: 3px 0; display: flex; gap: 6px; align-items: baseline;
+  }
+  details.gchunk > summary::-webkit-details-marker { display: none; }
+  details.gchunk > summary::before { content: "▸"; color: var(--muted); font-size: 11px; }
+  details.gchunk[open] > summary::before { content: "▾"; }
+  details.gchunk > summary:hover { color: var(--ink); }
+  .gchunk-text {
+    margin: 4px 0 8px 16px; padding: 10px 12px; border-left: 2px solid var(--line);
+    background: var(--bg); border-radius: 0 8px 8px 0; font-size: 13px; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word; color: var(--ink); max-height: 320px; overflow-y: auto;
+  }
 </style>
 </head>
 <body>
@@ -195,8 +210,11 @@
   <div class="card">
     <h2>Create a lesson</h2>
     <div class="body">
+      <label class="f"><span>What do you want to teach? — a topic, or a fuller prompt</span>
+        <textarea id="b_topic" rows="3" style="min-height:72px"
+          placeholder="e.g. Components of Environment&#10;&#10;or: Teach photosynthesis to a curious Grade 7 class, start from a leaf they can hold, and end with why forests matter for the air we breathe."></textarea>
+      </label>
       <div class="grid">
-        <label class="f"><span>Topic</span><input id="b_topic" placeholder="e.g. Components of Environment" /></label>
         <label class="f"><span>Grade</span><input id="b_grade" type="number" min="1" max="12" placeholder="profile default" /></label>
         <label class="f"><span>Subject</span><input id="b_subject" placeholder="profile default" /></label>
         <label class="f"><span>Duration</span>
@@ -214,8 +232,10 @@
       </label>
       <div class="row">
         <button class="primary" id="generate">Generate lesson</button>
+        <button class="ghost" id="previewSources">Preview sources</button>
         <span class="status" id="genStatus"></span>
       </div>
+      <div id="sourcesPreview" class="hidden" style="margin-top:8px"></div>
 
       <!-- ── Targeted generation: just one artifact from the same brief ── -->
       <div class="row" style="margin-top:12px; flex-wrap:wrap; gap:6px; align-items:center">
@@ -256,6 +276,9 @@
       <p class="sub" id="qualityNotes" style="margin-top:10px"></p>
       <p class="sub" id="groundingSources"></p>
       <div id="adjustments"></div>
+
+      <h3 class="section">Sources &amp; retrieved context</h3>
+      <div id="groundingTree"></div>
 
       <h3 class="section">Export</h3>
       <div class="toolbar">
@@ -408,6 +431,58 @@ $("generate").addEventListener("click", async () => {
     $("reviewCard").scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (err) { st.className = "status err"; st.textContent = "Network error: " + err.message; }
   finally { $("generate").disabled = false; }
+  if (ldd) loadGrounding($("groundingTree"), {
+    topic: ldd.topic, grade: ldd.curriculum_ref && ldd.curriculum_ref.grade,
+    subject: ldd.curriculum_ref && ldd.curriculum_ref.subject, framework: ldd.framework,
+  });
+});
+
+// ── grounding provenance: which chunks (and hierarchy) ground a lesson ─────────
+function prettyBreadcrumb(s) {
+  return String(s || "").replace(/\*\*/g, "").replace(/\s*>\s*/g, " › ").trim();
+}
+function renderGroundingTree(el, tree) {
+  el.textContent = "";
+  if (!tree || !tree.grounded) {
+    el.append(h("p", { class: "sub" },
+      "No reference material matched this topic — generated from the model's own curriculum knowledge."));
+    return;
+  }
+  const n = (tree.sources || []).length;
+  el.append(h("p", { class: "sub" },
+    `Grounded in ${n} source${n === 1 ? "" : "s"}. Retrieved chunks below (looked up live for this topic — the hierarchy, not the quoted text).`));
+  for (const col of tree.collections) {
+    el.append(h("div", { class: "row", style: "gap:6px;margin:10px 0 2px" },
+      h("span", { class: "chip" }, col.name),
+      col.authoritative ? h("span", { class: "q-name" }, "authoritative") : null,
+      h("span", { class: "q-name" }, `· ${col.count} chunk${col.count === 1 ? "" : "s"}`)));
+    for (const doc of col.documents) {
+      const box = h("div", { style: "margin:2px 0 6px 2px" },
+        h("div", { style: "font-weight:600;font-size:13px" }, doc.source));
+      for (const ch of doc.chunks) {
+        const label = prettyBreadcrumb(ch.heading_path) || prettyBreadcrumb(ch.chapter) || `chunk ${ch.chunk_index ?? "?"}`;
+        const d = h("details", { class: "gchunk" });
+        d.append(h("summary", {}, label, h("span", { class: "q-name" }, " · " + ch.score)));
+        d.append(h("div", { class: "gchunk-text" }, ch.text || "(no text available)"));
+        box.append(d);
+      }
+      el.append(box);
+    }
+  }
+}
+async function loadGrounding(el, brief) {
+  if (!brief.topic) return;
+  el.textContent = ""; el.append(h("p", { class: "sub" }, h("span", { class: "spinner" }), " Looking up sources…"));
+  try {
+    const res = await api("POST", "/grounding/preview", brief);
+    renderGroundingTree(el, await res.json());
+  } catch (e) { el.textContent = ""; el.append(h("p", { class: "status err" }, "Couldn't load sources: " + e.message)); }
+}
+$("previewSources").addEventListener("click", () => {
+  const b = readBrief();
+  if (!b.topic) { const s = $("genStatus"); s.className = "status err"; s.textContent = "Enter a topic first."; return; }
+  $("sourcesPreview").classList.remove("hidden");
+  loadGrounding($("sourcesPreview"), { topic: b.topic, grade: b.grade, subject: b.subject, framework: b.framework });
 });
 
 // ── Targeted artifacts (quiz / worksheet / slides): interactive edit + AI improve

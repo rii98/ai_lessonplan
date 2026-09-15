@@ -81,6 +81,61 @@ function setStatus(el, text, kind = "") {
   else el.textContent = text || "";
 }
 
+/* Tidy a heading_path breadcrumb ("A > **B** > C") into "A › B › C". */
+function prettyBreadcrumb(s) {
+  return String(s || "").replace(/\*\*/g, "").replace(/\s*>\s*/g, " › ").trim();
+}
+
+/* One retrieved chunk: a click-to-expand row showing its full text on demand. */
+function groundingChunkRow(ch) {
+  const label = prettyBreadcrumb(ch.heading_path) || prettyBreadcrumb(ch.chapter) || `chunk ${ch.chunk_index ?? "?"}`;
+  const d = h("details", { class: "gchunk" });
+  d.append(h("summary", {}, label, h("span", { class: "muted" }, ` · ${ch.score}`)));
+  d.append(h("div", { class: "gchunk-text" }, ch.text || "(no text available)"));
+  return d;
+}
+
+/* Render a grounding provenance tree (from POST /grounding/preview) into `el`:
+   which chunks grounded a lesson, by collection → document → heading hierarchy.
+   Identity + hierarchy only, never the quoted text. */
+function renderGroundingTree(el, tree) {
+  el.textContent = "";
+  if (!tree || !tree.grounded) {
+    el.append(h("p", { class: "sub" },
+      "No reference material matched this topic — generated from the model's own curriculum knowledge."));
+    return;
+  }
+  const n = (tree.sources || []).length;
+  el.append(h("p", { class: "sub" },
+    `Grounded in ${n} source${n === 1 ? "" : "s"}. These are the retrieved chunks (looked up live for this topic — the hierarchy, not the quoted text).`));
+  for (const col of tree.collections) {
+    el.append(h("div", { class: "row", style: "gap:6px;margin:10px 0 2px" },
+      h("span", { class: "tag" + (col.authoritative ? " unit" : "") }, col.name),
+      col.authoritative ? h("span", { class: "sub", style: "margin:0" }, "authoritative") : null,
+      h("span", { class: "sub", style: "margin:0" }, `· ${col.count} chunk${col.count === 1 ? "" : "s"}`)));
+    for (const doc of col.documents) {
+      const box = h("div", { style: "margin:2px 0 6px 2px" },
+        h("div", { style: "font-weight:600;font-size:13px" }, doc.source));
+      doc.chunks.forEach((ch) => box.append(groundingChunkRow(ch)));
+      el.append(box);
+    }
+  }
+}
+
+/* Fetch the grounding tree for a topic and render it into `el` (with a spinner). */
+async function loadGrounding(el, { topic, grade, subject, framework }) {
+  if (!topic) return;
+  el.textContent = "";
+  el.append(h("p", { class: "sub" }, h("span", { class: "spinner" }), " Looking up sources…"));
+  try {
+    const tree = await apiJSON("POST", "/grounding/preview", { topic, grade, subject, framework });
+    renderGroundingTree(el, tree);
+  } catch (e) {
+    el.textContent = "";
+    el.append(h("p", { class: "status err" }, "Couldn't load sources: " + e.message));
+  }
+}
+
 function fmtDate(iso) {
   if (!iso) return "";
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
