@@ -13,15 +13,23 @@ first-class, reviewable artifact — the gate in front of the costly step.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from ..domain.ldd import CurriculumRef
 from ..domain.profile import TeacherProfile
-from ..domain.unit import UnitPlan, UnitRequest
+from ..domain.unit import CoverageReport, UnitPlan, UnitRequest
 from ..providers.base import LLMClient
-from ..rag.grounding import GroundingBundle, GroundingRetriever
+from ..rag.grounding import (
+    CoverageOutline,
+    GroundingBundle,
+    GroundingRetriever,
+    coverage_gaps,
+)
 from ..rag.planner import RetrievalPlanner
 from ..util import extract_json
+
+_log = logging.getLogger(__name__)
 
 _SYSTEM = (
     "You are an experienced Nepali secondary-school curriculum designer laying out "
@@ -57,6 +65,7 @@ _EXAMPLE: dict[str, Any] = {
 _PROMPT_TEMPLATE = """\
 Design the spine of a {num_days}-day unit for Grade {grade} {subject}.
 Unit topic: {topic}
+{coverage}
 {grounding}
 
 Return a single JSON object with EXACTLY the same keys and nesting as this example
@@ -66,6 +75,9 @@ Return a single JSON object with EXACTLY the same keys and nesting as this examp
 {example}
 
 Hard requirements:
+- If a SYLLABUS is given above, every one of its sections MUST appear in some
+  day's topic or objective_seeds — completeness is mandatory. Group adjacent
+  sections into a day when there are more sections than days; never drop one.
 - Exactly {num_days} days, numbered 1..{num_days}, each a distinct topic that
   progresses logically (no repeats, no gaps).
 - Each day states how it builds_on the previous day and sets_up the next.
@@ -88,12 +100,24 @@ class UnitPlanner:
         self.retrieval_planner = retrieval_planner
 
     def plan(self, req: UnitRequest, *, profile: TeacherProfile | None = None) -> UnitPlan:
+        """The spine only — used by the expander, which doesn't need the coverage
+        report. UI callers want :meth:`plan_with_coverage`."""
+        plan, _ = self.plan_with_coverage(req, profile=profile)
+        return plan
+
+    def plan_with_coverage(
+        self, req: UnitRequest, *, profile: TeacherProfile | None = None
+    ) -> tuple[UnitPlan, CoverageReport]:
+        """The spine plus how completely it covers the chapter's syllabus, so the
+        teacher sees at a glance whether any topic was dropped before expanding."""
         bundle = self._ground(req)
+        outline = self._outline(req)
         prompt = _PROMPT_TEMPLATE.format(
             num_days=req.num_days,
             grade=req.grade,
             subject=req.subject,
             topic=req.topic,
+            coverage=outline.as_prompt_context(),
             grounding=bundle.as_prompt_context(),
             example=json.dumps(_EXAMPLE, ensure_ascii=False, indent=2),
         )
@@ -104,7 +128,27 @@ class UnitPlanner:
             data = extract_json(result.text)
         except Exception as exc:
             raise ValueError(f"could not plan the unit: {exc}") from exc
-        return self._assemble(data, req)
+        plan = self._assemble(data, req)
+        return plan, self._coverage_report(outline, plan)
+
+    def _coverage_report(self, outline: CoverageOutline, plan: UnitPlan) -> CoverageReport:
+        """Build the coverage report and log any gap. Missing content is the failure
+        mode this whole path exists to prevent, so a gap is WARN-logged (naming each
+        uncovered topic) as well as returned — visible whether or not a UI renders
+        it, without failing the build on brittle text matching."""
+        if outline.is_empty:
+            return CoverageReport()
+        gaps = coverage_gaps(outline.sections, plan)
+        if gaps:
+            _log.warning(
+                "unit plan for %r may not cover %d/%d syllabus topic(s): %s",
+                plan.title, len(gaps), len(outline.sections), "; ".join(gaps),
+            )
+        return CoverageReport(
+            source=", ".join(dict.fromkeys(outline.chapters)),
+            topics=list(outline.sections),
+            gaps=gaps,
+        )
 
     def _assemble(self, data: Any, req: UnitRequest) -> UnitPlan:
         """Normalize the model's draft into a valid UnitPlan: renumber days into a
@@ -148,3 +192,19 @@ class UnitPlanner:
             )
         except Exception:
             return GroundingBundle()
+
+    def _outline(self, req: UnitRequest) -> CoverageOutline:
+        """The complete section list the plan must cover, enumerated from the book's
+        heading hierarchy (not vector similarity) so no topic is dropped. Failures
+        and books with no hierarchy degrade to an empty outline — the plan is still
+        produced, just without the coverage contract."""
+        if self.grounding is None:
+            return CoverageOutline()
+        try:
+            return self.grounding.outline(
+                query=f"{req.topic} grade {req.grade} {req.subject}",
+                grade=req.grade,
+                subject=req.subject,
+            )
+        except Exception:
+            return CoverageOutline()

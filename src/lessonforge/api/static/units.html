@@ -61,6 +61,7 @@
   <!-- ── Plan preview (spine) ──────────────────────────────────────────── -->
   <div class="card hidden" id="planCard">
     <h2>The arc <span class="q-name muted" style="font-weight:400;font-size:13px">— review before expanding</span></h2>
+    <div class="body" id="planCoverage" style="padding-bottom:0"></div>
     <div class="body" id="planBody"></div>
     <div class="body" id="planSources" style="border-top:1px solid var(--line)"></div>
   </div>
@@ -80,6 +81,7 @@
 let currentDocId = null;   // set after a successful generate
 let currentUnit = null;    // the UnitDesignDocument
 let currentPlan = null;    // the (editable) UnitPlan shown in the preview
+let currentCoverage = null; // the syllabus outline for this chapter (gaps recomputed live)
 
 function brief() {
   const num = (id) => { const v = $(id).value.trim(); return v === "" ? null : Number(v); };
@@ -110,7 +112,9 @@ async function previewPlan() {
   if (missing.length) { setStatus($("briefStatus"), "Fill in: " + missing.join(", "), "err"); return; }
   setStatus($("briefStatus"), "Planning the arc…", "busy");
   try {
-    currentPlan = await apiJSON("POST", "/units/plan", b);
+    const res = await apiJSON("POST", "/units/plan", b);
+    currentPlan = res.plan;
+    currentCoverage = res.coverage;   // { source, topics[], gaps[] } — gaps recomputed as you edit
     renderPlan();
     // show what this unit will ground in (kept out of #planBody so editing the
     // spine doesn't re-fetch it).
@@ -166,7 +170,56 @@ function renderPlan() {
       renumberDays(); rr();
     } }, "+ add day"),
     h("button", { class: "small ghost", onclick: previewPlan }, "↻ Re-plan (discard edits)")));
+  renderCoverage();   // recompute gaps against the (possibly edited) spine
   $("planCard").classList.remove("hidden");
+}
+
+// ── Syllabus coverage ─────────────────────────────────────────────────────────
+// The chapter's full topic list comes from the server (the book's table of
+// contents); which topics the current spine covers is recomputed HERE on every
+// edit, so covering a gap turns it green live — no re-plan needed. The token
+// matcher mirrors the server's coverage_gaps() so the strip and the API agree.
+const COV_STOP = new Set(("the a an of to in on and or for with without into from " +
+  "by as is are be its this that these those study regarding").split(" "));
+
+function covTokens(s) {
+  s = (s || "").replace(/[*`_#]+/g, "");
+  s = s.replace(/^\s*(?:\d+(?:\.\d+)*\.?|[a-zA-Z]|[ivxIVX]+)[.)]\s+/, "");
+  s = s.replace(/[:.]+$/, "").trim().toLowerCase();
+  return new Set(s.split(/[^a-z0-9]+/).filter((t) => t.length > 2 && !COV_STOP.has(t)));
+}
+
+function covGaps(topics, plan) {
+  const hay = new Set();
+  const add = (t) => covTokens(t).forEach((x) => hay.add(x));
+  add(plan.big_idea); (plan.unit_outcomes || []).forEach(add);
+  (plan.days || []).forEach((d) => { add(d.topic); (d.objective_seeds || []).forEach(add); });
+  return new Set(topics.filter((sec) => {
+    const want = covTokens(sec.split(" > ").pop());
+    if (!want.size) return false;
+    let hit = 0; want.forEach((w) => { if (hay.has(w)) hit++; });
+    return hit / want.size < 0.5;
+  }));
+}
+
+function renderCoverage() {
+  const el = $("planCoverage");
+  el.textContent = "";
+  const cov = currentCoverage;
+  if (!cov || !cov.topics || !cov.topics.length) return;  // no book ingested for this chapter
+  const gaps = covGaps(cov.topics, currentPlan);
+  const total = cov.topics.length, missing = gaps.size, covered = total - missing;
+  const ok = missing === 0;
+  el.append(h("div", { class: "banner " + (ok ? "ok" : "warn") },
+    ok ? `✓ Covers all ${total} chapter topic${total === 1 ? "" : "s"}${cov.source ? " of " + cov.source : ""}`
+       : `⚠ ${covered}/${total} chapter topics covered — ${missing} may be missing. Extend or add a day to cover the red ones before you Generate.`));
+  const chips = h("div", { style: "margin-top:8px" });
+  cov.topics.forEach((t) => {
+    const isGap = gaps.has(t);
+    chips.append(h("span", { class: "chip cov " + (isGap ? "gap" : "has"), title: t },
+      (isGap ? "○ " : "✓ ") + t.split(" > ").pop()));
+  });
+  el.append(chips);
 }
 
 // ── Generate the full unit ───────────────────────────────────────────────────
@@ -331,6 +384,9 @@ async function exportUnit(statusEl) {
 mountNav("units", "🗓️ Unit planner", "Plan a chapter across days, expand each into a full lesson, keep the arc coherent.");
 $("previewBtn").addEventListener("click", previewPlan);
 $("generateBtn").addEventListener("click", generateUnit);
+// editing any spine field re-scores coverage live (rebuilds only the strip above,
+// so the input you're typing in keeps focus).
+$("planBody").addEventListener("input", () => { if (currentCoverage) renderCoverage(); });
 // editing the brief invalidates a previously-previewed arc, so we never expand a
 // spine that no longer matches the topic/grade the teacher is now asking for.
 ["u_topic", "u_grade", "u_subject", "u_num_days", "u_duration_min", "u_language", "u_framework"]

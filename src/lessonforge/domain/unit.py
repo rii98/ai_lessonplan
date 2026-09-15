@@ -70,6 +70,33 @@ class CoherenceReport(BaseModel):
     issues: list[CoherenceIssue] = Field(default_factory=list)
 
 
+class CoverageReport(BaseModel):
+    """How completely a unit plan covers its chapter's syllabus.
+
+    ``topics`` is the chapter's full, in-order table of contents, enumerated from
+    the reference book's heading hierarchy (the grounding *outline*), so it is the
+    real curriculum, not the model's guess; ``gaps`` are the topics the plan
+    appears to skip. Advisory — surfaced to the teacher so nothing is silently
+    dropped, never enforced (matching generated topics against headings is
+    lenient by design)."""
+
+    source: str = ""                                    # chapter label(s) covered
+    topics: list[str] = Field(default_factory=list)     # every syllabus section, in order
+    gaps: list[str] = Field(default_factory=list)       # topics the plan seems to skip
+
+    @property
+    def total(self) -> int:
+        return len(self.topics)
+
+    @property
+    def covered(self) -> int:
+        return len(self.topics) - len(self.gaps)
+
+    @property
+    def complete(self) -> bool:
+        return bool(self.topics) and not self.gaps
+
+
 class UnitDesignDocument(BaseModel):
     """A whole unit: its framing, the spine it was expanded from, and the per-day
     lessons. Cross-day invariants only — each day's own guardrails live on the LDD."""

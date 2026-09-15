@@ -136,6 +136,51 @@ def test_planner_rejects_a_plan_with_no_days():
         UnitPlanner(llm=EmptyLLM()).plan(_req())
 
 
+def test_planner_grounds_on_full_syllabus_and_reports_gaps(
+    fake_embedder, fake_store, fake_reranker, caplog
+):
+    """End-to-end: the complete chapter table-of-contents (not just the reranked
+    hits) is handed to the model as a coverage contract, and a section the plan
+    skips is reported rather than silently lost."""
+    import logging
+
+    from lessonforge.config import GroundingConfig
+    from lessonforge.rag.chunkers import MarkdownChunker
+    from lessonforge.rag.documents import Collection, Document
+    from lessonforge.rag.grounding import GroundingRetriever
+    from lessonforge.rag.ingest import Ingestor
+    from lessonforge.rag.retriever import Retriever
+
+    book = (
+        "# Scientific Study\n\n"
+        "## Variables\n\nA variable can change during an experiment.\n\n"
+        "## Types of Variables\n\nIndependent, dependent and controlled variables.\n\n"
+        "## Fundamental Units\n\nSI units: metre, kilogram, second.\n"
+    )
+    ing = Ingestor(embedder=fake_embedder, vector_store=fake_store)
+    ing.ingest_documents(
+        Collection.reference,
+        [Document(id="g10sci", text=book, source="Grade 10 Science",
+                  metadata={"grade": 10, "subject": "Science"})],
+        chunker=MarkdownChunker(max_chars=200),
+    )
+    retriever = Retriever(embedder=fake_embedder, vector_store=fake_store,
+                          reranker=fake_reranker)
+    grounding = GroundingRetriever(retriever, GroundingConfig())
+    llm = UnitLLM()  # _PLAN covers Variables + Types of Variables, but NOT Fundamental Units
+
+    with caplog.at_level(logging.WARNING):
+        planner = UnitPlanner(llm=llm, grounding=grounding)
+        planner.plan(_req())
+
+    spine_prompt = next(p for p in llm.calls if "Design the spine of" in p)
+    assert "SYLLABUS" in spine_prompt
+    # the section no "Scientific Study" query would rank is still in the contract
+    assert "Scientific Study > Fundamental Units" in spine_prompt
+    # and the plan's omission of it is surfaced, not swallowed
+    assert any("Fundamental Units" in r.getMessage() for r in caplog.records)
+
+
 # ── expansion ─────────────────────────────────────────────────────────────────
 def test_generate_builds_one_lesson_per_planned_day():
     udd = _unit_generator(UnitLLM()).generate(_req())

@@ -176,6 +176,21 @@ class GroundingConfig(BaseModel):
     )
     per_collection_top_n: int = 3
     filter_fields: list[str] = Field(default_factory=lambda: ["grade", "subject"])
+    # Coverage (unit planning): how many top vector hits are inspected to *locate*
+    # the chapter(s) a unit spans before its full section list is enumerated by
+    # metadata scroll. Only the anchors' (doc_id, chapter) matter — their chapters
+    # are unioned — so this is recall-biased: several are read (not just the best)
+    # so a chapter whose best chunk ranks a few places down is still found. Over-
+    # inclusion (a stray extra chapter) is acceptable; a missing section is not.
+    coverage_anchors: int = 8
+    # Coverage granularity: how many heading levels *below the chapter* count as a
+    # distinct topic in the coverage outline. 1 = the numbered sections (12.1, 12.2,
+    # …) — the teacher's notion of "topics to cover"; deeper sub-headings and
+    # callout boxes ("Do You Know", "Main features:") collapse into their parent
+    # section instead of each becoming a mandatory item. A section that exists only
+    # via its sub-headings is preserved (its path is truncated up to this depth), so
+    # raising granularity never *loses* a topic — it only splits coarse ones finer.
+    coverage_depth: int = 1
     # Default retrieval granularity for authoritative collections: narrow (the
     # reranked chunks), section (each hit expanded to its whole section), or broad
     # (expanded to its whole chapter). narrow keeps today's behaviour; a planner

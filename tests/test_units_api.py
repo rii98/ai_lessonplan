@@ -48,9 +48,12 @@ def _req(**kw) -> dict:
 def test_plan_returns_a_spine(client):
     resp = client.post("/units/plan", json=_req())
     assert resp.status_code == 200, resp.text
-    plan = resp.json()
+    body = resp.json()
+    plan = body["plan"]
     assert len(plan["days"]) == 3
     assert [d["day"] for d in plan["days"]] == [1, 2, 3]
+    # the coverage report is present (empty topics when no book is ingested)
+    assert "coverage" in body and "topics" in body["coverage"]
 
 
 def test_generate_persists_a_unit(client):
@@ -109,7 +112,7 @@ def test_export_unit_returns_a_zip(client):
 
 def test_generate_with_edited_plan_expands_that_arc(client):
     # a teacher-edited spine must drive generation, not a fresh re-plan
-    plan = client.post("/units/plan", json=_req()).json()
+    plan = client.post("/units/plan", json=_req()).json()["plan"]
     plan["days"][0]["topic"] = "Teacher-Chosen Opening Topic"
     resp = client.post("/units/generate", json=_req(plan=plan))
     assert resp.status_code == 200, resp.text

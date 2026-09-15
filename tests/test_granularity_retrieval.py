@@ -188,6 +188,166 @@ def test_skeleton_can_scope_to_one_chapter(fake_embedder, fake_store, fake_reran
     ]
 
 
+# ── 1d. coverage outline: anchor-then-enumerate (unit planning) ────────────────
+def test_outline_enumerates_the_whole_chapter_a_single_anchor_located(
+    fake_embedder, fake_store, fake_reranker
+):
+    """The core guarantee: one vector hit only *locates* the chapter; the outline
+    then lists EVERY section of it — including a sibling the query never mentioned —
+    and does not leak into a chapter no anchor pointed at."""
+    r = _retriever(fake_embedder, fake_store, fake_reranker)
+    gr = GroundingRetriever(r, GroundingConfig(coverage_anchors=1))
+    outline = gr.outline(query="variable factor change", grade=10, subject="Science")
+    # Fundamental Units is unrelated to "variable" but shares the chapter → kept.
+    assert outline.sections == [
+        "Scientific Study > Variables",
+        "Scientific Study > Fundamental Units",
+    ]
+    assert outline.chapters == ["Scientific Study"]
+    # a single anchor in one chapter must not pull in the Force chapter
+    assert "Force > Newton's Laws" not in outline.sections
+
+
+def test_outline_unions_chapters_across_several_anchors(
+    fake_embedder, fake_store, fake_reranker
+):
+    """Reading several anchors (not just the top one) unions the chapters a topic
+    spans — over-inclusion is fine, a dropped section is not — de-duplicated."""
+    r = _retriever(fake_embedder, fake_store, fake_reranker)
+    gr = GroundingRetriever(r, GroundingConfig(coverage_anchors=8))
+    outline = gr.outline(query="variable newton force units", grade=10, subject="Science")
+    assert outline.sections == [
+        "Scientific Study > Variables",
+        "Scientific Study > Fundamental Units",
+        "Force > Newton's Laws",
+    ]
+    assert len(outline.sections) == len(set(outline.sections))  # de-duplicated
+
+
+def test_outline_is_empty_for_a_flat_source_without_hierarchy(
+    fake_embedder, fake_store, fake_reranker
+):
+    from lessonforge.rag.chunkers import ParagraphChunker
+
+    ing = Ingestor(embedder=fake_embedder, vector_store=fake_store)
+    ing.ingest_documents(
+        Collection.curriculum,
+        [Document(id="c1", text="Students learn about variables and fair tests.",
+                  source="CDC", metadata={"grade": 10, "subject": "Science"})],
+        chunker=ParagraphChunker(),
+    )
+    r = Retriever(embedder=fake_embedder, vector_store=fake_store, reranker=fake_reranker)
+    gr = GroundingRetriever(r, GroundingConfig())
+    outline = gr.outline(
+        query="variables", grade=10, subject="Science", collection="curriculum"
+    )
+    assert outline.is_empty  # no chapter/heading metadata → nothing to enumerate
+
+
+_NOISY_BOOK = """\
+# Unit 12 : The Universe
+
+## **12.1 Introduction to the Universe**
+
+The universe is everything that exists.
+
+## **12.5 Probable Future of the Universe**
+
+### **Do You Know**
+
+The fate of the universe depends on its density.
+
+### **Big bang vs Big crunch**
+
+Two possible ends of the universe.
+
+## **12.6 Type of Universe**
+
+### a. Open Universe
+
+An open universe expands forever.
+
+### b. Closed Universe
+
+A closed universe eventually recollapses.
+"""
+
+
+def _noisy_grounder(fake_embedder, fake_store, fake_reranker, config=None):
+    ing = Ingestor(embedder=fake_embedder, vector_store=fake_store)
+    ing.ingest_documents(
+        Collection.reference,
+        [Document(id="sci10", text=_NOISY_BOOK, source="SCIENCE_10.md",
+                  metadata={"grade": 10, "subject": "Science"})],
+        chunker=MarkdownChunker(max_chars=200),
+    )
+    r = Retriever(embedder=fake_embedder, vector_store=fake_store, reranker=fake_reranker)
+    return GroundingRetriever(r, config or GroundingConfig())
+
+
+def test_outline_collapses_callouts_and_strips_markdown(
+    fake_embedder, fake_store, fake_reranker
+):
+    """Real CDC headings carry Markdown bold and deep callout boxes. The outline
+    must strip the ``**`` and collapse sub-headings into their numbered section, and
+    a section that exists ONLY via sub-headings (12.5, 12.6 here) must survive."""
+    gr = _noisy_grounder(fake_embedder, fake_store, fake_reranker)  # coverage_depth=1
+    outline = gr.outline(query="universe", grade=10, subject="Science")
+    assert outline.sections == [
+        "Unit 12 : The Universe > 12.1 Introduction to the Universe",
+        "Unit 12 : The Universe > 12.5 Probable Future of the Universe",
+        "Unit 12 : The Universe > 12.6 Type of Universe",
+    ]
+
+
+def test_coverage_gaps_matches_across_markdown_and_numbering(
+    fake_embedder, fake_store, fake_reranker
+):
+    """The false '16/16 missing' bug: numbering + bold made every section look
+    uncovered. With token-overlap matching, a plan that reuses a section's title
+    counts as covering it, and only the genuinely absent topic is reported."""
+    from lessonforge.domain.ldd import CurriculumRef
+    from lessonforge.domain.unit import DayPlan, UnitPlan
+    from lessonforge.rag.grounding import coverage_gaps
+
+    gr = _noisy_grounder(fake_embedder, fake_store, fake_reranker)
+    outline = gr.outline(query="universe", grade=10, subject="Science")
+    plan = UnitPlan(
+        title="The Universe",
+        curriculum_ref=CurriculumRef(grade=10, subject="Science"),
+        days=[
+            DayPlan(day=1, topic="Introduction to the Universe"),
+            DayPlan(day=2, topic="Type of Universe", objective_seeds=["Open and closed"]),
+        ],
+    )
+    # 12.1 and 12.6 are reused in the plan → covered; 12.5 is absent → the lone gap.
+    assert coverage_gaps(outline.sections, plan) == [
+        "Unit 12 : The Universe > 12.5 Probable Future of the Universe",
+    ]
+
+
+def test_coverage_gaps_flags_only_the_unreferenced_sections():
+    from lessonforge.domain.ldd import CurriculumRef
+    from lessonforge.domain.unit import DayPlan, UnitPlan
+    from lessonforge.rag.grounding import coverage_gaps
+
+    plan = UnitPlan(
+        title="Scientific Study",
+        curriculum_ref=CurriculumRef(grade=10, subject="Science"),
+        big_idea="Science measures variables",
+        days=[
+            DayPlan(day=1, topic="Variables", objective_seeds=["Define variable"]),
+            DayPlan(day=2, topic="Types of Variables", objective_seeds=["Classify"]),
+        ],
+    )
+    sections = [
+        "Scientific Study > Variables",
+        "Scientific Study > Types of Variables",
+        "Scientific Study > Fundamental Units",  # not in any day → a gap
+    ]
+    assert coverage_gaps(sections, plan) == ["Scientific Study > Fundamental Units"]
+
+
 # ── grounding honors granularity only for authoritative collections ───────────
 def test_grounding_expands_only_authoritative_collections(
     fake_embedder, fake_store, fake_reranker

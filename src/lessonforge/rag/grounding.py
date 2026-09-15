@@ -16,8 +16,46 @@ grounding strategy is a config edit, not a code change.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..domain.unit import UnitPlan
+
+_BREADCRUMB_SEP = " > "  # must match MarkdownChunker.breadcrumb_sep
+# Leading section numbering to strip when comparing a heading to plan text:
+# "12", "12.1", "12.1.", "a.", "b)", "iv." — so "12.1 The Universe" matches a day
+# titled "The Universe". Applied only for MATCHING, never to the displayed label.
+_NUMBERING_RE = re.compile(r"^\s*(?:\d+(?:\.\d+)*\.?|[a-zA-Z]|[ivxIVX]+)[.)]\s+")
+_STOPWORDS = frozenset(
+    "the a an of to in on and or for with without into from by as is are be its "
+    "this that these those study regarding".split()
+)
+
+
+def _clean_heading(path: str) -> str:
+    """Strip Markdown emphasis/heading noise from a heading path for DISPLAY —
+    ``**12.1 Foo**`` → ``12.1 Foo`` — keeping the ``>`` breadcrumb and numbering
+    (which read well in the syllabus contract). Not for matching."""
+    parts = [re.sub(r"[*`_#]+", "", seg).strip() for seg in path.split(_BREADCRUMB_SEP)]
+    return _BREADCRUMB_SEP.join(p for p in parts if p)
+
+
+def _truncate(path: str, depth: int) -> str:
+    """Keep the chapter (segment 0) plus ``depth`` levels below it, so a deep
+    sub-heading collapses into its parent section — a section that exists only via
+    its sub-headings is thus preserved, never dropped."""
+    segs = path.split(_BREADCRUMB_SEP)
+    return _BREADCRUMB_SEP.join(segs[: max(1, depth + 1)])
+
+
+def _match_tokens(text: str) -> set[str]:
+    """Content words of a heading/topic, lowercased, numbering + emphasis + stop
+    words removed — the unit of the lenient coverage comparison."""
+    text = re.sub(r"[*`_#]+", "", text)
+    text = _NUMBERING_RE.sub("", text).rstrip(":.").strip().lower()
+    return {t for t in re.split(r"[^a-z0-9]+", text) if len(t) > 2 and t not in _STOPWORDS}
 
 from ..config import GroundingConfig
 from ..providers.base import LLMClient
@@ -117,6 +155,68 @@ class GroundingBundle:
                 sections.extend(f"- {c.text}  (source: {c.payload.get('source', '?')})"
                                 for c in chunks)
         return "\n".join(sections)
+
+
+@dataclass(slots=True)
+class CoverageOutline:
+    """The complete, ordered list of a chapter's sections — the coverage contract a
+    unit plan must satisfy.
+
+    Built by metadata scroll (:meth:`GroundingRetriever.skeleton`), NOT by vector
+    similarity, so it is the whole table of contents rather than the handful of
+    chunks a reranker happened to surface — no topic is silently dropped.
+    ``chapters`` are the source chapter label(s) the sections were drawn from
+    (usually one; more when a topic spans chapters)."""
+
+    chapters: list[str] = field(default_factory=list)
+    sections: list[str] = field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.sections
+
+    def as_prompt_context(self) -> str:
+        """Render the outline as a hard coverage contract for the planner prompt.
+        Empty string when nothing was enumerated, so the caller can simply skip
+        the block (the planner then falls back to ungrounded arc design)."""
+        if self.is_empty:
+            return ""
+        head = (
+            "SYLLABUS — the complete, in-order list of every section in this "
+            "chapter. Your plan MUST cover EVERY one of them across the days: do "
+            "not skip, silently merge away, or invent topics. A single day may "
+            "cover several adjacent sections when there are more sections than "
+            "days, but no section may be left out."
+        )
+        return "\n".join([head, *(f"- {s}" for s in self.sections)])
+
+
+def coverage_gaps(sections: list[str], plan: "UnitPlan", *, min_overlap: float = 0.5) -> list[str]:
+    """Outline sections the plan appears to skip — a report of likely omissions,
+    not a hard gate.
+
+    Matching is deliberately lenient because strict text matching against
+    model-generated topics is brittle, and the noisy real headings carry Markdown
+    (``**12.1 Foo**``) and numbering. Each section's *leaf* topic is reduced to its
+    content words (emphasis/numbering/stop-words removed) and counted as covered
+    when at least ``min_overlap`` of them appear anywhere in the plan's text. A
+    heading with no content words of its own (a bare "12.6" whose title lives one
+    level up) is skipped rather than falsely flagged. A false "covered" is
+    preferred to a false "missing" — this is a safety net behind the prompt's
+    coverage contract, not the enforcer."""
+    hay: set[str] = set()
+    for t in [plan.big_idea, *plan.unit_outcomes] + \
+             [d.topic for d in plan.days] + \
+             [s for d in plan.days for s in d.objective_seeds]:
+        hay |= _match_tokens(t)
+    gaps: list[str] = []
+    for s in sections:
+        want = _match_tokens(s.split(_BREADCRUMB_SEP)[-1])
+        if not want:
+            continue  # nothing distinctive to match on → don't cry wolf
+        if len(want & hay) / len(want) < min_overlap:
+            gaps.append(_clean_heading(s))
+    return gaps
 
 
 _VERIFY_SYSTEM = (
@@ -265,6 +365,84 @@ class GroundingRetriever:
                 seen.add(hp)
                 headings.append(hp)
         return headings
+
+    def outline(
+        self,
+        *,
+        query: str,
+        grade: int | None = None,
+        subject: str | None = None,
+        collection: str | None = None,
+    ) -> CoverageOutline:
+        """Anchor-then-enumerate: the complete section list for the chapter(s) a
+        unit spans.
+
+        A vector query only *locates* the chapter — it does not decide coverage.
+        The top ``coverage_anchors`` hits are read (not just the best one, so a
+        chapter whose strongest chunk ranks a few places down is still found),
+        their distinct ``(doc_id, chapter)`` pairs are unioned, and each chapter's
+        FULL section list is then pulled by deterministic metadata scroll
+        (:meth:`skeleton`). This is what guarantees no topic is dropped:
+        completeness never depends on what the reranker surfaced. Over-inclusion (a
+        stray extra chapter, a duplicate) is acceptable and de-duplicated here; a
+        missing section is not.
+
+        ``collection`` defaults to the first authoritative collection (the real
+        book). Returns an empty outline — never raises — when nothing anchors or
+        the source has no heading hierarchy, so the planner degrades to ungrounded
+        arc design instead of crashing."""
+        col = collection or next(iter(self.config.authoritative_collections), None)
+        if not col:
+            return CoverageOutline()
+        where = self._filter({"grade": grade, "subject": subject})
+        anchors = self._anchor_hits(col, query, where)
+
+        keys: list[tuple[str, str]] = []  # (doc_id, chapter), rank order, distinct
+        seen_keys: set[tuple[str, str]] = set()
+        for c in anchors:
+            doc_id = str(c.payload.get(DOC_ID_KEY, "")).strip()
+            chapter = str(c.payload.get(CHAPTER_KEY, "")).strip()
+            if not doc_id or not chapter:
+                continue  # a flat source with no hierarchy can't be enumerated
+            key = (doc_id, chapter)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                keys.append(key)
+
+        depth = self.config.coverage_depth
+        out = CoverageOutline()
+        seen_sections: set[str] = set()
+        for doc_id, chapter in keys:
+            sections = self.skeleton(col, doc_id=doc_id, chapter=chapter)
+            if not sections:
+                continue
+            out.chapters.append(_clean_heading(chapter))
+            # Collapse each raw heading path to the topic level and de-dup: a deep
+            # sub-heading (a callout box) folds into its numbered section, and a
+            # section that exists only via sub-headings survives via truncation — so
+            # the contract lists teachable topics, not every bold line in the book.
+            for raw in sections:
+                label = _clean_heading(_truncate(raw, depth))
+                key = label.lower()
+                if label and key not in seen_sections:
+                    seen_sections.add(key)
+                    out.sections.append(label)
+        return out
+
+    def _anchor_hits(
+        self, collection: str, query: str, where: dict[str, Any] | None
+    ) -> list[RetrievedChunk]:
+        """The vector step of :meth:`outline` — top-``coverage_anchors`` hits used
+        only to identify chapters. Broadens to unfiltered on an empty filtered
+        result (same lenient contract as grounding) and fails open to ``[]``."""
+        n = self.config.coverage_anchors
+        try:
+            hits = self.retriever.retrieve(collection, query, where=where, top_n=n)
+            if not hits and where:
+                hits = self.retriever.retrieve(collection, query, where=None, top_n=n)
+            return hits
+        except Exception:
+            return []
 
     def _retrieve(
         self,

@@ -25,7 +25,7 @@ from ..domain.profile import TeacherProfile
 from ..domain.refine import RefineRequest, RefineResult
 from ..domain.rubric import Critique
 from ..domain.sections import LDD_SECTIONS, WHOLE_DOCUMENT
-from ..domain.unit import UnitDesignDocument, UnitPlan, UnitRequest
+from ..domain.unit import CoverageReport, UnitDesignDocument, UnitPlan, UnitRequest
 from ..export import ArtifactKind, RenderedArtifact, formats_for
 from ..rag.chunkers import CHUNKER_REGISTRY, build_chunker
 from ..rag.documents import (
@@ -164,6 +164,14 @@ class GenerateUnitRequest(UnitRequest):
     owner_id: str = "default"
     title: str | None = None
     plan: UnitPlan | None = None
+
+
+class PlanResponse(BaseModel):
+    """The unit spine plus its syllabus-coverage report, so the preview can show
+    whether the arc covers every chapter topic before the teacher expands it."""
+
+    plan: UnitPlan
+    coverage: CoverageReport
 
 
 class UnitView(BaseModel):
@@ -609,15 +617,18 @@ def create_app() -> FastAPI:
             duration_min=d0.duration_min, language=d0.language, framework=d0.framework,
         )
 
-    @app.post("/units/plan", response_model=UnitPlan, tags=["units"])
-    def plan_unit(req: UnitRequest, c: Container = Depends(get_container)) -> UnitPlan:
+    @app.post("/units/plan", response_model=PlanResponse, tags=["units"])
+    def plan_unit(req: UnitRequest, c: Container = Depends(get_container)) -> PlanResponse:
         """Produce the unit spine (the arc) for review BEFORE the expensive
-        per-day expansion — the gate a teacher edits or regenerates cheaply."""
+        per-day expansion — the gate a teacher edits or regenerates cheaply. Returns
+        the spine plus a syllabus-coverage report (every chapter topic, and which
+        the arc appears to skip)."""
         profile = c.profile_store.load()
         try:
-            return c.unit_planner.plan(req, profile=profile)
+            plan, coverage = c.unit_planner.plan_with_coverage(req, profile=profile)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return PlanResponse(plan=plan, coverage=coverage)
 
     @app.post("/units/generate", response_model=SavedUnit, tags=["units"])
     def generate_unit(
