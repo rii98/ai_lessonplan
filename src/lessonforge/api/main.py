@@ -19,17 +19,20 @@ from ..domain.chat import (
     CreateConversationRequest,
     UpdateConversationRequest,
 )
+from ..domain.document import DocumentVersion, StoredDocument
 from ..domain.ldd import IntakeRequest, LessonDesignDocument, NormalizedBrief
 from ..domain.profile import TeacherProfile
 from ..domain.refine import RefineRequest, RefineResult
 from ..domain.rubric import Critique
 from ..domain.sections import LDD_SECTIONS, WHOLE_DOCUMENT
+from ..domain.unit import UnitDesignDocument, UnitPlan, UnitRequest
 from ..export import ArtifactKind, RenderedArtifact, formats_for
 from ..rag.chunkers import CHUNKER_REGISTRY, build_chunker
 from ..rag.documents import COLLECTION_KEY, SOURCE_KEY, TEXT_KEY, Collection, Document
 from ..rag.loaders import split_front_matter
 from ..services.artifact_generation import generatable_kinds
 from ..services.chat.pipeline import ChatEvent
+from ..services.unit_coherence import UnitCoherence
 from .deps import get_container
 
 # Maps a targeted artifact kind to the IR model its generate/export endpoints use.
@@ -43,6 +46,8 @@ _STATIC_DIR = Path(__file__).parent / "static"
 _UI_INDEX = _STATIC_DIR / "index.html"
 _UI_CORPUS = _STATIC_DIR / "corpus.html"
 _UI_CHAT = _STATIC_DIR / "chat.html"
+_UI_UNITS = _STATIC_DIR / "units.html"
+_UI_LIBRARY = _STATIC_DIR / "library.html"
 # Vendored, version-pinned browser libraries (markdown-it, KaTeX, DOMPurify,
 # highlight.js) so rich rendering works fully offline — no runtime CDN.
 _VENDOR_DIR = _STATIC_DIR / "vendor"
@@ -98,6 +103,73 @@ class RefineLessonRequest(BaseModel):
     ldd: LessonDesignDocument
     target: str = Field(examples=["engagement_hook"])
     instruction: str = Field(min_length=1, examples=["make the hook about the local river"])
+
+
+class SaveLessonRequest(GenerateRequest):
+    """Generate a lesson AND persist it as a new document with its first version.
+    Adds ownership/title to the generation request; everything else is inherited."""
+
+    owner_id: str = "default"
+    title: str | None = None
+
+
+class DocumentRefineRequest(BaseModel):
+    """Refine the current head of a stored lesson. When ``commit`` is true and the
+    refine succeeds, the accepted candidate is appended as a new ``refine`` version
+    (with its instruction + diff recorded); otherwise it is only proposed."""
+
+    target: str = Field(examples=["engagement_hook"])
+    instruction: str = Field(min_length=1, examples=["make the hook about the local river"])
+    commit: bool = False
+
+
+class DocumentView(BaseModel):
+    """A stored document plus the LDD content at the requested version."""
+
+    document: StoredDocument
+    ldd: LessonDesignDocument
+
+
+class SavedLesson(BaseModel):
+    """The result of persisting a generated lesson."""
+
+    document: StoredDocument
+    version_id: str
+    ldd: LessonDesignDocument
+
+
+class DocumentRefineResponse(BaseModel):
+    """A refine outcome on a stored document; ``version_id`` is set only when the
+    refine was committed as a new version."""
+
+    result: RefineResult
+    version_id: str | None = None
+
+
+class GenerateUnitRequest(UnitRequest):
+    """Plan-and-expand a multi-day unit AND persist it. Adds ownership/title to the
+    unit request. When ``plan`` is supplied (a teacher-edited spine from
+    ``/units/plan``) the planner is skipped and that exact arc is expanded, so edits
+    to the spine actually drive generation."""
+
+    owner_id: str = "default"
+    title: str | None = None
+    plan: UnitPlan | None = None
+
+
+class UnitView(BaseModel):
+    """A stored unit plus its content at the requested version."""
+
+    document: StoredDocument
+    unit: UnitDesignDocument
+
+
+class SavedUnit(BaseModel):
+    """The result of persisting a generated (or regenerated) unit."""
+
+    document: StoredDocument
+    version_id: str
+    unit: UnitDesignDocument
 
 
 class CorpusIngestRequest(BaseModel):
@@ -197,11 +269,13 @@ def create_app() -> FastAPI:
         summary="AI that thinks like an experienced teacher.",
     )
 
-    if _VENDOR_DIR.is_dir():
+    # Serve the whole static directory (shared app.css/app.js, plus the vendored,
+    # version-pinned browser libraries under /static/vendor). No build step.
+    if _STATIC_DIR.is_dir():
         app.mount(
-            "/static/vendor",
-            StaticFiles(directory=_VENDOR_DIR),
-            name="vendor",
+            "/static",
+            StaticFiles(directory=_STATIC_DIR),
+            name="static",
         )
 
     @app.get("/", response_class=HTMLResponse, include_in_schema=False)
@@ -211,6 +285,22 @@ def create_app() -> FastAPI:
         if _UI_INDEX.exists():
             return _UI_INDEX.read_text(encoding="utf-8")
         return "<h1>LessonForge</h1><p>UI asset missing. See /docs for the API.</p>"
+
+    @app.get("/units", response_class=HTMLResponse, include_in_schema=False)
+    def units_page() -> str:
+        """The multi-day unit planner: plan the arc, expand each day into a full
+        lesson, regenerate a single day, and export the whole unit."""
+        if _UI_UNITS.exists():
+            return _UI_UNITS.read_text(encoding="utf-8")
+        return "<h1>Unit planner</h1><p>UI asset missing. See /docs for the API.</p>"
+
+    @app.get("/library", response_class=HTMLResponse, include_in_schema=False)
+    def library_page() -> str:
+        """Saved lessons and units with version history — revisit, undo/redo,
+        export, delete."""
+        if _UI_LIBRARY.exists():
+            return _UI_LIBRARY.read_text(encoding="utf-8")
+        return "<h1>Library</h1><p>UI asset missing. See /docs for the API.</p>"
 
     @app.get("/health", tags=["ops"])
     def health() -> dict[str, str]:
@@ -303,6 +393,265 @@ def create_app() -> FastAPI:
         except ValidationError as exc:
             return ValidationResult(valid=False, errors=_format_errors(exc))
         return ValidationResult(valid=True)
+
+    # ── documents: persisted lessons with version history (revisit/edit/undo) ─
+    @app.post("/documents/lessons", response_model=SavedLesson, tags=["documents"])
+    def create_lesson_document(
+        req: SaveLessonRequest, c: Container = Depends(get_container)
+    ) -> SavedLesson:
+        """Generate a lesson through the full pipeline and persist it as a new
+        document with its first (``generate``) version — the entry point for work a
+        teacher can come back to, edit, and undo."""
+        profile = c.profile_store.load()
+        gen = req.model_dump(exclude={"owner_id", "title"})
+        try:
+            ldd = c.pipeline.run(IntakeRequest(**gen), profile=profile)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        doc, version = c.get_document_service().save_lesson(
+            ldd, owner_id=req.owner_id, title=req.title
+        )
+        return SavedLesson(document=doc, version_id=version.id, ldd=ldd)
+
+    @app.get("/documents", response_model=list[StoredDocument], tags=["documents"])
+    def list_documents(
+        owner_id: str = Query("default"), c: Container = Depends(get_container)
+    ) -> list[StoredDocument]:
+        """A teacher's saved documents, most-recently-updated first."""
+        return c.get_document_store().list(owner_id)
+
+    @app.get("/documents/{document_id}", response_model=DocumentView, tags=["documents"])
+    def get_document(
+        document_id: str,
+        version: str | None = Query(None, description="a specific version id; default = head"),
+        c: Container = Depends(get_container),
+    ) -> DocumentView:
+        """The document header plus its content at ``version`` (default: the head)."""
+        svc = c.get_document_service()
+        doc = svc.store.get(document_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        ldd = (
+            svc.get_lesson_version(document_id, version) if version
+            else svc.head_lesson(document_id)
+        )
+        if ldd is None:
+            raise HTTPException(status_code=404, detail="version not found")
+        return DocumentView(document=doc, ldd=ldd)
+
+    @app.get(
+        "/documents/{document_id}/versions",
+        response_model=list[DocumentVersion], tags=["documents"],
+    )
+    def document_versions(
+        document_id: str, c: Container = Depends(get_container)
+    ) -> list[DocumentVersion]:
+        """The full edit history (oldest first) — the audit trail of what produced
+        each state (origin, instruction, diff, sources, scores)."""
+        svc = c.get_document_service()
+        if svc.store.get(document_id) is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        return svc.store.versions(document_id)
+
+    @app.post(
+        "/documents/{document_id}/refine",
+        response_model=DocumentRefineResponse, tags=["documents"],
+    )
+    def refine_document(
+        document_id: str, req: DocumentRefineRequest, c: Container = Depends(get_container)
+    ) -> DocumentRefineResponse:
+        """Refine the head lesson. Proposes by default; with ``commit=true`` an
+        accepted refine is appended as a new version."""
+        svc = c.get_document_service()
+        head = svc.head_lesson(document_id)
+        if head is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        try:
+            result = c.refiner.refine(
+                head, RefineRequest(target=req.target, instruction=req.instruction)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        version_id: str | None = None
+        if req.commit and result.ok:
+            version = svc.commit_refine(document_id, result)
+            version_id = version.id if version else None
+        return DocumentRefineResponse(result=result, version_id=version_id)
+
+    @app.post("/documents/{document_id}/manual", response_model=SavedLesson, tags=["documents"])
+    def commit_manual_edit(
+        document_id: str, ldd: LessonDesignDocument, c: Container = Depends(get_container)
+    ) -> SavedLesson:
+        """Persist a teacher's direct edit of a stored lesson (from the full editor)
+        as a new ``manual`` version on top of the head."""
+        svc = c.get_document_service()
+        if svc.store.get(document_id) is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        version = svc.commit_manual(document_id, ldd)
+        if version is None:
+            raise HTTPException(status_code=404, detail="document not found")
+        return SavedLesson(document=svc.store.get(document_id), version_id=version.id, ldd=ldd)
+
+    @app.post("/documents/{document_id}/undo", response_model=StoredDocument, tags=["documents"])
+    def undo_document(
+        document_id: str, c: Container = Depends(get_container)
+    ) -> StoredDocument:
+        """Move the head back to the previous version. 409 when already at the root."""
+        moved = c.get_document_service().undo(document_id)
+        if moved is None:
+            raise HTTPException(status_code=409, detail="nothing to undo")
+        return moved
+
+    @app.post("/documents/{document_id}/redo", response_model=StoredDocument, tags=["documents"])
+    def redo_document(
+        document_id: str, c: Container = Depends(get_container)
+    ) -> StoredDocument:
+        """Move the head forward again after an undo. 409 when there is no child."""
+        moved = c.get_document_service().redo(document_id)
+        if moved is None:
+            raise HTTPException(status_code=409, detail="nothing to redo")
+        return moved
+
+    @app.delete("/documents/{document_id}", tags=["documents"])
+    def delete_document(
+        document_id: str, c: Container = Depends(get_container)
+    ) -> dict[str, bool]:
+        """Delete a document and its entire history."""
+        return {"deleted": c.get_document_store().delete(document_id)}
+
+    # ── units: plan-and-expand multi-day units ───────────────────────────────
+    def _unit_request_from(unit: UnitDesignDocument) -> UnitRequest:
+        """Reconstruct the generation request from a stored unit, so a single day
+        can be regenerated against the same framing."""
+        d0 = unit.days[0]
+        return UnitRequest(
+            topic=unit.title, grade=unit.curriculum_ref.grade,
+            subject=unit.curriculum_ref.subject, num_days=len(unit.days),
+            duration_min=d0.duration_min, language=d0.language, framework=d0.framework,
+        )
+
+    @app.post("/units/plan", response_model=UnitPlan, tags=["units"])
+    def plan_unit(req: UnitRequest, c: Container = Depends(get_container)) -> UnitPlan:
+        """Produce the unit spine (the arc) for review BEFORE the expensive
+        per-day expansion — the gate a teacher edits or regenerates cheaply."""
+        profile = c.profile_store.load()
+        try:
+            return c.unit_planner.plan(req, profile=profile)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/units/generate", response_model=SavedUnit, tags=["units"])
+    def generate_unit(
+        req: GenerateUnitRequest, c: Container = Depends(get_container)
+    ) -> SavedUnit:
+        """Plan and expand a full multi-day unit, then persist it with version
+        history (revisit/regenerate/undo like any document)."""
+        profile = c.profile_store.load()
+        unit_req = UnitRequest(**req.model_dump(exclude={"owner_id", "title", "plan"}))
+        try:
+            unit = (
+                c.unit_generator.expand(req.plan, unit_req, profile=profile)
+                if req.plan is not None
+                else c.unit_generator.generate(unit_req, profile=profile)
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        doc, version = c.get_document_service().save_unit(
+            unit, owner_id=req.owner_id, title=req.title
+        )
+        return SavedUnit(document=doc, version_id=version.id, unit=unit)
+
+    @app.get("/units/{document_id}", response_model=UnitView, tags=["units"])
+    def get_unit(
+        document_id: str,
+        version: str | None = Query(None, description="a version id; default = head"),
+        c: Container = Depends(get_container),
+    ) -> UnitView:
+        """The unit header plus its content at ``version`` (default: the head)."""
+        svc = c.get_document_service()
+        doc = svc.store.get(document_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="unit not found")
+        unit = (
+            svc.get_unit_version(document_id, version) if version
+            else svc.head_unit(document_id)
+        )
+        if unit is None:
+            raise HTTPException(status_code=404, detail="version not found")
+        return UnitView(document=doc, unit=unit)
+
+    @app.post(
+        "/units/{document_id}/days/{day}/regenerate",
+        response_model=SavedUnit, tags=["units"],
+    )
+    def regenerate_unit_day(
+        document_id: str, day: int, c: Container = Depends(get_container)
+    ) -> SavedUnit:
+        """Rebuild ONE day against the same arc — the other days are untouched —
+        and commit the result as a new version."""
+        svc = c.get_document_service()
+        unit = svc.head_unit(document_id)
+        if unit is None:
+            raise HTTPException(status_code=404, detail="unit not found")
+        try:
+            updated = c.unit_generator.regenerate_day(
+                unit, day, _unit_request_from(unit), profile=c.profile_store.load()
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        version = svc.commit_unit(
+            document_id, updated, instruction=f"regenerated day {day}"
+        )
+        return SavedUnit(
+            document=svc.store.get(document_id), version_id=version.id, unit=updated
+        )
+
+    @app.put(
+        "/units/{document_id}/days/{day}",
+        response_model=SavedUnit, tags=["units"],
+    )
+    def edit_unit_day(
+        document_id: str,
+        day: int,
+        ldd: LessonDesignDocument,
+        c: Container = Depends(get_container),
+    ) -> SavedUnit:
+        """Replace ONE day's lesson with a teacher-edited LDD (from the full lesson
+        editor), re-run coherence over the whole unit, and commit it as a new manual
+        version — the manual-edit counterpart to regenerate."""
+        svc = c.get_document_service()
+        unit = svc.head_unit(document_id)
+        if unit is None:
+            raise HTTPException(status_code=404, detail="unit not found")
+        if not 1 <= day <= len(unit.days):
+            raise HTTPException(
+                status_code=422, detail=f"day {day} is out of range 1..{len(unit.days)}"
+            )
+        new_days = list(unit.days)
+        new_days[day - 1] = ldd
+        try:
+            # revalidate so cross-day invariants (grade/subject match, day count)
+            # reject a bad edit instead of persisting a broken unit.
+            candidate = UnitDesignDocument.model_validate(
+                unit.model_copy(update={"days": new_days}).model_dump(mode="json")
+            )
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail=_format_errors(exc)) from exc
+        updated = UnitCoherence().apply(candidate)
+        version = svc.commit_unit(document_id, updated, instruction=f"edited day {day}")
+        return SavedUnit(
+            document=svc.store.get(document_id), version_id=version.id, unit=updated
+        )
+
+    @app.post("/units/{document_id}/export", tags=["units"])
+    def export_unit(
+        document_id: str, c: Container = Depends(get_container)
+    ) -> Response:
+        """Download the whole unit as a zip of per-day lesson plans."""
+        unit = c.get_document_service().head_unit(document_id)
+        if unit is None:
+            raise HTTPException(status_code=404, detail="unit not found")
+        return _file_response(c.exporter.unit_zip(unit))
 
     # ── teacher profile: stored preferences injected into every build ────────
     @app.get("/profile", response_model=TeacherProfile, tags=["profile"])

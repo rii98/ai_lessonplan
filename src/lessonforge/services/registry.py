@@ -14,12 +14,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, TypeVar
 
-from ..config import ChatStoreConfig, CritiqueConfig, IntakeConfig, ProfileConfig
+from ..config import (
+    ChatStoreConfig,
+    CritiqueConfig,
+    DocumentStoreConfig,
+    IntakeConfig,
+    ProfileConfig,
+)
 
 if TYPE_CHECKING:
     from ..providers.base import LLMClient
     from .chat.store import ChatStore
     from .critique import Critic
+    from .documents.store import DocumentStore
     from .intake import Intake
     from .profile import ProfileStore
 
@@ -29,6 +36,7 @@ INTAKE_REGISTRY: dict[str, type[Intake]] = {}
 CRITIC_REGISTRY: dict[str, type[Critic]] = {}
 PROFILE_STORE_REGISTRY: dict[str, type[ProfileStore]] = {}
 CHAT_STORE_REGISTRY: dict[str, type[ChatStore]] = {}
+DOCUMENT_STORE_REGISTRY: dict[str, type[DocumentStore]] = {}
 
 
 def _register(registry: dict[str, type[T]], name: str) -> Callable[[type[T]], type[T]]:
@@ -55,6 +63,10 @@ def register_profile_store(name: str):
 
 def register_chat_store(name: str):
     return _register(CHAT_STORE_REGISTRY, name)
+
+
+def register_document_store(name: str):
+    return _register(DOCUMENT_STORE_REGISTRY, name)
 
 
 def _lookup(registry: dict[str, type[T]], provider: str, kind: str) -> type[T]:
@@ -90,3 +102,9 @@ def build_chat_store(cfg: ChatStoreConfig) -> ChatStore:
     from .chat import store as _  # noqa: F401  (import triggers store registration)
 
     return _lookup(CHAT_STORE_REGISTRY, cfg.provider, "chat store").from_config(cfg)  # type: ignore[attr-defined]
+
+
+def build_document_store(cfg: DocumentStoreConfig) -> DocumentStore:
+    from .documents import store as _  # noqa: F401  (import triggers store registration)
+
+    return _lookup(DOCUMENT_STORE_REGISTRY, cfg.provider, "document store").from_config(cfg)  # type: ignore[attr-defined]

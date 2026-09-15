@@ -13,11 +13,15 @@ from __future__ import annotations
 import io
 import zipfile
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from ..config import ExportConfig
 from ..domain.ldd import LessonDesignDocument
 from .base import ArtifactKind, ExportOptions, RenderedArtifact, slugify
 from .registry import build_renderer, formats_for
+
+if TYPE_CHECKING:
+    from ..domain.unit import UnitDesignDocument
 
 _ZIP_MEDIA = "application/zip"
 # Fixed timestamp → deterministic zip bytes for a fixed set of member bytes.
@@ -72,6 +76,29 @@ class ExportService:
             kind=ArtifactKind.lesson_plan,  # representative; it's a bundle
             fmt="zip",
             filename=f"{slugify(ldd.topic)}_bundle.zip",
+            media_type=_ZIP_MEDIA,
+            content=buf.getvalue(),
+        )
+
+    def unit_zip(
+        self, unit: UnitDesignDocument, *, kinds: list[ArtifactKind] | None = None
+    ) -> RenderedArtifact:
+        """Zip a whole multi-day unit into one download: the chosen artifact(s) for
+        each day, filenames prefixed ``dayNN_`` so they sort in teaching order.
+        Reuses the per-day renderers unchanged — a unit is a composition of days."""
+        kinds = kinds or [ArtifactKind.lesson_plan]
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for i, day in enumerate(unit.days, 1):
+                for kind in kinds:
+                    art = self.render(kind, day)
+                    info = zipfile.ZipInfo(f"day{i:02d}_{art.filename}", date_time=_ZIP_EPOCH)
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    zf.writestr(info, art.content)
+        return RenderedArtifact(
+            kind=ArtifactKind.lesson_plan,
+            fmt="zip",
+            filename=f"{slugify(unit.title)}_unit.zip",
             media_type=_ZIP_MEDIA,
             content=buf.getvalue(),
         )

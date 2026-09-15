@@ -134,7 +134,7 @@ _SECTION_ADVICE: dict[str, str] = {
     "alignment": "Add a formative check for every objective and vary Bloom levels across objectives.",
     "misconception_coverage": "Surface at least two grade-specific misconceptions, each with its correction.",
     "specificity": "Make activities concrete and step-by-step; name real materials; add homework.",
-    "local_relevance": "Ground hooks and activities in the students' local world (paddy fields, rivers, animals, markets).",
+    "local_relevance": "Ground hooks and activities in the students' own daily life and surroundings, with anchors that genuinely fit this topic and grade.",
 }
 
 

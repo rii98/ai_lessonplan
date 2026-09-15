@@ -25,7 +25,7 @@ from typing import Any
 
 from ..providers.base import Embedder, SparseEmbedder, VectorRecord, VectorStore
 from .chunkers import CHUNKER_REGISTRY, Chunker, ParagraphChunker, build_chunker
-from .documents import Chunk, Collection, Document
+from .documents import DOC_ID_KEY, Chunk, Collection, Document
 from .loaders import build_loader, document_from_record
 
 
@@ -120,9 +120,14 @@ class Ingestor:
             report.documents += 1
             report.sources.add(doc.source)
             target = _coerce_collection(doc.metadata.get("collection"), collection)
+            # Stamp the document id on every chunk so hierarchy dereferences
+            # (section/chapter expansion) are scoped to this book — identical
+            # headings across different books never bleed together. An explicit
+            # doc_id in the record's metadata wins; else the Document's own id.
+            meta = {DOC_ID_KEY: doc.id, **doc.metadata}
             by_collection.setdefault(target, []).extend(
                 chunker.chunk(
-                    doc.text, collection=target, source=doc.source, metadata=doc.metadata
+                    doc.text, collection=target, source=doc.source, metadata=meta
                 )
             )
 

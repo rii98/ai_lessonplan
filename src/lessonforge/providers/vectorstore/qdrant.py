@@ -206,6 +206,39 @@ class QdrantVectorStore(VectorStore):
         ]
         return records, (str(next_offset) if next_offset is not None else None)
 
+    def fetch(
+        self, name: str, where: dict[str, Any] | None = None, *, limit: int = 2000
+    ) -> list[StoredRecord]:
+        """Payload-filtered fetch via Qdrant's native scroll filter — pages until
+        ``limit`` records are collected or the collection is exhausted, so a whole
+        section/chapter comes back in one call regardless of page size."""
+        client = self._c()
+        full = self._name(name)
+        if not client.collection_exists(full):
+            return []
+        out: list[StoredRecord] = []
+        offset: Any = None
+        qfilter = self._build_filter(where)
+        while len(out) < limit:
+            points, offset = client.scroll(
+                collection_name=full,
+                scroll_filter=qfilter,
+                limit=min(512, limit - len(out)),
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            out.extend(
+                StoredRecord(
+                    id=(p.payload or {}).get(_SOURCE_ID_KEY, str(p.id)),
+                    payload=p.payload or {},
+                )
+                for p in points
+            )
+            if offset is None or not points:
+                break
+        return out
+
     def delete(self, name: str, ids: list[str]) -> int:
         from qdrant_client.models import PointIdsList
 

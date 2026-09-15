@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LessonForge — Multi-day units</title>
+<link rel="stylesheet" href="/static/app.css" />
+<style>
+  .spine { display: grid; grid-template-columns: 44px 1fr; gap: 0; }
+  .spine .day-no {
+    display: flex; align-items: center; justify-content: center; font-weight: 700;
+    color: var(--brand); border-right: 2px solid var(--line);
+  }
+  .spine .day-body { padding: 10px 0 14px 14px; }
+  .spine .day-body:not(:last-child) { border-bottom: 1px dashed var(--line); }
+  .arc { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .arc b { color: var(--ink); font-weight: 600; }
+  .phase-row { display: flex; gap: 8px; font-size: 13px; margin: 2px 0; }
+  .phase-row .mins { color: var(--muted); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+  .day-card > summary { justify-content: space-between; }
+  .day-card > summary .d-topic { flex: 1; }
+  .day-card > summary .d-mins { color: var(--muted); font-size: 13px; font-weight: 400; }
+</style>
+</head>
+<body>
+<header class="top"></header>
+
+<div class="wrap">
+
+  <!-- ── Brief ─────────────────────────────────────────────────────────── -->
+  <div class="card">
+    <h2>Plan a multi-day unit</h2>
+    <div class="body">
+      <p class="sub">One chapter or topic, spread across several days as a coherent arc — each day builds on the last. Preview the spine cheaply, then expand every day into a full lesson.</p>
+      <div class="grid">
+        <label class="f"><span>Topic / chapter</span><input id="u_topic" placeholder="e.g. Electricity and Magnetism" /></label>
+        <label class="f"><span>Grade</span><input id="u_grade" type="number" min="1" max="12" placeholder="10" /></label>
+        <label class="f"><span>Subject</span><input id="u_subject" placeholder="Science" /></label>
+        <label class="f"><span>Days</span><input id="u_num_days" type="number" min="1" max="20" value="5" /></label>
+        <label class="f"><span>Minutes / day</span><input id="u_duration_min" type="number" min="10" max="120" value="45" /></label>
+        <label class="f"><span>Language</span>
+          <select id="u_language"><option value="en-ne">en-ne</option><option value="en">en</option><option value="ne">ne</option></select>
+        </label>
+        <label class="f"><span>Framework</span>
+          <select id="u_framework"><option value="5E">5E</option><option value="gradual_release">gradual_release</option><option value="inquiry">inquiry</option></select>
+        </label>
+        <label class="f"><span>Title (optional)</span><input id="u_title" placeholder="defaults to the planned unit title" /></label>
+      </div>
+      <div class="row">
+        <button id="previewBtn">Preview the arc</button>
+        <button class="primary" id="generateBtn">Generate full unit</button>
+        <span class="status" id="briefStatus"></span>
+      </div>
+      <p class="sub" style="margin-top:8px">The preview calls the planner only (cheap, one LLM call). <b>Generate</b> re-plans and then expands every day — this is the slow, expensive step.</p>
+    </div>
+  </div>
+
+  <!-- ── Plan preview (spine) ──────────────────────────────────────────── -->
+  <div class="card hidden" id="planCard">
+    <h2>The arc <span class="q-name muted" style="font-weight:400;font-size:13px">— review before expanding</span></h2>
+    <div class="body" id="planBody"></div>
+  </div>
+
+  <!-- ── Generated unit ────────────────────────────────────────────────── -->
+  <div class="card hidden" id="unitCard">
+    <h2><span id="unitTitle">Unit</span></h2>
+    <div class="body" id="unitBody"></div>
+  </div>
+
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+"use strict";
+
+let currentDocId = null;   // set after a successful generate
+let currentUnit = null;    // the UnitDesignDocument
+let currentPlan = null;    // the (editable) UnitPlan shown in the preview
+
+function brief() {
+  const num = (id) => { const v = $(id).value.trim(); return v === "" ? null : Number(v); };
+  const str = (id) => { const v = $(id).value.trim(); return v === "" ? null : v; };
+  return {
+    topic: str("u_topic"),
+    grade: num("u_grade"),
+    subject: str("u_subject"),
+    num_days: num("u_num_days") ?? 5,
+    duration_min: num("u_duration_min") ?? 45,
+    language: $("u_language").value,
+    framework: $("u_framework").value,
+  };
+}
+
+function validateBrief(b) {
+  const missing = [];
+  if (!b.topic) missing.push("topic");
+  if (b.grade == null) missing.push("grade");
+  if (!b.subject) missing.push("subject");
+  return missing;
+}
+
+// ── Plan preview ────────────────────────────────────────────────────────────
+async function previewPlan() {
+  const b = brief();
+  const missing = validateBrief(b);
+  if (missing.length) { setStatus($("briefStatus"), "Fill in: " + missing.join(", "), "err"); return; }
+  setStatus($("briefStatus"), "Planning the arc…", "busy");
+  try {
+    currentPlan = await apiJSON("POST", "/units/plan", b);
+    renderPlan();
+    setStatus($("briefStatus"), "Edit the arc below, then Generate — your edits drive the expansion.", "");
+    $("planCard").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {
+    setStatus($("briefStatus"), e.message, "err");
+  }
+}
+
+function renumberDays() { currentPlan.days.forEach((d, i) => { d.day = i + 1; }); }
+
+// Fully editable spine — this object is sent back to /units/generate as `plan`.
+function renderPlan() {
+  const plan = currentPlan;
+  const rr = renderPlan;
+  const body = $("planBody");
+  body.textContent = "";
+
+  body.append(field("Unit title", bound(plan, "title")));
+  body.append(field("Big idea", bound(plan, "big_idea", { area: true })));
+  body.append(field("Running thread (a worked example carried across days)", bound(plan, "thread")));
+  body.append(h("h3", { class: "section" }, "Unit outcomes"));
+  body.append(stringList(plan.unit_outcomes, "an outcome for the whole unit", rr));
+
+  body.append(h("h3", { class: "section" }, "Day-by-day spine"));
+  const spine = h("div", { class: "spine" });
+  plan.days.forEach((d, i) => {
+    spine.append(
+      h("div", { class: "day-no" }, String(d.day)),
+      h("div", { class: "day-body" },
+        field("Topic", bound(d, "topic")),
+        h("label", { class: "f" }, h("span", {}, "Objective seeds"), stringList(d.objective_seeds, "an objective for this day", rr)),
+        field("Builds on", bound(d, "builds_on")),
+        field("Sets up", bound(d, "sets_up")),
+        h("button", { class: "small ghost danger", onclick: () => {
+          if (plan.days.length <= 1) return;
+          plan.days.splice(i, 1); renumberDays(); rr();
+        } }, "✕ Remove day"),
+      )
+    );
+  });
+  body.append(spine);
+  body.append(h("div", { class: "row", style: "margin-top:10px" },
+    h("button", { class: "small", onclick: () => {
+      plan.days.push({ day: plan.days.length + 1, topic: "", objective_seeds: [], builds_on: "", sets_up: "" });
+      renumberDays(); rr();
+    } }, "+ add day"),
+    h("button", { class: "small ghost", onclick: previewPlan }, "↻ Re-plan (discard edits)")));
+  $("planCard").classList.remove("hidden");
+}
+
+// ── Generate the full unit ───────────────────────────────────────────────────
+async function generateUnit() {
+  const b = brief();
+  const missing = validateBrief(b);
+  if (missing.length) { setStatus($("briefStatus"), "Fill in: " + missing.join(", "), "err"); return; }
+  const title = $("u_title").value.trim();
+  const payload = { ...b, ...(title ? { title } : {}) };
+  // if the teacher previewed & edited the arc, that exact spine drives expansion
+  if (currentPlan) { payload.plan = currentPlan; payload.num_days = currentPlan.days.length; }
+  setStatus($("briefStatus"),
+    (currentPlan ? "Expanding your edited arc" : "Planning and expanding") + " — this can take a while…", "busy");
+  $("generateBtn").disabled = true; $("previewBtn").disabled = true;
+  try {
+    const saved = await apiJSON("POST", "/units/generate", payload);
+    currentDocId = saved.document.id;
+    currentUnit = saved.unit;
+    renderUnit(saved.unit, saved.document);
+    setStatus($("briefStatus"), "Saved to your library.", "");
+    $("unitCard").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {
+    setStatus($("briefStatus"), e.message, "err");
+  } finally {
+    $("generateBtn").disabled = false; $("previewBtn").disabled = false;
+  }
+}
+
+function renderCoherence(report) {
+  if (!report) return null;
+  if (report.ok || !(report.issues || []).length) {
+    return h("div", { class: "banner ok" }, "✓ Coherence check passed — no cross-day problems found.");
+  }
+  return h("div", { class: "banner warn" },
+    `${report.issues.length} coherence note${report.issues.length > 1 ? "s" : ""}:`,
+    h("ul", {}, ...report.issues.map((i) =>
+      h("li", {}, h("b", {}, i.kind.replace(/_/g, " ")), i.day != null ? ` (day ${i.day})` : "", i.detail ? " — " + i.detail : ""))));
+}
+
+function dayCard(day, idx) {
+  const totalMins = (day.phases || []).reduce((a, p) => a + (p.minutes || 0), 0);
+  const detail = h("details", { class: "card day-card", style: "margin:0 0 10px" });
+  detail.append(h("summary", {},
+    h("span", { class: "d-topic" }, h("b", {}, `Day ${idx + 1}: `), day.topic),
+    h("span", { class: "d-mins" }, `${totalMins} min`)));
+  const body = h("div", { class: "body" });
+
+  if ((day.objectives || []).length) {
+    body.append(h("h3", { class: "section" }, "Objectives"));
+    body.append(h("ul", { style: "margin:0;padding-left:18px" },
+      ...day.objectives.map((o) => h("li", {}, o.statement, " ", h("span", { class: "tag" }, o.bloom)))));
+  }
+  if (day.engagement_hook) {
+    body.append(h("h3", { class: "section" }, `Hook — ${day.engagement_hook.kind}`));
+    body.append(h("p", { class: "sub", style: "margin:0" }, day.engagement_hook.prompt));
+  }
+  if ((day.phases || []).length) {
+    body.append(h("h3", { class: "section" }, "Phases"));
+    for (const p of day.phases) {
+      body.append(h("div", { class: "phase-row" },
+        h("span", { class: "mins" }, `${p.minutes}′`),
+        h("span", {}, h("b", {}, p.name_en), p.name_ne ? ` (${p.name_ne})` : "")));
+    }
+  }
+  if ((day.materials || []).length) {
+    body.append(h("h3", { class: "section" }, "Materials"));
+    body.append(h("div", {}, ...day.materials.map((m) => h("span", { class: "chip" }, m))));
+  }
+
+  const regenStatus = h("span", { class: "status" });
+  const regenBtn = h("button", { class: "small ghost",
+    onclick: () => regenerateDay(idx + 1, regenBtn, regenStatus) }, "↻ Regenerate this day");
+  body.append(h("div", { class: "row", style: "margin-top:12px" },
+    regenBtn,
+    currentDocId ? h("a", { class: "small", href: `/?unit=${currentDocId}&day=${idx + 1}`,
+      style: "text-decoration:none;display:inline-flex;align-items:center" }, "✏️ Edit in editor") : null,
+    regenStatus));
+  detail.append(body);
+  return detail;
+}
+
+function renderUnit(unit, doc) {
+  currentUnit = unit;
+  $("unitTitle").textContent = unit.title;
+  const body = $("unitBody");
+  body.textContent = "";
+  const ref = unit.curriculum_ref || {};
+
+  body.append(h("div", { class: "row", style: "margin-bottom:10px" },
+    h("span", { class: "tag unit" }, "unit"),
+    h("span", { class: "sub", style: "margin:0" },
+      `${ref.board || "CDC"} · Grade ${ref.grade} ${ref.subject} · ${unit.days.length} days`)));
+  if (unit.big_idea) body.append(h("p", { class: "sub" }, h("b", { class: "muted" }, "Big idea: "), unit.big_idea));
+  if ((unit.unit_outcomes || []).length) {
+    body.append(h("h3", { class: "section" }, "Unit outcomes"));
+    body.append(h("ul", { class: "sub", style: "margin:0 0 6px;padding-left:18px" },
+      ...unit.unit_outcomes.map((o) => h("li", {}, o))));
+  }
+
+  const coh = renderCoherence(unit.coherence);
+  if (coh) body.append(coh);
+
+  body.append(h("h3", { class: "section" }, "Daily lessons"));
+  unit.days.forEach((d, i) => body.append(dayCard(d, i)));
+
+  const exportStatus = h("span", { class: "status" });
+  body.append(h("h3", { class: "section" }, "Export"));
+  body.append(h("div", { class: "row" },
+    h("button", { class: "primary", onclick: () => exportUnit(exportStatus) }, "Download unit (.zip)"),
+    doc ? h("a", { href: `/library?doc=${doc.id}`, class: "sub", style: "margin:0" }, "Open in Library →") : null,
+    exportStatus));
+
+  $("unitCard").classList.remove("hidden");
+}
+
+async function regenerateDay(day, btn, statusEl) {
+  if (!currentDocId) return;
+  btn.disabled = true;
+  setStatus(statusEl, "Rebuilding this day…", "busy");
+  try {
+    const saved = await apiJSON("POST", `/units/${currentDocId}/days/${day}/regenerate`);
+    renderUnit(saved.unit, saved.document);   // re-render the whole unit (coherence may change)
+    $("unitCard").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) {
+    setStatus(statusEl, e.message, "err");
+    btn.disabled = false;
+  }
+}
+
+async function exportUnit(statusEl) {
+  if (!currentDocId) return;
+  setStatus(statusEl, "Building zip…", "busy");
+  try {
+    const res = await api("POST", `/units/${currentDocId}/export`);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const blob = await res.blob();
+    const cd = res.headers.get("Content-Disposition") || "";
+    const m = /filename="?([^"]+)"?/.exec(cd);
+    const name = m ? m[1] : `unit-${currentDocId}.zip`;
+    const url = URL.createObjectURL(blob);
+    const a = h("a", { href: url, download: name });
+    document.body.append(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    setStatus(statusEl, "Downloaded.", "");
+  } catch (e) {
+    setStatus(statusEl, e.message, "err");
+  }
+}
+
+// ── init ─────────────────────────────────────────────────────────────────────
+mountNav("units", "🗓️ Unit planner", "Plan a chapter across days, expand each into a full lesson, keep the arc coherent.");
+$("previewBtn").addEventListener("click", previewPlan);
+$("generateBtn").addEventListener("click", generateUnit);
+// editing the brief invalidates a previously-previewed arc, so we never expand a
+// spine that no longer matches the topic/grade the teacher is now asking for.
+["u_topic", "u_grade", "u_subject", "u_num_days", "u_duration_min", "u_language", "u_framework"]
+  .forEach((id) => $(id).addEventListener("input", () => {
+    if (currentPlan) { currentPlan = null; $("planCard").classList.add("hidden"); }
+  }));
+// prefill grade/subject from the teacher profile, if any
+apiJSON("GET", "/profile").then((p) => {
+  if (!p) return;
+  if (p.default_grade && !$("u_grade").value) $("u_grade").value = p.default_grade;
+  if (p.default_subject && !$("u_subject").value) $("u_subject").value = p.default_subject;
+}).catch(() => {});
+</script>
+</body>
+</html>

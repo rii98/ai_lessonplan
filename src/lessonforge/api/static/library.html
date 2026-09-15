@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LessonForge — Library</title>
+<link rel="stylesheet" href="/static/app.css" />
+<style>
+  .layout { display: grid; grid-template-columns: 300px 1fr; gap: 18px; align-items: start; }
+  @media (max-width: 720px) { .layout { grid-template-columns: 1fr; } }
+  .doc-row {
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+    background: var(--bg); cursor: pointer;
+  }
+  .doc-row:hover { border-color: var(--muted); }
+  .doc-row.active { border-color: var(--brand); box-shadow: inset 3px 0 0 var(--brand); }
+  .doc-row .t { font-weight: 600; font-size: 14px; margin-bottom: 2px; }
+  .doc-row .m { font-size: 12px; color: var(--muted); }
+  .timeline { border-left: 2px solid var(--line); margin: 4px 0 0 6px; padding-left: 14px; }
+  .tl-item { position: relative; padding: 6px 0; font-size: 13px; }
+  .tl-item::before {
+    content: ""; position: absolute; left: -21px; top: 11px; width: 9px; height: 9px;
+    border-radius: 50%; background: var(--line); border: 2px solid var(--panel);
+  }
+  .tl-item.head::before { background: var(--brand); }
+  .tl-item .when { color: var(--muted); font-size: 12px; }
+  .tl-item .instr { color: var(--ink); }
+</style>
+</head>
+<body>
+<header class="top"></header>
+
+<div class="wrap">
+  <div class="layout">
+
+    <!-- ── list ────────────────────────────────────────────────────────── -->
+    <div>
+      <div class="row" style="justify-content:space-between;margin-bottom:10px">
+        <strong>Saved work</strong>
+        <button class="small ghost" id="reloadBtn">↻</button>
+      </div>
+      <div id="docList"><p class="sub">Loading…</p></div>
+    </div>
+
+    <!-- ── detail ──────────────────────────────────────────────────────── -->
+    <div class="card" id="detailCard">
+      <h2 id="detailTitle">Select a document</h2>
+      <div class="body" id="detailBody">
+        <p class="sub">Your saved lessons and units live here. Open one to see its content, its full edit history, and to undo, redo, export, or delete it.</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+<script>
+"use strict";
+
+let docs = [];
+let selectedId = null;
+
+async function loadList() {
+  $("docList").textContent = "";
+  $("docList").append(h("p", { class: "sub" }, "Loading…"));
+  try {
+    docs = await apiJSON("GET", "/documents");
+    renderList();
+    // deep link: /library?doc=<id>
+    const want = new URLSearchParams(location.search).get("doc");
+    if (want && docs.some((d) => d.id === want)) selectDoc(want);
+    else if (selectedId && docs.some((d) => d.id === selectedId)) selectDoc(selectedId);
+  } catch (e) {
+    $("docList").textContent = "";
+    $("docList").append(h("p", { class: "status err" }, e.message));
+  }
+}
+
+function renderList() {
+  const list = $("docList");
+  list.textContent = "";
+  if (!docs.length) { list.append(h("p", { class: "sub" }, "Nothing saved yet.")); return; }
+  for (const d of docs) {
+    const row = h("div", { class: "doc-row" + (d.id === selectedId ? " active" : ""), onclick: () => selectDoc(d.id) },
+      h("div", { class: "t" }, d.title || "Untitled"),
+      h("div", { class: "m" },
+        h("span", { class: "tag " + d.kind }, d.kind), " ",
+        [d.grade ? "Grade " + d.grade : null, d.subject].filter(Boolean).join(" · "),
+        d.grade || d.subject ? " · " : "",
+        fmtDate(d.updated_at)));
+    list.append(row);
+  }
+}
+
+async function selectDoc(id) {
+  selectedId = id;
+  renderList();
+  const doc = docs.find((d) => d.id === id);
+  const body = $("detailBody");
+  $("detailTitle").textContent = doc.title || "Untitled";
+  body.textContent = "";
+  body.append(h("p", { class: "sub" }, h("span", { class: "spinner" }), " Loading…"));
+  try {
+    const [content, versions] = await Promise.all([
+      doc.kind === "unit"
+        ? apiJSON("GET", `/units/${id}`)
+        : apiJSON("GET", `/documents/${id}`),
+      apiJSON("GET", `/documents/${id}/versions`),
+    ]);
+    renderDetail(doc, content, versions);
+  } catch (e) {
+    body.textContent = "";
+    body.append(h("p", { class: "status err" }, e.message));
+  }
+}
+
+function renderDetail(doc, content, versions) {
+  const body = $("detailBody");
+  body.textContent = "";
+  const ref = doc.kind === "unit" ? content.unit.curriculum_ref : content.ldd.curriculum_ref;
+
+  body.append(h("div", { class: "row", style: "margin-bottom:8px" },
+    h("span", { class: "tag " + doc.kind }, doc.kind),
+    h("span", { class: "sub", style: "margin:0" },
+      [ref && ("Grade " + ref.grade), ref && ref.subject, `${versions.length} version${versions.length > 1 ? "s" : ""}`]
+        .filter(Boolean).join(" · "))));
+
+  // ── content summary ──────────────────────────────────────────────────
+  if (doc.kind === "unit") renderUnitSummary(body, content.unit);
+  else renderLessonSummary(body, content.ldd);
+
+  // ── actions ──────────────────────────────────────────────────────────
+  const actStatus = h("span", { class: "status" });
+  body.append(h("h3", { class: "section" }, "Actions"));
+  body.append(h("div", { class: "toolbar" },
+    doc.kind === "lesson"
+      ? h("a", { class: "small", href: `/?doc=${doc.id}`, style: "text-decoration:none;display:inline-flex;align-items:center" }, "✏️ Edit in editor")
+      : null,
+    h("button", { class: "small", onclick: () => move("undo", actStatus) }, "↶ Undo"),
+    h("button", { class: "small", onclick: () => move("redo", actStatus) }, "↷ Redo"),
+    doc.kind === "unit"
+      ? h("button", { class: "small primary", onclick: () => exportUnit(doc.id, actStatus) }, "⬇ Export .zip")
+      : h("button", { class: "small primary", onclick: () => exportLesson(content.ldd, actStatus) }, "⬇ Export .zip"),
+    h("button", { class: "small danger", onclick: () => delDoc(doc.id, actStatus) }, "🗑 Delete")));
+  body.append(actStatus);
+
+  // ── version timeline ─────────────────────────────────────────────────
+  body.append(h("h3", { class: "section" }, "History"));
+  const tl = h("div", { class: "timeline" });
+  [...versions].reverse().forEach((v) => {
+    const isHead = v.id === doc.head_version_id;
+    tl.append(h("div", { class: "tl-item" + (isHead ? " head" : "") },
+      h("div", {}, h("span", { class: "tag" }, v.origin), isHead ? h("b", {}, " · current") : "",
+        v.instruction ? h("span", { class: "instr" }, " — " + v.instruction) : ""),
+      h("div", { class: "when" }, fmtDate(v.created_at))));
+  });
+  body.append(tl);
+}
+
+function renderLessonSummary(body, ldd) {
+  body.append(h("h3", { class: "section" }, "Topic"));
+  body.append(h("p", { class: "sub", style: "margin:0" }, ldd.topic));
+  if ((ldd.objectives || []).length) {
+    body.append(h("h3", { class: "section" }, "Objectives"));
+    body.append(h("ul", { style: "margin:0;padding-left:18px" },
+      ...ldd.objectives.map((o) => h("li", {}, o.statement, " ", h("span", { class: "tag" }, o.bloom)))));
+  }
+  if ((ldd.phases || []).length) {
+    body.append(h("h3", { class: "section" }, "Phases"));
+    body.append(h("div", {}, ...ldd.phases.map((p) =>
+      h("div", { class: "sub", style: "margin:2px 0" }, `${p.minutes}′ · ${p.name_en}`))));
+  }
+}
+
+function renderUnitSummary(body, unit) {
+  if (unit.big_idea) body.append(h("p", { class: "sub" }, h("b", { class: "muted" }, "Big idea: "), unit.big_idea));
+  body.append(h("h3", { class: "section" }, "Days"));
+  body.append(h("ol", { style: "margin:0;padding-left:18px" },
+    ...unit.days.map((d, i) => h("li", {},
+      d.topic, " ",
+      h("a", { class: "sub", style: "margin:0", href: `/?unit=${selectedId}&day=${i + 1}` }, "✏️ edit")))));
+  if (unit.coherence && !unit.coherence.ok && (unit.coherence.issues || []).length) {
+    body.append(h("div", { class: "banner warn", style: "margin-top:10px" },
+      `${unit.coherence.issues.length} coherence note(s) — open in the Unit planner to regenerate a day.`));
+  }
+}
+
+async function move(dir, statusEl) {
+  if (!selectedId) return;
+  setStatus(statusEl, dir === "undo" ? "Undoing…" : "Redoing…", "busy");
+  try {
+    await apiJSON("POST", `/documents/${selectedId}/${dir}`);
+    await selectDoc(selectedId);   // reload content + timeline at the new head
+  } catch (e) {
+    setStatus(statusEl, e.message, "err");
+  }
+}
+
+async function delDoc(id, statusEl) {
+  if (!confirm("Delete this document and its entire history? This cannot be undone.")) return;
+  setStatus(statusEl, "Deleting…", "busy");
+  try {
+    await apiJSON("DELETE", `/documents/${id}`);
+    selectedId = null;
+    $("detailTitle").textContent = "Select a document";
+    $("detailBody").textContent = "";
+    $("detailBody").append(h("p", { class: "sub" }, "Deleted."));
+    await loadList();
+  } catch (e) {
+    setStatus(statusEl, e.message, "err");
+  }
+}
+
+async function download(res, fallbackName) {
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") || "";
+  const m = /filename="?([^"]+)"?/.exec(cd);
+  const url = URL.createObjectURL(blob);
+  const a = h("a", { href: url, download: m ? m[1] : fallbackName });
+  document.body.append(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function exportUnit(id, statusEl) {
+  setStatus(statusEl, "Building zip…", "busy");
+  try { await download(await api("POST", `/units/${id}/export`), `unit-${id}.zip`); setStatus(statusEl, "Downloaded.", ""); }
+  catch (e) { setStatus(statusEl, e.message, "err"); }
+}
+
+async function exportLesson(ldd, statusEl) {
+  setStatus(statusEl, "Building zip…", "busy");
+  try { await download(await api("POST", "/lessons/export/bundle/zip", ldd), "lesson.zip"); setStatus(statusEl, "Downloaded.", ""); }
+  catch (e) { setStatus(statusEl, e.message, "err"); }
+}
+
+// ── init ─────────────────────────────────────────────────────────────────────
+mountNav("library", "🗂️ Library", "Every lesson and unit you've saved — revisit, undo/redo, export, or delete.");
+$("reloadBtn").addEventListener("click", loadList);
+loadList();
+</script>
+</body>
+</html>

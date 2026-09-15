@@ -62,18 +62,18 @@ def _build_example(spec: FrameworkSpec) -> dict[str, Any]:
 _SYSTEM = (
     "You are an experienced Nepali secondary-school teacher and curriculum "
     "designer. You design lessons the way a 20-year veteran does: open with a "
-    "curiosity hook grounded in students' local world (paddy fields, goats, "
-    "rivers, monsoon), surface the misconceptions common at this grade, and "
-    "build active learning before any definition. You align every objective to "
-    "both an activity and an assessment. You output ONLY valid JSON matching the "
-    "provided schema."
+    "curiosity hook grounded in the students' own daily life and surroundings — "
+    "choose anchors that genuinely fit THIS topic and grade — surface the "
+    "misconceptions common at this grade, and build active learning before any "
+    "definition. You align every objective to both an activity and an assessment. "
+    "You output ONLY valid JSON matching the provided schema."
 )
 
 _PROMPT_TEMPLATE = """\
 Design a {duration}-minute {framework} lesson for Grade {grade} {subject}.
 Topic: {topic}
 Language mode: {language} (English body, Nepali pedagogical phase labels).
-{personalization}{existing_plan}
+{personalization}{unit_context}{existing_plan}
 {grounding}
 
 {framework_directive}
@@ -113,6 +113,21 @@ def _personalization_block(brief: NormalizedBrief) -> str:
     return "This teacher's stored preferences (honor them):\n" + "\n".join(
         f"- {p}" for p in parts
     ) + "\n"
+
+
+def _unit_context_block(brief: NormalizedBrief) -> str:
+    """When this lesson is one day of a unit, tell the model where it sits in the
+    arc — so Day 2 references Day 1's example and builds on it, the way a real unit
+    plan does — rather than generating a self-contained lesson that ignores its
+    neighbours. Empty (and invisible) for a standalone lesson."""
+    ctx = brief.unit_context.strip()
+    if not ctx:
+        return ""
+    return (
+        "\nThis lesson is ONE DAY of a multi-day unit. Honor the arc — connect to "
+        "what came before and set up what follows; carry the running example:\n"
+        f"{ctx}\n"
+    )
 
 
 def _existing_plan_block(plan: str | None) -> str:
@@ -167,6 +182,7 @@ class LessonGenerator:
             topic=brief.topic,
             language=brief.language,
             personalization=_personalization_block(brief),
+            unit_context=_unit_context_block(brief),
             existing_plan=_existing_plan_block(brief.existing_plan),
             grounding=bundle.as_prompt_context(),
             framework_directive=spec.phase_directive(),

@@ -195,6 +195,12 @@ class NormalizedBrief(BaseModel):
     style_notes: str = ""
     local_anchors: list[str] = Field(default_factory=list)
 
+    # When this brief is one day of a multi-day unit, this carries the arc context
+    # (which day, what earlier days covered, what it builds on / sets up, the running
+    # example) so the generated lesson connects to its neighbours instead of standing
+    # alone. Empty for a standalone lesson — generation then ignores it.
+    unit_context: str = ""
+
 
 class IntakeRequest(BaseModel):
     """Raw input to the intake stage — every field optional so a teacher can

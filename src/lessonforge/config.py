@@ -176,6 +176,29 @@ class GroundingConfig(BaseModel):
     )
     per_collection_top_n: int = 3
     filter_fields: list[str] = Field(default_factory=lambda: ["grade", "subject"])
+    # Default retrieval granularity for authoritative collections: narrow (the
+    # reranked chunks), section (each hit expanded to its whole section), or broad
+    # (expanded to its whole chapter). narrow keeps today's behaviour; a planner
+    # (or a caller) can override per request. Only authoritative collections honor
+    # it — flat seed corpora have no hierarchy to expand into and stay narrow.
+    default_granularity: str = "narrow"
+    # Per-hit budget when a section/chapter is reassembled from its chunks, so a
+    # broad expansion can't overflow the enrichment prompt.
+    broad_max_chars: int = 8000
+    # ── quality gate (recall-biased; off by default) ──────────────────────────
+    # Top-anchored garbage floor: if even the BEST reranked hit for a collection
+    # scores below this, the whole result is dropped as "no usable context" and
+    # generation degrades to the honest model-knowledge marker — rather than
+    # feeding the prompt the least-irrelevant paragraph. It never prunes individual
+    # marginal hits (a correct-but-low-scoring chunk survives as long as the top
+    # hit clears the bar), so it can't silently drop a good answer. None disables
+    # it; calibrate the value from the shadow-logged reranker distribution
+    # (lessonforge.rag.retriever.scores), since reranker score scales vary.
+    min_score: float | None = None
+    # Optional LLM relevance check on the top authoritative hit (the real judge for
+    # high-stakes broad generations): a correct-but-low-scoring chunk is rescued and
+    # a high-scoring-but-off-topic one is caught. Uses the fast model; off by default.
+    verify: bool = False
     # Collections whose material is authoritative course content: when they return
     # hits, the prompt is told to PREFER them over the model's general knowledge and
     # to cite them. When they're empty (no book ingested for this topic), grounding
@@ -186,6 +209,22 @@ class GroundingConfig(BaseModel):
     # Only collections whose records carry a `framework` tag belong here
     # (curriculum/local_context are framework-agnostic).
     framework_filter_collections: list[str] = Field(default_factory=lambda: ["exemplar"])
+
+
+class PlannerConfig(BaseModel):
+    """The retrieval planner: decides how much context a need requires (narrow /
+    section / broad) before retrieving, so a unit plan pulls a chapter while a
+    quiz question pulls one chunk.
+
+    ``heuristic`` is free and deterministic (need-kind + query stems); ``llm``
+    asks the fast model to classify (degrading to the heuristic on any failure);
+    ``hybrid`` uses the heuristic and only spends an LLM call when it is
+    ambiguous. ``cache`` memoizes plans by (kind, need) so a multi-day build
+    doesn't re-decide the same need for every day."""
+
+    provider: str = "heuristic"  # ← swap: heuristic | llm | hybrid
+    default_granularity: str = "narrow"
+    cache: bool = True
 
 
 class ExportConfig(BaseModel):
@@ -225,6 +264,20 @@ class ChatStoreConfig(BaseModel):
     provider: str = "memory"  # ← swap: memory | sqlite | postgres
     url: str | None = None    # postgres DSN, e.g. ${CHAT_DB_URL}
     path: str | None = None   # sqlite file (default: .lessonforge/chat.db)
+
+
+class DocumentStoreConfig(BaseModel):
+    """Where generated lessons/units and their version history are persisted.
+
+    Same pluggable-port pattern as :class:`ChatStoreConfig`: ``memory`` is
+    dependency-free but non-persistent (tests/dev); ``sqlite`` writes a single
+    file (no service); ``postgres`` is the Docker-backed store (DSN via ``url``,
+    env-driven). The memory layer that makes lessons revisitable, editable, and
+    undoable."""
+
+    provider: str = "memory"  # ← swap: memory | sqlite | postgres
+    url: str | None = None    # postgres DSN, e.g. ${DOCS_DB_URL}
+    path: str | None = None   # sqlite file (default: .lessonforge/documents.db)
 
 
 class ChatRetrievalConfig(BaseModel):
@@ -352,12 +405,17 @@ class Settings(BaseSettings):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     grounding: GroundingConfig = Field(default_factory=GroundingConfig)
+    planner: PlannerConfig = Field(default_factory=PlannerConfig)
     intake: IntakeConfig = Field(default_factory=IntakeConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     critique: CritiqueConfig = Field(default_factory=CritiqueConfig)
     refine: RefineConfig = Field(default_factory=RefineConfig)
     profile: ProfileConfig = Field(default_factory=ProfileConfig)
     export: ExportConfig = Field(default_factory=ExportConfig)
+    # The document/version memory layer — persists generated lessons/units and their
+    # edit history so a teacher can revisit, edit, and undo. Optional; defaults to
+    # an in-memory store so existing call sites/tests need no backend.
+    documents: DocumentStoreConfig = Field(default_factory=DocumentStoreConfig)
     # The QA chatbot subsystem (streaming RAG over the collections). Optional —
     # defaults give a working chatbot with sqlite persistence and no extra infra.
     chat: ChatConfig = Field(default_factory=ChatConfig)

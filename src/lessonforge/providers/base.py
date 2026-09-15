@@ -186,6 +186,31 @@ class VectorStore(ABC):
         backend support."""
         return self.search(name, dense_vector, top_k, where=where)
 
+    def fetch(
+        self, name: str, where: dict[str, Any] | None = None, *, limit: int = 2000
+    ) -> list[StoredRecord]:
+        """Fetch records matching an exact-match payload filter — no vector query.
+
+        This is the dereference primitive behind multi-granularity retrieval: given
+        a narrow hit's hierarchy ids, fetch every chunk of its section or chapter so
+        the passage can be reassembled. The default pages through :meth:`scroll` and
+        filters in Python (correct on any store); a backend with a native payload
+        filter (e.g. Qdrant's scroll filter) overrides this for efficiency."""
+        out: list[StoredRecord] = []
+        offset: str | None = None
+        while len(out) < limit:
+            page, offset = self.scroll(name, limit=512, offset=offset)
+            if not page:
+                break
+            for r in page:
+                if where is None or all(r.payload.get(k) == v for k, v in where.items()):
+                    out.append(r)
+                    if len(out) >= limit:
+                        break
+            if offset is None:
+                break
+        return out
+
     # ── read-only browse / curation (admin surfaces, never the hot path) ──────
     @abstractmethod
     def count(self, name: str) -> int:

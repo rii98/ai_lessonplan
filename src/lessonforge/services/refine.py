@@ -44,7 +44,7 @@ from ..domain.sections import (
     validate_fragment,
 )
 from ..providers.base import LLMClient
-from ..rag.grounding import GroundingRetriever, merge_sources
+from ..rag.grounding import GroundingBundle, GroundingRetriever, merge_sources
 from ..util import extract_json
 from .critique import Critic
 
@@ -64,7 +64,7 @@ Keep it consistent with the rest of the lesson, which you must NOT rewrite.
 
 Teacher's instruction:
 {instruction}
-
+{grounding}
 The whole lesson (context — do not return this):
 {context}
 
@@ -90,12 +90,25 @@ formative check).
 
 Teacher's instruction:
 {instruction}
-
+{grounding}
 Current lesson (JSON):
 {ldd}
 
 Return the full improved lesson as a single JSON object with the same keys. JSON only.
 """
+
+
+def _grounding_block(bundle: GroundingBundle | None) -> str:
+    """Render a retrieved bundle as a prompt block for a refine reprompt, or an
+    empty string when there is nothing to ground in. Leading/trailing newlines
+    keep the block cleanly separated from the surrounding template even when
+    empty (the template supplies the blank line)."""
+    if bundle is None or bundle.is_empty:
+        return ""
+    return (
+        "\nGround your revision in this reference material (prefer it over your "
+        "own general knowledge):\n" + bundle.as_prompt_context() + "\n"
+    )
 
 
 class Refiner:
@@ -143,11 +156,20 @@ class Refiner:
                 request, before.scores, ["no LLM configured; refine is unavailable"]
             )
 
+        # Retrieve grounding ONCE and use it twice — as context in the reprompt so
+        # the model rewrites *from* the reference material, and as the source of
+        # the merged provenance below. A cosmetic target (grounded=False) or a
+        # missing retriever yields None, so the reprompt stays ungrounded and the
+        # original citations carry across verbatim.
+        bundle = self._ground_for_refine(ldd, target, request.instruction)
+
         if target == WHOLE_DOCUMENT:
-            candidate, cascaded, errors = self._refine_whole(ldd, request.instruction)
+            candidate, cascaded, errors = self._refine_whole(
+                ldd, request.instruction, bundle
+            )
         else:
             candidate, cascaded, errors = self._refine_section(
-                ldd, target, request.instruction
+                ldd, target, request.instruction, bundle
             )
 
         if candidate is None:
@@ -157,9 +179,7 @@ class Refiner:
         # reference material and MERGES the new sources (union — citations grow to
         # cover the change, never shrink or get invented). Without a grounding
         # retriever (or on a cosmetic target) the originals carry across verbatim.
-        candidate.quality.grounding_sources = self._merged_sources(
-            ldd, candidate, target, request.instruction
-        )
+        candidate.quality.grounding_sources = self._merged_sources(ldd, target, bundle)
         after = self.critic.critique(candidate)
         note = f"refined {target}; overall {before.overall:.2f} → {after.overall:.2f}"
         if cascaded:
@@ -178,10 +198,14 @@ class Refiner:
 
     # ── scoped refine: narrow output, two-layer validation, bounded cascade ───
     def _refine_section(
-        self, ldd: LessonDesignDocument, target: str, instruction: str
+        self,
+        ldd: LessonDesignDocument,
+        target: str,
+        instruction: str,
+        bundle: GroundingBundle | None = None,
     ) -> tuple[LessonDesignDocument | None, list[str], list[str]]:
         base = ldd.model_dump(mode="json")
-        fragment = self._ask_fragment(target, instruction, base)
+        fragment = self._ask_fragment(target, instruction, base, bundle)
         if fragment is _FAILED:
             return None, [], [f"the model did not return valid JSON for {target!r}"]
 
@@ -196,10 +220,12 @@ class Refiner:
 
         # The scoped change broke a coupling guardrail. Repair the declared
         # neighbours in a bounded cascade, driven by the validator's own message.
+        # A cascade repair reuses the same grounding bundle so the neighbour is
+        # rewritten from the reference material too.
         cascaded: list[str] = []
         for neighbour in self.sections[target].coupled[: self.max_cascade]:
             n_instr = _cascade_instruction(target, neighbour, violation)
-            n_fragment = self._ask_fragment(neighbour, n_instr, working)
+            n_fragment = self._ask_fragment(neighbour, n_instr, working, bundle)
             if n_fragment is _FAILED or validate_fragment(neighbour, n_fragment):
                 break
             working = {**working, neighbour: n_fragment}
@@ -211,11 +237,16 @@ class Refiner:
         return None, cascaded, [f"this change breaks the lesson's structure: {violation}"]
 
     def _ask_fragment(
-        self, target: str, instruction: str, context: dict[str, Any]
+        self,
+        target: str,
+        instruction: str,
+        context: dict[str, Any],
+        bundle: GroundingBundle | None = None,
     ) -> Any:
         prompt = _SECTION_PROMPT.format(
             target=target,
             instruction=instruction,
+            grounding=_grounding_block(bundle),
             context=json.dumps(context, ensure_ascii=False, indent=2),
             current=json.dumps(context.get(target), ensure_ascii=False, indent=2),
             schema=json.dumps(fragment_schema(target)),
@@ -233,10 +264,15 @@ class Refiner:
 
     # ── whole-document refine: the rare cross-cutting instruction ─────────────
     def _refine_whole(
-        self, ldd: LessonDesignDocument, instruction: str
+        self,
+        ldd: LessonDesignDocument,
+        instruction: str,
+        bundle: GroundingBundle | None = None,
     ) -> tuple[LessonDesignDocument | None, list[str], list[str]]:
         prompt = _WHOLE_PROMPT.format(
-            instruction=instruction, ldd=ldd.model_dump_json(indent=2)
+            instruction=instruction,
+            grounding=_grounding_block(bundle),
+            ldd=ldd.model_dump_json(indent=2),
         )
         try:
             result = self.llm.complete(  # type: ignore[union-attr]
@@ -250,27 +286,45 @@ class Refiner:
             return None, [], [f"the model's rewrite was not a valid lesson: {exc}"]
         return candidate, [], []
 
-    def _merged_sources(
-        self, before: LessonDesignDocument, after: LessonDesignDocument,
-        target: str, instruction: str,
-    ) -> list[str]:
-        base = list(before.quality.grounding_sources)
+    def _ground_for_refine(
+        self, ldd: LessonDesignDocument, target: str, instruction: str
+    ) -> GroundingBundle | None:
+        """Retrieve reference material for a refine reprompt, once. Returns None
+        when there is nothing to ground: no retriever, or a cosmetic target whose
+        ``grounded`` flag is False (a title/instructions edit needs no re-retrieval).
+
+        Grounds on the *original* document — topic/curriculum_ref are identity
+        fields a refine never edits, so the original and the candidate share the
+        same retrieval key; grounding before generation lets the same bundle feed
+        the reprompt and, afterward, the source merge."""
         grounds = target == WHOLE_DOCUMENT or self.sections.get(
             target, Section(target)
         ).grounded
         if self.grounding is None or not grounds:
-            return base  # carry across verbatim (no retriever, or a cosmetic edit)
+            return None
         try:
-            bundle = self.grounding.ground(
-                query=f"{instruction} {after.topic}"[:400],
-                grade=after.curriculum_ref.grade,
-                subject=after.curriculum_ref.subject,
-                framework=after.framework,
+            return self.grounding.ground(
+                query=f"{instruction} {ldd.topic}"[:400],
+                grade=ldd.curriculum_ref.grade,
+                subject=ldd.curriculum_ref.subject,
+                framework=ldd.framework,
             )
-            new = bundle.sources
         except Exception:
-            new = []
-        return merge_sources(base, new)
+            return None
+
+    def _merged_sources(
+        self,
+        before: LessonDesignDocument,
+        target: str,
+        bundle: GroundingBundle | None,
+    ) -> list[str]:
+        """Union the original citations with the sources of the bundle that fed
+        this refine — citations grow to cover the change, never shrink or get
+        invented. A cosmetic edit (bundle is None) carries the originals verbatim."""
+        base = list(before.quality.grounding_sources)
+        if bundle is None:
+            return base
+        return merge_sources(base, bundle.sources)
 
     def _reject(
         self,

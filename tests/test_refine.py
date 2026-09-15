@@ -15,6 +15,8 @@ import pytest
 
 from lessonforge.domain.refine import RefineRequest
 from lessonforge.providers.base import LLMResult
+from lessonforge.rag.grounding import GroundingBundle
+from lessonforge.rag.retriever import RetrievedChunk
 from lessonforge.services.critique import NoopCritic, StructuralCritic
 from lessonforge.services.refine import Refiner
 from tests.conftest import FakeLLM
@@ -206,6 +208,92 @@ def test_whole_document_refine(valid_ldd, export_ldd_dict):
     assert result.ok
     assert result.candidate.topic == export_ldd_dict["topic"]
     assert len(result.candidate.objectives) == 2
+
+
+class _StubGrounding:
+    """Duck-typed GroundingRetriever: returns a canned bundle and records the
+    ground() calls so a test can assert retrieval happened exactly once."""
+
+    def __init__(self, bundle: GroundingBundle) -> None:
+        self.bundle = bundle
+        self.calls: list[dict[str, Any]] = []
+
+    def ground(self, *, query, grade=None, subject=None, framework=None) -> GroundingBundle:
+        self.calls.append(
+            {"query": query, "grade": grade, "subject": subject, "framework": framework}
+        )
+        return self.bundle
+
+
+def _grounded_bundle() -> GroundingBundle:
+    return GroundingBundle(
+        chunks={
+            "reference": [
+                RetrievedChunk("Photosynthesis converts light into chemical energy.",
+                               1.0, {"source": "My Science Grade 6, Unit 4"})
+            ]
+        },
+        sources=["My Science Grade 6, Unit 4"],
+        authoritative=frozenset({"reference"}),
+    )
+
+
+def test_grounded_refine_injects_reference_material_into_prompt(valid_ldd):
+    # a grounded target (materials) must retrieve once and show the model the
+    # reference text — the whole point of the refine-grounding fix.
+    grounding = _StubGrounding(_grounded_bundle())
+    refiner = Refiner(
+        llm=SectionLLM({"materials": ["Leaf samples", "Beaker", "Iodine"]}),
+        critic=StructuralCritic(),
+        grounding=grounding,
+    )
+    result = refiner.refine(
+        valid_ldd, RefineRequest(target="materials", instruction="use lab equipment")
+    )
+    assert result.ok
+    # retrieved exactly once (retrieve-once-use-twice), on the original doc's keys
+    assert len(grounding.calls) == 1
+    assert grounding.calls[0]["grade"] == valid_ldd.curriculum_ref.grade
+    # the reference material reached the model's prompt
+    section_prompt = refiner.llm.calls[0]["prompt"]
+    assert "Photosynthesis converts light" in section_prompt
+    assert "Ground your revision in this reference material" in section_prompt
+    # and its source was merged into the candidate's provenance
+    assert "My Science Grade 6, Unit 4" in result.candidate.quality.grounding_sources
+
+
+def test_grounded_refine_merges_not_replaces_sources(valid_ldd):
+    valid_ldd.quality.grounding_sources = ["CDC Science Grade 6, Unit 2"]
+    grounding = _StubGrounding(_grounded_bundle())
+    refiner = Refiner(
+        llm=SectionLLM({"materials": ["Leaf samples", "Beaker", "Iodine"]}),
+        critic=StructuralCritic(),
+        grounding=grounding,
+    )
+    result = refiner.refine(
+        valid_ldd, RefineRequest(target="materials", instruction="use lab equipment")
+    )
+    assert result.ok
+    # union: the original citation is preserved AND the new one added
+    assert result.candidate.quality.grounding_sources == [
+        "CDC Science Grade 6, Unit 2",
+        "My Science Grade 6, Unit 4",
+    ]
+
+
+def test_grounding_retrieval_is_skipped_when_bundle_is_empty(valid_ldd):
+    # an empty bundle must not add a grounding block to the prompt (no noise)
+    grounding = _StubGrounding(GroundingBundle(authoritative=frozenset({"reference"})))
+    refiner = Refiner(
+        llm=SectionLLM({"materials": ["Cards", "Chart", "Markers"]}),
+        critic=StructuralCritic(),
+        grounding=grounding,
+    )
+    result = refiner.refine(
+        valid_ldd, RefineRequest(target="materials", instruction="add materials")
+    )
+    assert result.ok
+    assert "Ground your revision in this reference material" not in refiner.llm.calls[0]["prompt"]
 
 
 def test_noop_critic_scores_are_flat(valid_ldd):

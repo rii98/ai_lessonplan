@@ -25,7 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .documents import Chunk, Collection, content_id
+from .documents import CHUNK_INDEX_KEY, Chunk, Collection, content_id
 
 
 @dataclass(slots=True)
@@ -58,7 +58,11 @@ class Chunker(ABC):
             body = part.text.strip()
             if not body:
                 continue
-            meta = {**base, **part.metadata}  # per-part metadata (breadcrumb) wins
+            # per-part metadata (breadcrumb) wins; ``chunk_index`` is the chunk's
+            # position in document order — the sort key that reassembles a section
+            # or chapter, and part of the content id so two identical passages at
+            # different positions stay distinct points instead of colliding.
+            meta = {**base, **part.metadata, CHUNK_INDEX_KEY: len(out)}
             out.append(
                 Chunk(
                     id=content_id(collection, body, meta),
@@ -231,6 +235,8 @@ class MarkdownChunker(Chunker):
             meta: dict[str, Any] = {}
             if heading_path:
                 meta["heading_path"] = heading_path
+            if path:  # the outermost heading = the chapter this chunk belongs to
+                meta["chapter"] = path[0]
             if sec.title:
                 meta["heading"] = sec.title
                 meta["heading_level"] = sec.level

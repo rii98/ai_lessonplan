@@ -144,7 +144,9 @@
     <h1>🪔 LessonForge</h1>
     <p>Generate a CDC-grounded lesson, edit every part, then export — the plan you export is the plan you see.</p>
   </div>
-  <div style="display:flex;gap:16px;align-items:center;">
+  <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;">
+    <a href="/units" style="color:var(--accent);font-size:13px;text-decoration:none;font-weight:600;">🗓️ Units →</a>
+    <a href="/library" style="color:var(--accent);font-size:13px;text-decoration:none;font-weight:600;">🗂️ Library →</a>
     <a href="/chat" style="color:var(--accent);font-size:13px;text-decoration:none;font-weight:600;">💬 Chat →</a>
     <a href="/corpus" style="color:var(--accent);font-size:13px;text-decoration:none;font-weight:600;">📚 Knowledge base →</a>
   </div>
@@ -244,6 +246,8 @@
   <div class="card hidden" id="reviewCard">
     <h2>Review &amp; edit <span class="q-name">— the source of truth for every export</span></h2>
     <div class="body">
+      <div id="editBanner"></div>
+      <div id="coherenceBanner"></div>
       <div id="validationBanner"></div>
       <div id="editor"></div>
 
@@ -255,6 +259,7 @@
 
       <h3 class="section">Export</h3>
       <div class="toolbar">
+        <button class="primary hidden" id="saveEdit">💾 Save changes</button>
         <button id="validate">Check guardrails</button>
         <button class="ghost" data-export="lesson_plan">Lesson plan</button>
         <button class="ghost" data-export="slides">Slides</button>
@@ -875,8 +880,94 @@ document.querySelectorAll("[data-export]").forEach((btn) =>
   btn.addEventListener("click", () => download("/lessons/export/" + btn.dataset.export, btn.dataset.export + ".docx")));
 $("exportZip").addEventListener("click", () => download("/lessons/export/bundle/zip", "lesson_bundle.zip"));
 
+// ── edit an existing document (a saved lesson, or one day of a unit) ──────────
+// Deep links: "/?doc=<id>" edits a saved lesson; "/?unit=<id>&day=<n>" edits one
+// day of a unit. Save commits a new version back (manual edit / edited day).
+let editMode = null;   // {kind:"lesson",docId} | {kind:"unit-day",unitId,day,title}
+
+function enterEditUI(label) {
+  $("reviewCard").classList.remove("hidden");
+  $("saveEdit").classList.remove("hidden");
+  $("editBanner").innerHTML =
+    `<div class="banner ok">✏️ ${label} — edit any part below (or ✨ improve a section), then <b>Save changes</b>.</div>`;
+  $("reviewCard").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function bootEdit() {
+  const q = new URLSearchParams(location.search);
+  const unitId = q.get("unit"), dayStr = q.get("day"), docId = q.get("doc");
+  if (!unitId && !docId) return;
+  try {
+    if (unitId && dayStr) {
+      const day = Number(dayStr);
+      const res = await api("GET", "/units/" + encodeURIComponent(unitId));
+      if (!res.ok) throw new Error("unit not found");
+      const view = await res.json();
+      ldd = view.unit.days[day - 1];
+      if (!ldd) throw new Error("day " + day + " not found");
+      editMode = { kind: "unit-day", unitId, day, title: view.unit.title };
+      renderEditor(); renderQuality();
+      enterEditUI(`Editing Day ${day} of “${view.unit.title}”`);
+    } else if (docId) {
+      const res = await api("GET", "/documents/" + encodeURIComponent(docId));
+      if (!res.ok) throw new Error("document not found");
+      const view = await res.json();
+      ldd = view.ldd;
+      editMode = { kind: "lesson", docId };
+      renderEditor(); renderQuality();
+      enterEditUI(`Editing “${view.document.title}”`);
+    }
+  } catch (e) {
+    $("reviewCard").classList.remove("hidden");
+    $("editBanner").innerHTML = `<div class="banner err">Couldn't open for editing: ${e.message}</div>`;
+  }
+}
+
+// Render the unit's recomputed cross-day coherence after a day edit, so a refine
+// that drifted from the arc (a repeated hook, a re-taught topic) is visible right
+// away instead of only when the teacher reopens the unit.
+function renderUnitCoherence(report) {
+  const box = $("coherenceBanner");
+  box.textContent = "";
+  if (!report) return;
+  if (report.ok || !(report.issues || []).length) {
+    box.append(h("div", { class: "banner ok" }, "✓ Arc still coherent — this edit introduced no cross-day problems."));
+    return;
+  }
+  const list = h("ul", {}, ...report.issues.map((i) =>
+    h("li", {}, h("b", {}, i.kind.replace(/_/g, " ")), i.day != null ? ` (day ${i.day})` : "", i.detail ? " — " + i.detail : "")));
+  box.append(h("div", { class: "banner err" },
+    h("strong", {}, `${report.issues.length} coherence note(s) after this edit`),
+    " — the arc drifted. Fix here, or regenerate the day from the Unit planner.", list));
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function saveEdit() {
+  if (!editMode) return;
+  const st = $("exportStatus"); st.className = "status";
+  st.innerHTML = '<span class="spinner"></span> Saving…';
+  const [method, url] = editMode.kind === "unit-day"
+    ? ["PUT", `/units/${editMode.unitId}/days/${editMode.day}`]
+    : ["POST", `/documents/${editMode.docId}/manual`];
+  try {
+    const res = await api(method, url, ldd);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      st.className = "status err";
+      st.textContent = "Save failed: " + (typeof data.detail === "string" ? data.detail : "the edit failed validation.");
+      return;
+    }
+    const backId = editMode.kind === "unit-day" ? editMode.unitId : editMode.docId;
+    st.className = "status"; st.textContent = "Saved a new version. ";
+    st.append(h("a", { href: `/library?doc=${backId}` }, "View in Library →"));
+    if (editMode.kind === "unit-day") renderUnitCoherence(data.unit && data.unit.coherence);
+  } catch (err) { st.className = "status err"; st.textContent = "Network error: " + err.message; }
+}
+$("saveEdit").addEventListener("click", saveEdit);
+
 // ── boot ────────────────────────────────────────────────────────────────────
 loadProfile();
+bootEdit();
 </script>
 </body>
 </html>

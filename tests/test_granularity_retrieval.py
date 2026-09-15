@@ -1,0 +1,217 @@
+"""Multi-granularity retrieval (Phase 1): a narrow hit can be dereferenced back
+to its whole section or chapter, reassembled in document order, with no LLM.
+
+Everything runs on the in-process fakes (embedder/store/reranker from conftest),
+so the small-to-big machinery is exercised deterministically."""
+
+from __future__ import annotations
+
+from lessonforge.config import GroundingConfig
+from lessonforge.rag.chunkers import MarkdownChunker
+from lessonforge.rag.documents import (
+    CHAPTER_KEY,
+    CHUNK_INDEX_KEY,
+    DOC_ID_KEY,
+    HEADING_PATH_KEY,
+    Collection,
+    Document,
+)
+from lessonforge.rag.grounding import GroundingRetriever
+from lessonforge.rag.ingest import Ingestor
+from lessonforge.rag.retriever import Retriever
+
+_BOOK = """\
+# Scientific Study
+
+## Variables
+
+A variable is any factor that can change during an experiment.
+Identifying variables is the first step of a fair test.
+
+## Fundamental Units
+
+The seven SI fundamental quantities include length, mass, and time.
+Mass is measured in kilograms.
+
+# Force
+
+## Newton's Laws
+
+An object stays at rest unless a force acts on it.
+"""
+
+
+def _chunks():
+    return MarkdownChunker(max_chars=200).chunk(
+        _BOOK, collection=Collection.reference, source="Grade 10 Science",
+        metadata={DOC_ID_KEY: "g10sci"},
+    )
+
+
+# ── 1a. hierarchy ids are stamped ─────────────────────────────────────────────
+def test_chunks_carry_hierarchy_ids():
+    chunks = _chunks()
+    by_heading = {c.metadata.get("heading"): c for c in chunks}
+    variables = by_heading["Variables"]
+    assert variables.metadata[DOC_ID_KEY] == "g10sci"
+    assert variables.metadata[CHAPTER_KEY] == "Scientific Study"
+    assert variables.metadata[HEADING_PATH_KEY] == "Scientific Study > Variables"
+    # chunk_index is document order and monotonic across the whole doc
+    indices = [c.metadata[CHUNK_INDEX_KEY] for c in chunks]
+    assert indices == sorted(indices)
+    assert indices == list(range(len(chunks)))
+
+
+def test_chunk_index_is_in_the_id_so_positions_stay_distinct():
+    # two identical passages at different positions must not collapse to one id
+    text = "# A\n\nsame words here.\n\n# B\n\nsame words here.\n"
+    chunks = MarkdownChunker().chunk(
+        text, collection=Collection.reference, source="s", metadata={DOC_ID_KEY: "d"}
+    )
+    bodies = [c.text for c in chunks]
+    assert bodies[0].endswith("same words here.") and bodies[1].endswith("same words here.")
+    assert chunks[0].id != chunks[1].id  # disambiguated by chunk_index
+
+
+# ── 1b. section / broad expansion ─────────────────────────────────────────────
+def _retriever(fake_embedder, fake_store, fake_reranker):
+    ing = Ingestor(embedder=fake_embedder, vector_store=fake_store)
+    ing.ingest_documents(
+        Collection.reference,
+        [Document(id="g10sci", text=_BOOK, source="Grade 10 Science",
+                  metadata={"grade": 10, "subject": "Science"})],
+        chunker=MarkdownChunker(max_chars=200),
+    )
+    return Retriever(embedder=fake_embedder, vector_store=fake_store, reranker=fake_reranker)
+
+
+def test_narrow_returns_just_the_matched_chunk(fake_embedder, fake_store, fake_reranker):
+    r = _retriever(fake_embedder, fake_store, fake_reranker)
+    hits = r.retrieve(Collection.reference.value, "variable factor change", top_n=1)
+    assert len(hits) == 1
+    assert "variable" in hits[0].text.lower()
+    # narrow does not pull in the sibling "fair test" sentence's neighbours only —
+    # it's the single reranked chunk, not the whole section
+    assert "kilograms" not in hits[0].text.lower()
+
+
+def test_section_expands_to_the_whole_section(fake_embedder, fake_store, fake_reranker):
+    r = _retriever(fake_embedder, fake_store, fake_reranker)
+    hits = r.retrieve(
+        Collection.reference.value, "variable factor change", top_n=1, granularity="section"
+    )
+    assert len(hits) == 1
+    text = hits[0].text.lower()
+    # the Variables section, whole — but NOT the Fundamental Units section
+    assert "variable" in text and "fair test" in text
+    assert "kilograms" not in text
+
+
+def test_broad_expands_to_the_whole_chapter(fake_embedder, fake_store, fake_reranker):
+    r = _retriever(fake_embedder, fake_store, fake_reranker)
+    hits = r.retrieve(
+        Collection.reference.value, "variable factor change", top_n=1, granularity="broad"
+    )
+    assert len(hits) == 1
+    text = hits[0].text.lower()
+    # the whole "Scientific Study" chapter: both Variables AND Fundamental Units
+    assert "variable" in text and "kilograms" in text
+    # but not the other chapter (Force)
+    assert "newton" not in text
+
+
+def test_expansion_dedupes_multiple_hits_in_one_unit(fake_embedder, fake_store, fake_reranker):
+    r = _retriever(fake_embedder, fake_store, fake_reranker)
+    # two hits likely land in the Variables section; broad must emit its chapter once
+    hits = r.retrieve(
+        Collection.reference.value, "variable fair test experiment", top_n=3, granularity="broad"
+    )
+    texts = [h.text for h in hits]
+    assert len(texts) == len(set(texts))  # no duplicated chapters
+
+
+def test_broad_respects_the_assembly_budget(fake_embedder, fake_store, fake_reranker):
+    ing = Ingestor(embedder=fake_embedder, vector_store=fake_store)
+    ing.ingest_documents(
+        Collection.reference,
+        [Document(id="g10sci", text=_BOOK, source="Grade 10 Science")],
+        chunker=MarkdownChunker(max_chars=200),
+    )
+    r = Retriever(
+        embedder=fake_embedder, vector_store=fake_store, reranker=fake_reranker,
+        assembly_max_chars=120,
+    )
+    hits = r.retrieve(
+        Collection.reference.value, "variable factor change", top_n=1, granularity="broad"
+    )
+    # capped: at least one chunk is always kept, but the budget stops the rest
+    assert len(hits[0].text) <= 120 + 200  # one chunk may exceed, then it stops
+
+
+def test_flat_source_without_hierarchy_falls_back_to_narrow(
+    fake_embedder, fake_store, fake_reranker
+):
+    from lessonforge.rag.chunkers import ParagraphChunker
+
+    ing = Ingestor(embedder=fake_embedder, vector_store=fake_store)
+    ing.ingest_documents(
+        Collection.curriculum,
+        [Document(id="c1", text="Students learn about variables and fair tests.",
+                  source="CDC")],
+        chunker=ParagraphChunker(),
+    )
+    r = Retriever(embedder=fake_embedder, vector_store=fake_store, reranker=fake_reranker)
+    # no heading hierarchy → broad simply returns the narrow hit, never crashes
+    hits = r.retrieve(Collection.curriculum.value, "variables", granularity="broad")
+    assert hits and "variables" in hits[0].text.lower()
+
+
+# ── 1c. free heading skeleton ─────────────────────────────────────────────────
+def test_skeleton_lists_section_headings_in_order(fake_embedder, fake_store, fake_reranker):
+    r = _retriever(fake_embedder, fake_store, fake_reranker)
+    gr = GroundingRetriever(r, GroundingConfig())
+    toc = gr.skeleton(Collection.reference.value, doc_id="g10sci")
+    assert toc == [
+        "Scientific Study > Variables",
+        "Scientific Study > Fundamental Units",
+        "Force > Newton's Laws",
+    ]
+
+
+def test_skeleton_can_scope_to_one_chapter(fake_embedder, fake_store, fake_reranker):
+    r = _retriever(fake_embedder, fake_store, fake_reranker)
+    gr = GroundingRetriever(r, GroundingConfig())
+    toc = gr.skeleton(Collection.reference.value, doc_id="g10sci", chapter="Scientific Study")
+    assert toc == [
+        "Scientific Study > Variables",
+        "Scientific Study > Fundamental Units",
+    ]
+
+
+# ── grounding honors granularity only for authoritative collections ───────────
+def test_grounding_expands_only_authoritative_collections(
+    fake_embedder, fake_store, fake_reranker
+):
+    ing = Ingestor(embedder=fake_embedder, vector_store=fake_store)
+    ing.ingest_documents(
+        Collection.reference,
+        [Document(id="g10sci", text=_BOOK, source="Grade 10 Science",
+                  metadata={"grade": 10, "subject": "Science"})],
+        chunker=MarkdownChunker(max_chars=200),
+    )
+    # a flat pedagogical seed chunk that mentions the same words
+    ing.ingest_documents(
+        Collection.pedagogical,
+        [Document(id="p1", text="Teach variables with a hands-on fair test.",
+                  source="Pedagogy", metadata={"grade": 10, "subject": "Science"})],
+    )
+    r = Retriever(embedder=fake_embedder, vector_store=fake_store, reranker=fake_reranker)
+    gr = GroundingRetriever(r, GroundingConfig())  # reference authoritative by default
+
+    bundle = gr.ground(query="variable fair test", grade=10, subject="Science", granularity="broad")
+    # reference expanded to the chapter (has kilograms from the sibling section)
+    ref_text = " ".join(c.text.lower() for c in bundle.chunks["reference"])
+    assert "kilograms" in ref_text
+    # pedagogical stayed narrow (its single chunk, unchanged)
+    ped_text = " ".join(c.text for c in bundle.chunks["pedagogical"])
+    assert ped_text == "Teach variables with a hands-on fair test."

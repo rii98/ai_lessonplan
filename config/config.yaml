@@ -78,6 +78,26 @@ grounding:
   collections: [reference, curriculum, pedagogical, exemplar, local_context]
   per_collection_top_n: 3
   filter_fields: [grade, subject]       # grade/subject filter on search (lenient fallback if empty)
+  # How much of a book each authoritative hit returns: narrow (the reranked chunk),
+  # section (expanded to its whole section), or broad (expanded to its whole chapter).
+  # Only authoritative collections are expanded — flat seed corpora stay narrow.
+  # A unit planner asks for broad; a single quiz question asks for narrow.
+  default_granularity: narrow           # ← narrow | section | broad
+  broad_max_chars: 8000                 # budget cap when a section/chapter is reassembled
+  # Quality gate (recall-biased; off by default). `min_score` is a top-anchored
+  # garbage floor: if even the best reranked hit is below it, the collection's
+  # hits are dropped as "no usable context" (never prunes marginal individual
+  # hits). Calibrate from the shadow-logged reranker scores. `verify` adds an LLM
+  # yes/no relevance check on the top authoritative hit (the real judge; fast model).
+  # min_score: 0.10                      # ← uncomment + tune once you've seen your reranker's scale
+  verify: false                          # ← LLM relevance check on the top book hit
+
+planner:
+  # Decides how much context a need requires (narrow/section/broad) before
+  # retrieving — a unit plan pulls a chapter, a quiz question pulls one chunk.
+  provider: heuristic                    # ← swap: heuristic | llm | hybrid
+  default_granularity: narrow            # when no kind/stem gives a signal
+  cache: true                            # memoize plans by (kind, need)
   # When `reference` (real course material) has hits, the prompt is told to prefer
   # it over the model's general knowledge and cite it; when empty, generation just
   # falls back to the model. Add other authoritative corpora here if you curate them.
@@ -115,6 +135,19 @@ export:
   # renders in Word/PowerPoint (not tofu boxes).
   body_font: Calibri
   devanagari_font: Noto Sans Devanagari
+
+# Multi-day units (plan-and-expand) have no config knobs yet: the planner grounds
+# BROADLY (whole chapter) to lay out the arc, each day is expanded by the same
+# generator + revise loop, and a deterministic coherence pass reports cross-day
+# issues. Endpoints: /units/plan, /units/generate, /units/{id}/days/{n}/regenerate.
+
+documents:
+  # The document/version memory layer: persists generated lessons/units and their
+  # edit history so a teacher can revisit, edit, and undo. Same pluggable store as
+  # chat. memory = non-persistent (dev/tests); sqlite = one file; postgres = DSN.
+  provider: sqlite                      # ← swap: memory | sqlite | postgres
+  path: .lessonforge/documents.db       # for provider: sqlite
+  url: ${DOCS_DB_URL:-}                 # for provider: postgres (DSN via env)
 
 chat:
   # The QA chatbot — a streaming, persistent, advanced-RAG assistant over the

@@ -73,6 +73,19 @@ TEXT_KEY = "text"
 SOURCE_KEY = "source"
 COLLECTION_KEY = "collection"
 
+# ── hierarchy keys (multi-granularity retrieval) ──────────────────────────────
+# Every chunk carries these so a narrow hit can be *dereferenced* back to the
+# larger unit it came from — its section (all chunks sharing HEADING_PATH_KEY) or
+# its whole chapter (all chunks sharing CHAPTER_KEY) — without re-embedding. All
+# are namespaced by DOC_ID_KEY so identical headings in different books never mix,
+# and ordered within a document by CHUNK_INDEX_KEY. DOC_ID and CHUNK_INDEX are
+# stamped for every chunker; CHAPTER/HEADING_PATH only where the source has
+# structure (the markdown chunker), so a flat source simply can't be expanded.
+DOC_ID_KEY = "doc_id"
+CHAPTER_KEY = "chapter"
+HEADING_PATH_KEY = "heading_path"
+CHUNK_INDEX_KEY = "chunk_index"
+
 
 @dataclass(slots=True)
 class Document:
