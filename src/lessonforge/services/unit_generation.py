@@ -95,7 +95,23 @@ class UnitGenerator:
     def _expand_one(self, day_plan, plan, req, prior_days, profile) -> LessonDesignDocument:
         brief = self._day_brief(day_plan, plan, req, prior_days, profile)
         draft = self.generator.generate(brief)
-        return self.reviser.revise(draft, brief)
+        ldd = self.reviser.revise(draft, brief)
+        return self._align_curriculum_ref(ldd, plan)
+
+    @staticmethod
+    def _align_curriculum_ref(
+        ldd: LessonDesignDocument, plan: UnitPlan
+    ) -> LessonDesignDocument:
+        """Stamp the unit's grade/subject onto the day. The model sometimes writes a
+        subject synonym ("Mathematics" for the unit's "Math") or drifts the grade,
+        which would trip the UnitDesignDocument cross-day invariant. The unit's ref
+        is authoritative; any day-specific board/code is preserved."""
+        ref = ldd.curriculum_ref
+        want = plan.curriculum_ref
+        if ref.grade == want.grade and ref.subject == want.subject:
+            return ldd
+        aligned = ref.model_copy(update={"grade": want.grade, "subject": want.subject})
+        return ldd.model_copy(update={"curriculum_ref": aligned})
 
     def _day_brief(
         self, day_plan, plan: UnitPlan, req: UnitRequest,

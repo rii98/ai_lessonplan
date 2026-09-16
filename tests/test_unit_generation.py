@@ -190,6 +190,28 @@ def test_generate_builds_one_lesson_per_planned_day():
     assert all(d.curriculum_ref.grade == 10 for d in udd.days)
 
 
+class _SubjectDriftLLM(UnitLLM):
+    """A model that writes a subject synonym on each day ("Mathematics" for the
+    unit's subject) — the drift that used to trip the cross-day invariant."""
+
+    def complete(self, prompt, *, system=None, json_schema=None, temperature=None):
+        result = super().complete(prompt, system=system, json_schema=json_schema, temperature=temperature)
+        if "Design the spine of" in prompt:
+            return result  # the plan keeps the request's subject
+        data = json.loads(result.text)
+        data["curriculum_ref"]["subject"] = "Mathematics"  # drift away from "Science"
+        data["curriculum_ref"]["grade"] = 9  # and the grade too
+        return LLMResult(text=json.dumps(data))
+
+
+def test_day_subject_grade_are_aligned_to_the_unit():
+    # the model drifts each day to "grade 9 Mathematics"; the expander must stamp
+    # the unit's authoritative "grade 10 Science" so the UDD validates.
+    udd = _unit_generator(_SubjectDriftLLM()).generate(_req())
+    assert all(d.curriculum_ref.subject == "Science" for d in udd.days)
+    assert all(d.curriculum_ref.grade == 10 for d in udd.days)
+
+
 def test_days_are_expanded_arc_aware():
     llm = UnitLLM()
     _unit_generator(llm).generate(_req())
