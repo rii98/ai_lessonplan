@@ -269,7 +269,16 @@
             <label class="f"><span>New chunk down to heading</span>
               <select id="d_depth"><option value="1">H1</option><option value="2">H1–H2</option><option value="3">H1–H3</option><option value="4">H1–H4</option><option value="5">H1–H5</option><option value="6" selected>every heading</option></select>
             </label>
+            <label class="f"><span>Chapter heading level</span>
+              <select id="d_chapter_level"><option value="" selected>Auto-detect</option><option value="1">H1 = chapter (# Unit N)</option><option value="2">H2 = chapter (## Chapter N under a unit)</option><option value="3">H3 = chapter</option></select>
+            </label>
           </div>
+          <p style="font-size:12px;color:var(--muted);margin:8px 0 0;">
+            Which heading level is a “chapter” — the unit the coverage planner
+            enumerates. <strong>Auto-detect</strong> reads it from the book (a
+            <em>Chapter N</em> heading, else <em>Unit/Lesson N</em>, else H1); set it
+            manually only for an oddly-headed book.
+          </p>
           <div class="row" style="gap:16px;">
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;width:auto;margin:0;"><input type="checkbox" id="d_bc" checked style="width:auto;" /> Embed breadcrumb in chunk text</label>
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;width:auto;margin:0;"><input type="checkbox" id="d_head" checked style="width:auto;" /> Keep heading line in body</label>
@@ -462,6 +471,8 @@ function docRequest() {
   const mn = $("d_min").value.trim(); if (mn) params.min_chars = Number(mn);
   const depth = Number($("d_depth").value) || 6;
   params.split_levels = Array.from({ length: depth }, (_, i) => i + 1);
+  // Empty = auto-detect the chapter level per book (server-side default).
+  const cl = $("d_chapter_level").value.trim(); if (cl) params.chapter_level = Number(cl);
   return {
     collection: $("d_collection").value,
     text: $("d_text").value,
