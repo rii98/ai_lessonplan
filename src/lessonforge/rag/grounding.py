@@ -51,6 +51,21 @@ def _truncate(path: str, depth: int) -> str:
     return _BREADCRUMB_SEP.join(segs[: max(1, depth + 1)])
 
 
+def _chapter_scoped(path: str, chapter_level: int) -> str:
+    """Collapse a heading path to ``chapter > section`` for the coverage outline,
+    using the book's own ``chapter_level`` (stamped at ingest).
+
+    Keeps the chapter segment (at depth ``chapter_level``) and the one level below
+    it — so any coarser grouping ABOVE the chapter (a "Unit IV: Algebra" wrapping
+    "Chapter 11") is dropped, and any finer sub-heading below the section (an
+    Example/Exercise/PART) folds into its section. A section that exists only via
+    its sub-headings survives, because the slice never trims past the section
+    level."""
+    segs = path.split(_BREADCRUMB_SEP)
+    start = max(0, chapter_level - 1)
+    return _BREADCRUMB_SEP.join(segs[start : chapter_level + 1]) or path
+
+
 def _match_tokens(text: str) -> set[str]:
     """Content words of a heading/topic, lowercased, numbering + emphasis + stop
     words removed — the unit of the lenient coverage comparison."""
@@ -62,6 +77,7 @@ from ..config import GroundingConfig
 from ..providers.base import LLMClient
 from .documents import (
     CHAPTER_KEY,
+    CHAPTER_LEVEL_KEY,
     CHUNK_INDEX_KEY,
     DOC_ID_KEY,
     HEADING_PATH_KEY,
@@ -400,14 +416,20 @@ class GroundingRetriever:
         where = self._filter({"grade": grade, "subject": subject})
         anchors = self._anchor_hits(col, query, where)
 
-        # Tally anchors per (doc_id, chapter), preserving first-seen (best) rank.
+        # Tally anchors per (doc_id, chapter), preserving first-seen (best) rank,
+        # and remember each book's own chapter_level (stamped at ingest) so the
+        # outline is scoped by the book's real hierarchy, not a fixed depth.
         counts: dict[tuple[str, str], int] = {}
         order: list[tuple[str, str]] = []
+        levels: dict[str, int] = {}
         for c in anchors:
             doc_id = str(c.payload.get(DOC_ID_KEY, "")).strip()
             chapter = str(c.payload.get(CHAPTER_KEY, "")).strip()
             if not doc_id or not chapter:
                 continue  # a flat source with no hierarchy can't be enumerated
+            lv = c.payload.get(CHAPTER_LEVEL_KEY)
+            if doc_id not in levels and isinstance(lv, int) and lv >= 1:
+                levels[doc_id] = lv
             key = (doc_id, chapter)
             if key not in counts:
                 counts[key] = 0
@@ -415,7 +437,6 @@ class GroundingRetriever:
             counts[key] += 1
         keys = self._dominant_chapters(counts, order)
 
-        depth = self.config.coverage_depth
         out = CoverageOutline()
         seen_sections: set[str] = set()
         for doc_id, chapter in keys:
@@ -425,10 +446,17 @@ class GroundingRetriever:
             out.chapters.append(_clean_heading(chapter))
             # Collapse each raw heading path to the topic level and de-dup: a deep
             # sub-heading (a callout box) folds into its numbered section, and a
-            # section that exists only via sub-headings survives via truncation — so
-            # the contract lists teachable topics, not every bold line in the book.
+            # section that exists only via sub-headings survives — so the contract
+            # lists teachable topics, not every bold line in the book. When the book
+            # stamped a chapter_level, scope to it (dropping any unit wrapper above
+            # the chapter); otherwise fall back to the fixed coverage_depth from the
+            # outermost heading (older ingests with no chapter_level in the payload).
+            chapter_level = levels.get(doc_id)
             for raw in sections:
-                label = _clean_heading(_truncate(raw, depth))
+                if chapter_level:
+                    label = _clean_heading(_chapter_scoped(raw, chapter_level))
+                else:
+                    label = _clean_heading(_truncate(raw, self.config.coverage_depth))
                 key = label.lower()
                 if label and key not in seen_sections:
                     seen_sections.add(key)

@@ -248,6 +248,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="override the chunker (default: per-format from config)")
     parser.add_argument("--max-chars", type=int, dest="max_chars",
                         help="chunk size budget for the chosen chunker")
+    parser.add_argument("--chapter-level", type=int, dest="chapter_level",
+                        help="markdown heading level that means 'chapter' for this "
+                             "book (1 = '# Unit', 2 = '## Chapter' under a unit); "
+                             "default: auto-detected per document")
     parser.add_argument("--grade", type=int, help="metadata: grade for --source")
     parser.add_argument("--subject", help="metadata: subject for --source")
     args = parser.parse_args(argv)
@@ -268,11 +272,17 @@ def main(argv: list[str] | None = None) -> int:
             extra["grade"] = args.grade
         if args.subject:
             extra["subject"] = args.subject
-        # an explicit --chunker (optionally with --max-chars) overrides the policy
+        # an explicit --chunker (optionally with --max-chars / --chapter-level)
+        # overrides the policy. --chapter-level forces the markdown chunker even
+        # without --chunker, since it only makes sense there.
         override: Chunker | None = None
-        if args.chunker:
-            params = {"max_chars": args.max_chars} if args.max_chars else {}
-            override = build_chunker(args.chunker, **params)
+        if args.chunker or args.chapter_level is not None:
+            params: dict[str, Any] = {}
+            if args.max_chars:
+                params["max_chars"] = args.max_chars
+            if args.chapter_level is not None:
+                params["chapter_level"] = args.chapter_level
+            override = build_chunker(args.chunker or "markdown", **params)
         report = ingestor.ingest_source(
             args.source, Collection(args.collection), fmt=args.format,
             extra_metadata=extra, chunker=override,

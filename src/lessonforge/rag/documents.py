@@ -83,6 +83,13 @@ COLLECTION_KEY = "collection"
 # structure (the markdown chunker), so a flat source simply can't be expanded.
 DOC_ID_KEY = "doc_id"
 CHAPTER_KEY = "chapter"
+# The heading depth that counts as a "chapter" in THIS document, stamped on every
+# chunk so retrieval reads it back per-book instead of assuming one shape for the
+# whole store. Books disagree — a Science book's chapter is its ``# Unit N`` (H1),
+# a Math book's is ``## Chapter N`` (H2) nested under a ``# Unit`` grouping — so the
+# chapter bucket (CHAPTER_KEY) and the coverage-outline depth are driven by this
+# value rather than a fixed level. See :class:`MarkdownChunker`.
+CHAPTER_LEVEL_KEY = "chapter_level"
 HEADING_PATH_KEY = "heading_path"
 CHUNK_INDEX_KEY = "chunk_index"
 

@@ -89,3 +89,71 @@ def test_document_metadata_and_breadcrumb_both_land_in_payload():
     assert payload["grade"] == 6 and payload["subject"] == "Science"
     assert payload["heading"] == "Only"
     assert payload["collection"] == "reference"
+
+
+# ── chapter bucketing (per-book chapter_level) ────────────────────────────────
+# A Science book's chapter is its "# Unit N" (H1); a Math book's is a
+# "## Chapter N" nested under a "# Unit" grouping (H2). The chunker must bucket
+# each per chapter, not blindly at the outermost heading.
+
+_SCIENCE = """\
+# Unit 11 : Electricity
+
+Overview.
+
+## 11.1 Electric Current
+
+Charge in motion.
+"""
+
+_MATH = """\
+# Unit IV : Algebra
+
+## Chapter 11 : Exponential Equation
+
+### 11.1 Using Quadratic Equations
+
+Solve by substitution.
+
+## Chapter 12 : Area
+
+### 12.1 Triangles
+
+Base times height.
+"""
+
+
+def test_default_chapter_is_the_outermost_heading_when_no_markers():
+    # the Force doc has no Chapter/Unit markers → chapter = outermost H1 (back-compat)
+    for c in _chunk(_DOC):
+        assert c.metadata["chapter"] == "Force"
+        assert c.metadata["chapter_level"] == 1
+
+
+def test_unit_heading_is_detected_as_the_chapter_level():
+    chunks = _chunk(_SCIENCE)
+    sec = next(c for c in chunks if c.metadata.get("heading") == "11.1 Electric Current")
+    assert sec.metadata["chapter"] == "Unit 11 : Electricity"
+    assert sec.metadata["chapter_level"] == 1
+
+
+def test_chapter_heading_beats_unit_wrapper_and_buckets_per_chapter():
+    chunks = _chunk(_MATH)
+    by_heading = {c.metadata.get("heading"): c for c in chunks}
+    # chapter_level auto-detects to 2 (the "Chapter N" level), NOT the "Unit IV" H1
+    s11 = by_heading["11.1 Using Quadratic Equations"]
+    s12 = by_heading["12.1 Triangles"]
+    assert s11.metadata["chapter_level"] == 2
+    # the two sections land in DIFFERENT chapter buckets — the unit no longer
+    # swallows every chapter into one
+    assert s11.metadata["chapter"] == "Chapter 11 : Exponential Equation"
+    assert s12.metadata["chapter"] == "Chapter 12 : Area"
+
+
+def test_explicit_chapter_level_overrides_detection():
+    # force chapter granularity at H2 even though this book has no markers
+    chunks = _chunk(_MATH, chapter_level=1)
+    s11 = next(c for c in chunks if c.metadata.get("heading") == "11.1 Using Quadratic Equations")
+    # at level 1 the whole unit is one chapter again
+    assert s11.metadata["chapter"] == "Unit IV : Algebra"
+    assert s11.metadata["chapter_level"] == 1

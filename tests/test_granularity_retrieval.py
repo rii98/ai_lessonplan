@@ -267,6 +267,56 @@ def test_outline_keeps_two_co_dominant_chapters(fake_embedder, fake_store, fake_
     }
 
 
+_UNIT_CHAPTER_BOOK = """\
+# Unit IV : Algebra
+
+## Chapter 11 : Exponential Equation
+
+### 11.1 Solving by Equal Bases
+
+Match the bases.
+
+### 11.2 Solving Using Quadratic Equation
+
+Substitute and factor.
+
+## Chapter 12 : Area of Triangles
+
+### 12.1 Area on the Same Base
+
+Equal-area triangles.
+"""
+
+
+def test_outline_scopes_to_the_chapter_not_the_unit_wrapper(
+    fake_embedder, fake_store, fake_reranker
+):
+    """The reported bug: when chapters (Chapter 11, 12, …) are nested under a
+    single '# Unit' grouping, the outline must enumerate only the ANCHORED chapter
+    (Chapter 11) — not every chapter in the unit — and label each section
+    'Chapter > section', dropping the unit wrapper above it. Driven by the book's
+    own chapter_level (2 here), stamped at ingest and read back per document."""
+    ing = Ingestor(embedder=fake_embedder, vector_store=fake_store)
+    ing.ingest_documents(
+        Collection.reference,
+        [Document(id="g10math", text=_UNIT_CHAPTER_BOOK, source="Grade 10 Math",
+                  metadata={"grade": 10, "subject": "Math"})],
+        chunker=MarkdownChunker(max_chars=200),
+    )
+    r = Retriever(embedder=fake_embedder, vector_store=fake_store, reranker=fake_reranker)
+    gr = GroundingRetriever(r, GroundingConfig(coverage_anchors=8))
+    outline = gr.outline(query="exponential equation quadratic bases", grade=10, subject="Math")
+    # only Chapter 11's sections — Chapter 12 (a different chapter in the same unit)
+    # is NOT dragged in, and the "Unit IV" wrapper is dropped from the labels.
+    assert outline.sections == [
+        "Chapter 11 : Exponential Equation > 11.1 Solving by Equal Bases",
+        "Chapter 11 : Exponential Equation > 11.2 Solving Using Quadratic Equation",
+    ]
+    assert outline.chapters == ["Chapter 11 : Exponential Equation"]
+    assert not any("12.1" in s for s in outline.sections)
+    assert not any(s.startswith("Unit IV") for s in outline.sections)
+
+
 def test_outline_is_empty_for_a_flat_source_without_hierarchy(
     fake_embedder, fake_store, fake_reranker
 ):
