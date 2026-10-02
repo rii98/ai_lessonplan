@@ -13,6 +13,13 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from ..container import Container
 from ..domain.artifacts import Quiz, Slides, Worksheet
+from ..domain.assessment import (
+    MAX_PER_TYPE,
+    MAX_TOTAL,
+    PRESETS,
+    QUESTION_TYPES,
+    AssessmentSpec,
+)
 from ..domain.chat import (
     ChatMessageRequest,
     Conversation,
@@ -40,6 +47,7 @@ from ..rag.documents import (
 )
 from ..rag.loaders import split_front_matter
 from ..services.artifact_generation import generatable_kinds
+from ..services.assessment_retrieval import plan_passes
 from ..services.chat.pipeline import ChatEvent
 from ..services.unit_coherence import UnitCoherence
 from .deps import get_container
@@ -102,6 +110,13 @@ class GenerateRequest(BaseModel):
         if not self.topic and not self.existing_plan:
             raise ValueError("provide `topic`, or `existing_plan` for intake to parse")
         return self
+
+
+class ArtifactGenerateRequest(GenerateRequest):
+    """A targeted-artifact request: the usual brief plus, for a quiz/worksheet, the
+    author's question blueprint (types × counts × difficulty × instructions)."""
+
+    spec: AssessmentSpec | None = None
 
 
 class RefineLessonRequest(BaseModel):
@@ -405,7 +420,8 @@ def create_app() -> FastAPI:
         defaults are applied here too, so the preview matches what generate sees."""
         profile = c.profile_store.load()
         try:
-            request = profile.apply_defaults(IntakeRequest(**req.model_dump()))
+            request = profile.apply_defaults(
+                IntakeRequest(**req.model_dump(exclude={"spec"})))
             return profile.personalize(c.intake.normalize(request))
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -810,10 +826,45 @@ def create_app() -> FastAPI:
             ]
         }
 
+    @app.get("/artifacts/question-types", tags=["artifacts"])
+    def question_types() -> dict[str, object]:
+        """The question-type catalogue the quiz/worksheet builder renders from —
+        labels, hints, default marks/counts, and how each type is grounded — so the UI
+        never hard-codes what the backend supports."""
+        return {
+            "types": [
+                {"type": t.value, "label": m.label, "hint": m.hint,
+                 "default_marks": m.default_marks, "default_count": m.default_count,
+                 "retrieval": m.retrieval}
+                for t, m in QUESTION_TYPES.items()
+            ],
+            "difficulties": ["easy", "medium", "hard", "mixed"],
+            "scopes": [
+                {"value": "auto", "label": "Auto (recommended)",
+                 "help": "Facts from focused passages; explanations from whole sections."},
+                {"value": "focused", "label": "Focused",
+                 "help": "Short passages only — best for recall-style quizzes."},
+                {"value": "section", "label": "Whole sections",
+                 "help": "Full textbook sections — best when questions need context."},
+                {"value": "chapter", "label": "Whole chapter",
+                 "help": "Revision test: questions may range across the chapter."},
+            ],
+            "presets": PRESETS,
+            "limits": {"max_per_type": MAX_PER_TYPE, "max_total": MAX_TOTAL},
+        }
+
+    @app.post("/artifacts/retrieval-plan", tags=["artifacts"])
+    def retrieval_plan(spec: AssessmentSpec) -> dict[str, object]:
+        """How a blueprint will be grounded — the retrieval passes (granularity, how
+        many hits, why). Pure and free: lets the builder show its strategy before any
+        LLM call is spent."""
+        return {"passes": [p.describe() for p in plan_passes(spec)],
+                "total_questions": spec.total_questions, "total_marks": spec.total_marks}
+
     @app.post("/artifacts/{kind}/generate", tags=["artifacts"])
     def generate_artifact(
         kind: ArtifactKind,
-        req: GenerateRequest,
+        req: ArtifactGenerateRequest,
         c: Container = Depends(get_container),
     ):
         """Generate a single artifact (quiz/worksheet/slides) straight from a brief
@@ -824,12 +875,18 @@ def create_app() -> FastAPI:
         _generatable(kind)
         profile = c.profile_store.load()
         try:
-            request = profile.apply_defaults(IntakeRequest(**req.model_dump()))
+            request = profile.apply_defaults(
+                IntakeRequest(**req.model_dump(exclude={"spec"})))
             brief = profile.personalize(c.intake.normalize(request))
         except ValueError as exc:  # intake couldn't determine topic/grade
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        generator = c.artifact_generator(kind)
+        if req.spec is not None and not generator.supports_spec:
+            raise HTTPException(
+                status_code=422,
+                detail=f"a {kind.value} has no question blueprint; omit `spec`.")
         try:
-            return c.artifact_generator(kind).generate(brief)
+            return generator.generate(brief, spec=req.spec)
         except ValueError as exc:  # could not assemble a valid artifact
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 

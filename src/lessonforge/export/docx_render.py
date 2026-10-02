@@ -24,6 +24,13 @@ from docx.shared import Pt, RGBColor
 from docx.text.run import Run
 
 from ..domain.artifacts import Quiz, Worksheet
+from ..domain.assessment import (
+    AssessmentSpec,
+    QuestionView,
+    build_sections,
+    flat_views,
+    full_marks,
+)
 from ..domain.ldd import LessonDesignDocument, Question, QuestionType
 from ..rag.grounding import ensure_sources
 from .base import ArtifactKind, ExportOptions, RenderedArtifact, Renderer, timing_summary
@@ -231,34 +238,102 @@ class DocxLessonPlan(_DocxBase):
 
 
 class _QuestionDoc(_DocxBase):
-    """Shared question + answer-key layout for worksheet and quiz."""
+    """Shared question + answer-key layout for worksheet and quiz.
+
+    With a blueprint the questions print in lettered sections (heading, student
+    instruction, marks); without one — a quiz projected from a lesson — they print as
+    the flat numbered list they always have. Both go through the same per-question
+    view, so every type (matching table, scrambled steps, ruled answer lines…) is
+    laid out identically either way."""
 
     heading_prefix: str
 
-    def _questions(self, doc: Document, questions: list[Question]) -> None:
+    def _body(self, doc: Document, questions: list[Question],
+              spec: AssessmentSpec | None) -> list[QuestionView]:
+        sections = build_sections(questions, spec)
+        if sections is None:
+            views = flat_views(questions)
+            for v in views:
+                self._question(doc, v)
+            return views
+        views: list[QuestionView] = []
         opts = self.options
-        for i, q in enumerate(questions, 1):
-            p = doc.add_paragraph()
-            _run(p, f"{i}. ", opts, bold=True)
-            _run(p, q.prompt, opts)
-            if q.type is QuestionType.mcq and q.options:
-                for j, opt in enumerate(q.options):
-                    op = doc.add_paragraph()
-                    _run(op, f"    {chr(ord('A') + j)}.  {opt}", opts)
-            elif q.type is QuestionType.true_false:
-                op = doc.add_paragraph()
-                _run(op, "    ( ) True     ( ) False", opts)
-            else:
-                op = doc.add_paragraph()
-                _run(op, "    Answer: ______________________________", opts, color=_MUTED)
+        for sec in sections:
+            head = doc.add_paragraph()
+            head.paragraph_format.keep_with_next = True
+            head.paragraph_format.space_before = Pt(10)
+            _run(head, f"Section {sec.letter} — {sec.title}", opts, bold=True, size=13,
+                 color=_ACCENT)
+            if sec.marks_note:
+                _run(head, f"   [{sec.marks_note}]", opts, color=_MUTED)
+            ins = doc.add_paragraph()
+            ins.paragraph_format.keep_with_next = True
+            _run(ins, sec.instruction, opts, italic=True, color=_MUTED)
+            for v in sec.items:
+                self._question(doc, v, show_marks=True)
+                views.append(v)
+        return views
 
-    def _answer_key(self, doc: Document, questions: list[Question]) -> None:
+    def _question(self, doc: Document, v: QuestionView, *, show_marks: bool = False) -> None:
+        opts = self.options
+        p = doc.add_paragraph()
+        p.paragraph_format.keep_with_next = True
+        _run(p, f"{v.number}. ", opts, bold=True)
+        _run(p, v.prompt, opts)
+        if show_marks and v.marks:
+            _run(p, f"  [{v.marks}]", opts, color=_MUTED)
+        if v.type is QuestionType.matching:
+            self._match_table(doc, v)
+        elif v.choices:
+            for c in v.choices:
+                op = doc.add_paragraph()
+                op.paragraph_format.keep_with_next = True
+                _run(op, f"    {c.replace('. ', '.  ', 1)}", opts)
+            if v.type is QuestionType.ordering:
+                _run(doc.add_paragraph(), "    Correct order:  ____  →  ____  →  ____  →  ____",
+                     opts, color=_MUTED)
+        elif v.true_false:
+            _run(doc.add_paragraph(), "    ( ) True     ( ) False", opts)
+        elif v.type is QuestionType.fill_blank:
+            pass  # the blank is in the prompt
+        else:
+            _run(doc.add_paragraph(), "    Answer: ______________________________", opts,
+                 color=_MUTED)
+            for _ in range(max(0, v.response_lines - 1)):
+                _run(doc.add_paragraph(),
+                     "    ____________________________________________________________",
+                     opts, color=_MUTED)
+
+    def _match_table(self, doc: Document, v: QuestionView) -> None:
+        """Column A / Column B as a borderless two-column table (a real table keeps the
+        columns aligned however long the entries are, in Word and when imported)."""
+        opts = self.options
+        table = doc.add_table(rows=1 + len(v.left), cols=2)
+        for cell, head in zip(table.rows[0].cells, ("Column A", "Column B"), strict=True):
+            _run(cell.paragraphs[0], head, opts, bold=True)
+        for row, (a, b) in zip(table.rows[1:], zip(v.left, v.right, strict=True), strict=True):
+            _run(row.cells[0].paragraphs[0], a, opts)
+            _run(row.cells[1].paragraphs[0], b, opts)
+        _run(doc.add_paragraph(),
+             "    Answer:  " + "   ".join(f"{i}–___" for i in range(1, len(v.left) + 1)),
+             opts, color=_MUTED)
+
+    def _answer_key(self, doc: Document, views: list[QuestionView]) -> None:
         doc.add_page_break()
         self._heading(doc, "Answer Key")
-        for i, q in enumerate(questions, 1):
+        for v in views:
             p = doc.add_paragraph()
-            _run(p, f"{i}. ", self.options, bold=True)
-            _run(p, q.answer, self.options)
+            _run(p, f"{v.number}. ", self.options, bold=True)
+            _run(p, v.answer, self.options)
+            if v.difficulty:
+                _run(p, f"   ({v.difficulty})", self.options, italic=True, color=_MUTED)
+            for kp in v.key_points:
+                kpp = doc.add_paragraph(style="List Bullet")
+                _run(kpp, kp, self.options, color=_MUTED)
+
+    def _marks_line(self, questions: list[Question], spec: AssessmentSpec | None) -> str:
+        total = full_marks(build_sections(questions, spec))
+        return f"      Full marks: {total}" if total else ""
 
 
 @register_renderer(ArtifactKind.worksheet, "docx")
@@ -270,7 +345,8 @@ class DocxWorksheet(_QuestionDoc):
         title = doc.add_paragraph()
         _run(title, f"Worksheet — {ws.topic}", opts, bold=True, size=18, color=_ACCENT)
         name = doc.add_paragraph()
-        _run(name, "Name: ____________________      Date: ____________", opts, color=_MUTED)
+        _run(name, "Name: ____________________      Date: ____________"
+             + self._marks_line(ws.questions, ws.spec), opts, color=_MUTED)
 
         self._heading(doc, "Objectives")
         for o in ws.objectives:
@@ -282,8 +358,8 @@ class DocxWorksheet(_QuestionDoc):
             self._bullets(doc, ws.tasks)
 
         self._heading(doc, "Practice Questions")
-        self._questions(doc, ws.questions)
-        self._answer_key(doc, ws.questions)
+        views = self._body(doc, ws.questions, ws.spec)
+        self._answer_key(doc, views)
         self._sources(doc, ws.grounding_sources)
         return self._save(doc, ws)
 
@@ -298,10 +374,10 @@ class DocxQuiz(_QuestionDoc):
         _run(title, f"Quiz — {quiz.topic}", opts, bold=True, size=18, color=_ACCENT)
         info = doc.add_paragraph()
         info.alignment = WD_ALIGN_PARAGRAPH.LEFT
-        _run(info, f"Name: ____________________      Score: _____ / "
-                   f"{len(quiz.questions)}", opts, color=_MUTED)
+        total = full_marks(build_sections(quiz.questions, quiz.spec)) or len(quiz.questions)
+        _run(info, f"Name: ____________________      Score: _____ / {total}", opts, color=_MUTED)
 
-        self._questions(doc, quiz.questions)
-        self._answer_key(doc, quiz.questions)
+        views = self._body(doc, quiz.questions, quiz.spec)
+        self._answer_key(doc, views)
         self._sources(doc, quiz.grounding_sources)
         return self._save(doc, quiz)

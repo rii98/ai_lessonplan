@@ -130,6 +130,21 @@ class GroundingBundle:
     def _has(self, name: str) -> bool:
         return bool(self.chunks.get(name))
 
+    def merge(self, other: GroundingBundle) -> GroundingBundle:
+        """Union of two bundles — chunks de-duplicated by text per collection, sources
+        order-preserving. Used when one request retrieves in several passes (e.g. a
+        narrow pass for facts and a section pass for explanations)."""
+        merged = GroundingBundle(authoritative=self.authoritative | other.authoritative)
+        for bundle in (self, other):
+            for name, chunks in bundle.chunks.items():
+                have = merged.chunks.setdefault(name, [])
+                texts = {c.text for c in have}
+                have.extend(c for c in chunks if c.text not in texts and not texts.add(c.text))
+            for src in bundle.sources:
+                if src not in merged.sources:
+                    merged.sources.append(src)
+        return merged
+
     @property
     def has_authoritative(self) -> bool:
         """True when real course material was retrieved for this topic — the signal
@@ -292,6 +307,7 @@ class GroundingRetriever:
         subject: str | None = None,
         framework: str | None = None,
         granularity: Granularity | None = None,
+        top_n: int | None = None,
     ) -> GroundingBundle:
         """Retrieve grounding for a brief across the configured collections.
 
@@ -314,6 +330,10 @@ class GroundingRetriever:
         collections (real books with a heading hierarchy); flat corpora
         (curriculum/pedagogical seed) always retrieve narrow, since they have
         nothing to expand into.
+
+        ``top_n`` overrides ``per_collection_top_n`` for this call — a request that
+        needs many distinct facts (a 20-question quiz) retrieves more than one that
+        needs a single coherent passage.
         """
         gran: Granularity = granularity or self.config.default_granularity  # type: ignore[assignment]
         authoritative = frozenset(self.config.authoritative_collections)
@@ -338,7 +358,7 @@ class GroundingRetriever:
             # only real books (authoritative) are expanded to section/chapter.
             is_auth = collection.value in authoritative
             col_gran: Granularity = gran if is_auth else "narrow"
-            chunks = self._retrieve(collection.value, query, where, fallback_where, col_gran)
+            chunks = self._retrieve(collection.value, query, where, fallback_where, col_gran, top_n)
             # Quality gate: drop the collection's hits when even the best is weak
             # (garbage floor), and, for authoritative books only, when the LLM judge
             # says the top passage is off-topic. Both keep bad context out of the
@@ -501,11 +521,12 @@ class GroundingRetriever:
         where: dict[str, Any] | None,
         fallback_where: dict[str, Any] | None = None,
         granularity: Granularity = "narrow",
+        top_n: int | None = None,
     ) -> list[RetrievedChunk]:
         """Retrieve with a lenient fallback: if the fully-filtered query returns
         nothing, retry with ``fallback_where`` (the floor filter that must not be
         dropped — e.g. framework) and, failing that, unfiltered."""
-        top_n = self.config.per_collection_top_n
+        top_n = top_n or self.config.per_collection_top_n
         try:
             hits = self.retriever.retrieve(
                 collection, query, where=where, top_n=top_n, granularity=granularity

@@ -60,7 +60,7 @@ def test_snap_bloom(value, expected):
 
 @pytest.mark.parametrize("value,expected", [
     ("multiple choice", "mcq"), ("MCQ", "mcq"), ("true/false", "true_false"),
-    ("T/F", "true_false"), ("essay", "short_answer"), ("fill in the blank", "short_answer"),
+    ("T/F", "true_false"), ("essay", "long_answer"), ("fill in the blank", "fill_blank"),
     ("short_answer", "short_answer"),
 ])
 def test_snap_question_type(value, expected):

@@ -33,6 +33,7 @@ from typing import Any, get_args
 
 from ..domain.ldd import (
     CurriculumRef,
+    Difficulty,
     Hook,
     LessonDesignDocument,
     Objective,
@@ -57,6 +58,7 @@ def _allowed(model: type, field: str) -> list[Any]:
 KINDS = _allowed(Hook, "kind")
 BLOOMS = _allowed(Objective, "bloom")
 Q_TYPES = _allowed(Question, "type")
+DIFFICULTIES = [d.value for d in Difficulty]  # (Optional[Enum] annotation: _allowed() can't unwrap it)
 BOARDS = _allowed(CurriculumRef, "board")
 LANGUAGES = _allowed(LessonDesignDocument, "language")
 FRAMEWORKS = _allowed(LessonDesignDocument, "framework")
@@ -82,11 +84,30 @@ _SYNONYMS: dict[str, dict[str, str]] = {
     },
     "type": {
         "multiple_choice": "mcq", "mc": "mcq", "choice": "mcq", "select": "mcq",
+        "best_answer": "mcq", "choose_the_best": "mcq", "objective": "mcq",
         "true_or_false": "true_false", "truefalse": "true_false", "tf": "true_false",
         "t_f": "true_false", "boolean": "true_false", "yes_no": "true_false",
         "short": "short_answer", "open": "short_answer", "open_ended": "short_answer",
-        "essay": "short_answer", "written": "short_answer", "fill_in_the_blank": "short_answer",
-        "fill_in_the_blanks": "short_answer", "fill": "short_answer", "text": "short_answer",
+        "written": "short_answer", "text": "short_answer", "brief": "short_answer",
+        "fill_in_the_blank": "fill_blank", "fill_in_the_blanks": "fill_blank",
+        "fill_in": "fill_blank", "fill": "fill_blank", "blank": "fill_blank",
+        "blanks": "fill_blank", "cloze": "fill_blank", "gap_fill": "fill_blank",
+        "match": "matching", "match_the_following": "matching", "match_following": "matching",
+        "matching_type": "matching", "match_the_columns": "matching", "pairs": "matching",
+        "essay": "long_answer", "long": "long_answer", "explain": "long_answer",
+        "explanation": "long_answer", "descriptive": "long_answer", "describe": "long_answer",
+        "reasoning": "long_answer", "give_reasons": "long_answer", "discuss": "long_answer",
+        "numeric": "numerical", "calculation": "numerical", "computation": "numerical",
+        "problem": "numerical", "problem_solving": "numerical", "calculate": "numerical",
+        "sequence": "ordering", "sequencing": "ordering", "order": "ordering",
+        "arrange": "ordering", "rearrange": "ordering", "arrange_in_order": "ordering",
+    },
+    "difficulty": {
+        "simple": "easy", "basic": "easy", "beginner": "easy", "low": "easy", "recall": "easy",
+        "elementary": "easy", "moderate": "medium", "average": "medium",
+        "intermediate": "medium", "normal": "medium", "mid": "medium",
+        "challenging": "hard", "difficult": "hard", "advanced": "hard", "high": "hard",
+        "tough": "hard", "complex": "hard",
     },
     "board": {
         "curriculum_development_centre": "CDC", "curriculum_development_center": "CDC",
@@ -238,9 +259,51 @@ def normalize_question(q: Any, notes: list[str], where: str) -> None:
         return
     _snap_field(q, "type", Q_TYPES, "short_answer", "type", where, notes)
     _wrap_list(q, "objective_ids", notes, where, split_csv=True)
-    if q.get("type") != "mcq" and q.get("options") is not None:
+    # ``options`` carries MCQ choices and ORDERING steps; anything else drops it.
+    if q.get("type") not in ("mcq", "ordering") and q.get("options") is not None:
         q["options"] = None
-        notes.append(f"{where}.options: cleared (not an MCQ)")
+        notes.append(f"{where}.options: cleared (not an MCQ/ordering question)")
+    if isinstance(q.get("difficulty"), str) and not q["difficulty"].strip():
+        q["difficulty"] = None  # a blank is "unset", not a value to snap to a default
+    if q.get("difficulty") is not None:
+        _snap_field(q, "difficulty", DIFFICULTIES, "medium", "difficulty", where, notes)
+    if "marks" in q and q["marks"] is not None:
+        n = _to_int(q["marks"])
+        if n != q["marks"]:
+            notes.append(f"{where}.marks: {q['marks']!r} → {n!r}")
+            q["marks"] = n
+    _wrap_list(q, "key_points", notes, where)
+    if q.get("key_points") is None:
+        q.pop("key_points", None)
+    if q.get("answer") is None:
+        q["answer"] = ""
+    _norm_pairs(q, notes, where)
+    if q.get("type") != "matching" and q.get("pairs") is not None:
+        q["pairs"] = None
+        notes.append(f"{where}.pairs: cleared (not a matching question)")
+
+
+def _norm_pairs(q: dict, notes: list[str], where: str) -> None:
+    """Coerce the shapes a model reaches for into ``[{left, right}]``: a ``[l, r]``
+    list, a ``{term: partner}`` dict, or ``{a:…, b:…}``-style keys."""
+    pairs = q.get("pairs")
+    if isinstance(pairs, dict):  # {"Madal": "stretched skin", …}
+        pairs = [{"left": k, "right": v} for k, v in pairs.items()]
+        notes.append(f"{where}.pairs: mapping → list of pairs")
+    if not isinstance(pairs, list):
+        return
+    out: list[Any] = []
+    for p in pairs:
+        if isinstance(p, (list, tuple)) and len(p) == 2:
+            out.append({"left": str(p[0]), "right": str(p[1])})
+        elif isinstance(p, dict) and not {"left", "right"} <= p.keys() and len(p) == 2:
+            a, b = list(p.values())
+            out.append({"left": str(a), "right": str(b)})
+        else:
+            out.append(p)
+    if out != pairs:
+        notes.append(f"{where}.pairs: normalized to left/right")
+    q["pairs"] = out
 
 
 def _norm_curriculum(d: dict, notes: list[str]) -> None:

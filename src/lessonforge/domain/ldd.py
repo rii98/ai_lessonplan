@@ -27,6 +27,17 @@ class QuestionType(str, Enum):
     mcq = "mcq"
     true_false = "true_false"
     short_answer = "short_answer"
+    fill_blank = "fill_blank"
+    matching = "matching"
+    long_answer = "long_answer"  # "explain / describe / justify" — a model answer + marking points
+    numerical = "numerical"      # a worked problem; answer carries the result and the steps
+    ordering = "ordering"        # arrange steps/events; ``options`` hold them in the CORRECT order
+
+
+class Difficulty(str, Enum):
+    easy = "easy"      # recall / recognise something the material states outright
+    medium = "medium"  # explain or apply it in a familiar-but-new situation
+    hard = "hard"      # analyse, multi-step, compare, justify
 
 
 class CurriculumRef(BaseModel):
@@ -85,18 +96,51 @@ class Differentiation(BaseModel):
     advanced: list[str] = Field(default_factory=list)
 
 
+class MatchPair(BaseModel):
+    left: str
+    right: str
+
+
+# Types whose key is *derived* from their structure (the renderer shuffles the right
+# column / the steps deterministically and computes the key), so ``answer`` may be
+# left empty. Every other type needs an explicit model answer.
+DERIVED_ANSWER_TYPES = frozenset({QuestionType.matching, QuestionType.ordering})
+
+
 class Question(BaseModel):
     id: str
     type: QuestionType
     prompt: str
-    answer: str
+    answer: str = ""
     objective_ids: list[str] = Field(min_length=1)
-    options: list[str] | None = None  # for MCQ
+    # MCQ: the choices as shown. ORDERING: the steps in their CORRECT order (the
+    # renderer scrambles them). Unused by other types.
+    options: list[str] | None = None
+    pairs: list[MatchPair] | None = None  # MATCHING: each left item and its partner
+    difficulty: Difficulty | None = None
+    marks: int | None = Field(default=None, ge=0)
+    # Marking points for a written answer (long_answer/short_answer/numerical).
+    key_points: list[str] = Field(default_factory=list)
+
+    @field_validator("difficulty", "marks", mode="before")
+    @classmethod
+    def _blank_is_unset(cls, v: object) -> object:
+        """A cleared form field arrives as ``""`` — that means "not set", not an error."""
+        return None if isinstance(v, str) and not v.strip() else v
 
     @model_validator(mode="after")
-    def _mcq_needs_options(self) -> Question:
-        if self.type is QuestionType.mcq and not self.options:
+    def _type_shape(self) -> Question:
+        t = self.type
+        if t is QuestionType.mcq and not self.options:
             raise ValueError("MCQ questions require options")
+        if t is QuestionType.matching and len(self.pairs or []) < 2:
+            raise ValueError("matching questions require at least 2 pairs")
+        if t is QuestionType.ordering and len(self.options or []) < 2:
+            raise ValueError("ordering questions require at least 2 steps in `options`")
+        if t is QuestionType.fill_blank and "__" not in self.prompt:
+            raise ValueError("fill_blank prompt must contain a blank written as '_____'")
+        if t not in DERIVED_ANSWER_TYPES and not self.answer.strip():
+            raise ValueError(f"{t.value} questions require an answer")
         return self
 
 

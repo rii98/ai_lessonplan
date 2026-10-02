@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, model_validator
 
+from .assessment import AssessmentSpec
 from .ldd import CurriculumRef, Objective, Question
 
 if TYPE_CHECKING:
@@ -49,6 +50,12 @@ class Quiz(BaseModel):
     objectives: list[Objective] = Field(min_length=1)
     questions: list[Question] = Field(min_length=1)
     instructions: str = ""
+    # The author's blueprint (types × counts × difficulty). When present the
+    # renderers lay the questions out in printable sections in blueprint order;
+    # absent (a quiz projected from a lesson) they render the flat legacy list.
+    spec: AssessmentSpec | None = None
+    # Honest generation notes shown to the author, e.g. "Generated 8 of 10 MCQs".
+    notes: list[str] = Field(default_factory=list)
     # provenance of the material this artifact was grounded in (real sources
     # retrieved, not model-invented) — mirrors the LDD's quality.grounding_sources.
     grounding_sources: list[str] = Field(default_factory=list)
@@ -82,6 +89,8 @@ class Worksheet(BaseModel):
     objectives: list[Objective] = Field(min_length=1)
     tasks: list[str] = Field(default_factory=list)
     questions: list[Question] = Field(default_factory=list)
+    spec: AssessmentSpec | None = None
+    notes: list[str] = Field(default_factory=list)
     grounding_sources: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")

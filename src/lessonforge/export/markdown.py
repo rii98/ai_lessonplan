@@ -15,6 +15,13 @@ previous knowledge, the 5E table, closure, evaluation questions, homework.
 from __future__ import annotations
 
 from ..domain.artifacts import Quiz, Worksheet
+from ..domain.assessment import (
+    AssessmentSpec,
+    QuestionView,
+    build_sections,
+    flat_views,
+    full_marks,
+)
 from ..domain.ldd import CurriculumRef, LessonDesignDocument, Question, QuestionType
 from ..rag.grounding import ensure_sources
 from .base import ArtifactKind, RenderedArtifact, Renderer, timing_summary
@@ -128,19 +135,64 @@ class MarkdownLessonPlan(Renderer):
         return self._artifact(ldd, _encode(out))
 
 
-def _question_block(out: list[str], q: Question, n: int) -> None:
+def _question_block(out: list[str], v: QuestionView, *, marks: bool = False) -> None:
     """Render one blank (unanswered) question. The answer key is emitted
     separately so the sheet can be printed without answers."""
-    out.append(f"**{n}. {q.prompt}**")
-    if q.type is QuestionType.mcq and q.options:
+    tag = f" _[{v.marks}]_" if marks and v.marks else ""
+    out.append(f"**{v.number}. {v.prompt}**{tag}")
+    if v.type is QuestionType.matching:
+        out += ["", "| Column A | Column B |", "| --- | --- |"]
+        out += [f"| {a} | {b} |" for a, b in zip(v.left, v.right, strict=True)]
         out.append("")
-        for j, opt in enumerate(q.options):
-            out.append(f"   {chr(ord('A') + j)}. {opt}")
-    elif q.type is QuestionType.true_false:
+        out.append("   _Answer: " + "   ".join(f"{i}–___" for i in range(1, len(v.left) + 1)) + "_")
+    elif v.choices:  # mcq options / the scrambled steps of an ordering question
+        out.append("")
+        out += [f"   {c}" for c in v.choices]
+        if v.type is QuestionType.ordering:
+            out += ["", "   _Correct order: ___ → ___ → ___ → ____"]
+    elif v.true_false:
         out += ["", "   ( ) True    ( ) False"]
-    else:  # short answer
-        out += ["", "   _Answer: _______________________________________________"]
+    elif v.type is QuestionType.fill_blank:
+        pass  # the blank is in the prompt
+    else:  # written answer
+        out.append("")
+        out.append("   _Answer: _______________________________________________")
+        out += ["   " + "_" * 60 for _ in range(max(0, v.response_lines - 1))]
     out.append("")
+
+
+def _key_lines(views: list[QuestionView]) -> list[str]:
+    out: list[str] = []
+    for v in views:
+        tag = f" _({v.difficulty})_" if v.difficulty else ""
+        out.append(f"{v.number}. {v.answer}{tag}")
+        out += [f"   - {kp}" for kp in v.key_points]
+    return out
+
+
+def _question_doc_body(out: list[str], questions: list[Question],
+                       spec: AssessmentSpec | None) -> list[QuestionView]:
+    """Questions + (when there is a blueprint) printable sections. Returns every
+    view in order so the caller can emit the answer key."""
+    sections = build_sections(questions, spec)
+    if sections is None:  # legacy flat list
+        views = flat_views(questions)
+        for v in views:
+            _question_block(out, v)
+        return views
+    views = []
+    for sec in sections:
+        marks = f" — {sec.marks_note}" if sec.marks_note else ""
+        out += [f"## Section {sec.letter} — {sec.title}{marks}", "", f"_{sec.instruction}_", ""]
+        for v in sec.items:
+            _question_block(out, v, marks=True)
+            views.append(v)
+    return views
+
+
+def _full_marks_line(questions: list[Question], spec: AssessmentSpec | None) -> str:
+    total = full_marks(build_sections(questions, spec))
+    return f"   **Full marks:** {total}" if total else ""
 
 
 @register_renderer(ArtifactKind.worksheet, "md")
@@ -152,7 +204,8 @@ class MarkdownWorksheet(Renderer):
         ws = Worksheet.coerce(source)
         out: list[str] = [f"# Worksheet — {ws.topic}", "",
                           _ref_line(ws.curriculum_ref), "",
-                          "**Name:** ____________________    **Date:** ____________", ""]
+                          "**Name:** ____________________    **Date:** ____________"
+                          + _full_marks_line(ws.questions, ws.spec), ""]
 
         out += ["## Objectives for this worksheet", ""]
         for i, o in enumerate(ws.objectives, 1):
@@ -166,13 +219,11 @@ class MarkdownWorksheet(Renderer):
             out.append("")
 
         out += ["## Practice Questions", ""]
-        for i, q in enumerate(ws.questions, 1):
-            _question_block(out, q, i)
+        views = _question_doc_body(out, ws.questions, ws.spec)
 
         # ── answer key on its own page ──────────────────────────────────────
         out += ["---", "", "## Answer Key", ""]
-        for i, q in enumerate(ws.questions, 1):
-            out.append(f"{i}. {q.answer}")
+        out += _key_lines(views)
         out.append("")
         _md_sources(out, ws.grounding_sources)
 
@@ -189,14 +240,13 @@ class MarkdownQuiz(Renderer):
         out: list[str] = [f"# Quiz — {quiz.topic}", "",
                           _ref_line(quiz.curriculum_ref), "",
                           ("**Name:** ____________________    **Score:** _____ / "
-                           f"{len(quiz.questions)}"), ""]
+                           f"{full_marks(build_sections(quiz.questions, quiz.spec)) or len(quiz.questions)}"
+                           ), ""]
 
-        for i, q in enumerate(quiz.questions, 1):
-            _question_block(out, q, i)
+        views = _question_doc_body(out, quiz.questions, quiz.spec)
 
         out += ["---", "", "## Answer Key", ""]
-        for i, q in enumerate(quiz.questions, 1):
-            out.append(f"{i}. {q.answer}")
+        out += _key_lines(views)
         out.append("")
         _md_sources(out, quiz.grounding_sources)
 

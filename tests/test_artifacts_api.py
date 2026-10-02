@@ -133,3 +133,51 @@ def test_generate_worksheet_and_slides():
                                                       "subject": "Science"})
     assert r.status_code == 200, r.text
     assert r.json()["tasks"] == ["Hum and feel the buzz."]
+
+
+# ── blueprint-driven assessments ─────────────────────────────────────────────
+def test_question_types_catalogue_drives_the_builder(client):
+    body = client.get("/artifacts/question-types").json()
+    types = {t["type"]: t for t in body["types"]}
+    assert {"mcq", "true_false", "fill_blank", "matching", "short_answer",
+            "long_answer", "numerical", "ordering"} <= set(types)
+    assert types["long_answer"]["retrieval"] == "explain"
+    assert {s["value"] for s in body["scopes"]} == {"auto", "focused", "section", "chapter"}
+    assert body["presets"] and body["limits"]["max_total"] > 0
+
+
+def test_retrieval_plan_endpoint_previews_the_strategy(client):
+    spec = {"types": [{"type": "mcq", "count": 6}, {"type": "long_answer", "count": 2}]}
+    body = client.post("/artifacts/retrieval-plan", json=spec).json()
+    assert [(p["profile"], p["granularity"]) for p in body["passes"]] == [
+        ("facts", "narrow"), ("explain", "section")]
+    assert body["total_questions"] == 8
+    assert client.post("/artifacts/retrieval-plan", json={"types": []}).status_code == 422
+
+
+def test_generate_quiz_with_a_blueprint_returns_a_conformed_editable_ir():
+    response = {**_QUIZ_RESPONSE, "questions": [
+        {"id": "a", "type": "short_answer", "prompt": "Q?", "answer": "x", "objective_ids": ["O1"]},
+        {"id": "b", "type": "short_answer", "prompt": "Q2?", "answer": "y", "objective_ids": ["O1"]},
+    ]}
+    c = _client(response)
+    spec = {"types": [{"type": "short_answer", "count": 1, "difficulty": "hard", "marks_each": 2}]}
+    r = c.post("/artifacts/quiz/generate", json={"topic": "Sound", "grade": 7, "subject": "Science",
+                                                  "spec": spec})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["questions"]) == 1 and body["questions"][0]["difficulty"] == "hard"
+    assert body["spec"]["types"][0]["marks_each"] == 2
+    # the IR round-trips straight into export (md/docx/pptx)
+    for fmt in ("md", "docx", "pptx"):
+        assert c.post(f"/artifacts/quiz/export?fmt={fmt}", json=body).status_code == 200
+
+
+def test_invalid_blueprint_is_rejected_and_slides_have_no_blueprint(client):
+    bad = {"topic": "Sound", "grade": 7, "subject": "Science",
+           "spec": {"types": [{"type": "mcq", "count": 0}]}}
+    assert client.post("/artifacts/quiz/generate", json=bad).status_code == 422
+    ok = {"topic": "Sound", "grade": 7, "subject": "Science",
+          "spec": {"types": [{"type": "mcq", "count": 1}]}}
+    r = client.post("/artifacts/slides/generate", json=ok)
+    assert r.status_code == 422 and "blueprint" in r.json()["detail"]

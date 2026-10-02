@@ -103,6 +103,25 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   code { background: var(--chip); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  /* ── quiz / worksheet builder ────────────────────────────────────────────── */
+  .qb { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); padding: 14px; }
+  .qb h3.qb-title { margin: 0 0 4px; font-size: 15px; text-transform: none; letter-spacing: normal; color: var(--ink); }
+  .qt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; margin: 12px 0; }
+  .qt { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 10px 12px; }
+  .qt.on { border-color: var(--brand); box-shadow: 0 0 0 1px var(--brand) inset; }
+  .qt-head { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; }
+  .qt-head input { width: auto; margin: 0; }
+  .qt-hint { margin: 4px 0 0; font-size: 12px; color: var(--muted); }
+  .qt-ctl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 8px; margin-top: 10px; }
+  .qt-ctl label.f { margin-bottom: 8px; }
+  .qt-ctl .wide { grid-column: 1 / -1; }
+  .qb-summary { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13px; }
+  .qb-summary strong { font-variant-numeric: tabular-nums; }
+  .qb-plan { margin: 8px 0 0; padding: 0; list-style: none; font-size: 12px; color: var(--muted); }
+  .qb-plan li { margin-bottom: 2px; }
+  .qb-plan b { color: var(--ink); font-weight: 600; }
+  .pair-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; margin-bottom: 6px; }
+  .tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px; background: var(--chip); color: var(--muted); }
   /* ── refine ("improve this section") ─────────────────────────────────────── */
   .section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .refine-btn { color: var(--accent); flex: 0 0 auto; }
@@ -335,16 +354,21 @@
       <!-- ── Targeted generation: just one artifact from the same brief ── -->
       <div class="row" style="margin-top:12px; flex-wrap:wrap; gap:6px; align-items:center">
         <span class="sub" style="width:100%; margin:0">…or generate just one thing (no full lesson):</span>
-        <button class="ghost" data-artifact="quiz">Just a quiz</button>
-        <button class="ghost" data-artifact="worksheet">Just a worksheet</button>
+        <button class="ghost" data-artifact="quiz" title="Choose question types, counts and difficulty">Just a quiz…</button>
+        <button class="ghost" data-artifact="worksheet" title="Choose question types, counts and difficulty">Just a worksheet…</button>
         <button class="ghost" data-artifact="slides">Just slides</button>
         <span class="status" id="artifactStatus"></span>
       </div>
+      <div class="qb hidden" id="qbuilder"></div>
       <div class="hidden" id="artifactPanel" style="margin-top:8px">
         <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:2px">
           <strong>Your <span id="artifactKindLabel"></span></strong>
-          <button class="small ghost refine-btn" id="artifactImproveAll">✨ Improve the whole thing</button>
+          <span class="row" style="gap:6px">
+            <button class="small ghost hidden" id="artifactRebuild" title="Change the blueprint and regenerate">⚙ Change blueprint</button>
+            <button class="small ghost refine-btn" id="artifactImproveAll">✨ Improve the whole thing</button>
+          </span>
         </div>
+        <div id="artifactNotes"></div>
         <p class="sub">Edit any field by hand, or hit ✨ Improve to let the AI revise a part — it re-grounds in your reference material and shows the change to accept or discard. Then export.</p>
         <div id="artifactEditor"></div>
         <p class="sub" id="artifactSources" style="margin-top:6px"></p>
@@ -404,7 +428,11 @@ const api = async (method, url, body) => {
 };
 const BLOOM = ["remember","understand","apply","analyze","evaluate","create"];
 const HOOK_KINDS = ["scenario","question","prediction","demonstration"];
-const Q_TYPES = ["mcq","true_false","short_answer"];
+// every question type the backend supports; replaced from /artifacts/question-types on load
+const Q_TYPES = ["mcq","true_false","fill_blank","matching","short_answer","long_answer","numerical","ordering"];
+const DIFFICULTIES = ["", "easy", "medium", "hard"];
+const WRITTEN_TYPES = ["short_answer", "long_answer", "numerical"];
+const DERIVED_TYPES = ["matching", "ordering"];  // their answer key is computed from their structure
 
 // ── small DOM helpers ───────────────────────────────────────────────────────
 function h(tag, attrs, ...kids) {
@@ -461,6 +489,47 @@ function csvField(labelText, obj, key) {
     obj[key] = el.value.split(",").map((s) => s.trim()).filter(Boolean);
   });
   return field(labelText, el);
+}
+
+
+// The type-specific controls of ONE question, shared by the lesson's formative-check
+// editor and the quiz/worksheet editor. `listFn(arr, placeholder)` builds an editable
+// string list in the caller's own style; `rr` re-renders the caller after a structural change.
+function questionTypeFields(q, listFn, rr) {
+  const out = [];
+  const dsel = h("select", {}, ...DIFFICULTIES.map((o) => h("option", { value: o }, o || "—")));
+  dsel.value = q.difficulty || "";
+  dsel.addEventListener("change", () => { q.difficulty = dsel.value || null; });  // blank → null, never ""
+  out.push(h("div", { class: "grid" }, field("Difficulty", dsel),
+    field("Marks", bound(q, "marks", { type: "number", placeholder: "optional" }))));
+  if (q.type === "mcq") {
+    q.options = q.options || [];
+    out.push(h("p", { class: "sub" }, "Options (MCQ)"), listFn(q.options, "an answer option…"));
+  }
+  if (q.type === "ordering") {
+    q.options = q.options || [];
+    out.push(h("p", { class: "sub" }, "Steps — enter them in the CORRECT order (the sheet scrambles them)"),
+      listFn(q.options, "a step…"));
+  }
+  if (q.type === "matching") {
+    q.pairs = (q.pairs && q.pairs.length) ? q.pairs : [{ left: "", right: "" }, { left: "", right: "" }];
+    out.push(h("p", { class: "sub" }, "Pairs — each left item and its partner (the right column is scrambled on the sheet)"));
+    q.pairs.forEach((pr, i) => out.push(h("div", { class: "pair-row" },
+      bound(pr, "left", { placeholder: "left item" }), bound(pr, "right", { placeholder: "its partner" }),
+      h("button", { class: "small ghost", type: "button", onclick: () => { q.pairs.splice(i, 1); rr(); } }, "✕"))));
+    out.push(h("button", { class: "small", type: "button", onclick: () => { q.pairs.push({ left: "", right: "" }); rr(); } }, "+ pair"));
+  }
+  if (WRITTEN_TYPES.includes(q.type)) {
+    q.key_points = q.key_points || [];
+    out.push(h("p", { class: "sub" }, "Marking points"), listFn(q.key_points, "a point worth a mark…"));
+  }
+  return out;
+}
+// the "answer" input, replaced by a note for types whose key is computed
+function questionAnswerField(q) {
+  if (DERIVED_TYPES.includes(q.type))
+    return h("p", { class: "sub" }, "The answer key is computed automatically from the " + (q.type === "matching" ? "pairs." : "steps."));
+  return field(q.type === "fill_blank" ? "Answer (the missing word) — write the blank as _____ in the prompt" : "Answer", bound(q, "answer", { area: q.type === "long_answer" || q.type === "numerical" }));
 }
 
 // ── profile ─────────────────────────────────────────────────────────────────
@@ -607,7 +676,155 @@ const ARTIFACT_LABELS = {
     const r = await api("GET", "/artifacts/manifest");
     if (r.ok) (await r.json()).generatable.forEach((g) => { artifactFormats[g.kind] = g.formats; });
   } catch (_) { /* manifest is best-effort; export falls back to docx */ }
+  try {
+    const r = await api("GET", "/artifacts/question-types");
+    if (r.ok) { QMETA = await r.json(); Q_TYPES.splice(0, Q_TYPES.length, ...QMETA.types.map((t) => t.type)); }
+  } catch (_) { /* the builder shows a retry message; Q_TYPES keeps its built-in list */ }
 })();
+
+// ── Quiz / worksheet builder: pick question types → count, difficulty, marks, own
+// instruction per type. The server owns the catalogue (labels, hints, defaults) and
+// previews its retrieval strategy; this panel only edits the blueprint (`bSpec`).
+let QMETA = null;
+let builderKind = null;
+const ASSESSMENT_KINDS = ["quiz", "worksheet"];
+const bSpec = { scope: "auto", types: [] };
+const BSPEC_KEY = "lf.assessmentSpec";
+const GRAN_LABEL = { narrow: "focused passages", section: "whole sections", broad: "whole chapters" };
+let planTimer = null;
+
+function loadSavedSpec() {
+  try {
+    const v = JSON.parse(localStorage.getItem(BSPEC_KEY) || "null");
+    if (v && Array.isArray(v.types)) return v;
+  } catch (_) { /* storage blocked or corrupt → fall back to the preset */ }
+  return null;
+}
+function saveSpec() { try { localStorage.setItem(BSPEC_KEY, JSON.stringify(bSpec)); } catch (_) {} }
+function rowFor(m) {
+  return { type: m.type, count: m.default_count, difficulty: "mixed", marks_each: m.default_marks, instruction: "" };
+}
+// rows in catalogue order (objective types first), blanks removed — what is sent / saved
+function orderedSpec() {
+  const idx = (t) => QMETA.types.findIndex((m) => m.type === t);
+  return { scope: bSpec.scope,
+    types: bSpec.types.slice().sort((a, b) => idx(a.type) - idx(b.type)).map((r) => ({
+      type: r.type, count: Number(r.count), difficulty: r.difficulty,
+      marks_each: r.marks_each ? Number(r.marks_each) : null, instruction: (r.instruction || "").trim() })) };
+}
+function specProblem() {
+  if (!bSpec.types.length) return "Pick at least one question type.";
+  const lim = QMETA.limits;
+  for (const r of bSpec.types) {
+    const n = Number(r.count);
+    if (!Number.isInteger(n) || n < 1 || n > lim.max_per_type)
+      return "Each type needs between 1 and " + lim.max_per_type + " questions.";
+  }
+  const total = bSpec.types.reduce((a, r) => a + Number(r.count), 0);
+  return total > lim.max_total ? "That's " + total + " questions — the limit is " + lim.max_total + "." : "";
+}
+
+function openBuilder(kind) {
+  builderKind = kind;
+  if (!bSpec.types.length) {
+    const saved = loadSavedSpec();
+    const start = saved || (QMETA && { scope: "auto", types: QMETA.presets[0].types });
+    if (start) { bSpec.scope = start.scope || "auto"; bSpec.types = start.types.map((r) => ({ instruction: "", ...r })); }
+  }
+  $("qbuilder").classList.remove("hidden");
+  renderBuilder();
+  $("qbuilder").scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function renderBuilder() {
+  const root = $("qbuilder"); root.textContent = "";
+  if (!QMETA) {
+    root.append(h("p", { class: "sub" }, "The question-type catalogue didn't load. "),
+      h("button", { class: "small", onclick: async () => {
+        const r = await api("GET", "/artifacts/question-types");
+        if (r.ok) { QMETA = await r.json(); openBuilder(builderKind); } } }, "Retry"));
+    return;
+  }
+  const kindLabel = builderKind === "quiz" ? "quiz" : "worksheet";
+  root.append(h("h3", { class: "qb-title" }, "Build your " + kindLabel),
+    h("p", { class: "sub" }, "Choose the question types, then how many of each, how hard, and (optionally) tell the AI how to write them."));
+
+  // presets
+  root.append(h("div", { class: "row", style: "gap:6px" },
+    h("span", { class: "sub", style: "margin:0" }, "Start from:"),
+    ...QMETA.presets.map((p) => h("button", { class: "small ghost", type: "button",
+      onclick: () => { bSpec.types = p.types.map((r) => ({ instruction: "", ...r })); renderBuilder(); } }, p.label)),
+    h("button", { class: "small ghost", type: "button", onclick: () => { bSpec.types = []; renderBuilder(); } }, "Clear")));
+
+  // one card per type
+  const grid = h("div", { class: "qt-grid" });
+  const onChange = () => { saveSpec(); refreshSummary(); };
+  QMETA.types.forEach((m) => {
+    const row = bSpec.types.find((r) => r.type === m.type);
+    const cb = h("input", { type: "checkbox" }); cb.checked = !!row;
+    cb.addEventListener("change", () => {
+      if (cb.checked) bSpec.types.push(rowFor(m)); else bSpec.types = bSpec.types.filter((r) => r.type !== m.type);
+      saveSpec(); renderBuilder(); });
+    const card = h("div", { class: "qt" + (row ? " on" : "") },
+      h("label", { class: "qt-head" }, cb, h("span", {}, m.label)),
+      h("p", { class: "qt-hint" }, m.hint));
+    if (row) {
+      const num = (key, ph) => { const el = bound(row, key, { type: "number", placeholder: ph });
+        el.min = 1; el.addEventListener("input", onChange); return el; };
+      const diff = boundSelect(row, "difficulty", QMETA.difficulties); diff.addEventListener("change", onChange);
+      const instr = bound(row, "instruction", { placeholder: "Optional — e.g. use examples from a Nepali village; avoid trick questions" });
+      instr.maxLength = 500; instr.addEventListener("input", onChange);
+      card.append(h("div", { class: "qt-ctl" },
+        field("How many", num("count", "n")), field("Difficulty", diff), field("Marks each", num("marks_each", "—")),
+        h("div", { class: "wide" }, field("Your instruction for the AI", instr))));
+    }
+    grid.append(card);
+  });
+  root.append(grid);
+
+  // retrieval scope
+  const scope = boundSelect(bSpec, "scope", QMETA.scopes.map((s) => s.value));
+  [...scope.options].forEach((o) => { o.textContent = QMETA.scopes.find((s) => s.value === o.value).label; });
+  const scopeHelp = h("span", { class: "sub", style: "margin:0" });
+  const showHelp = () => { scopeHelp.textContent = QMETA.scopes.find((s) => s.value === bSpec.scope).help; };
+  scope.addEventListener("change", () => { showHelp(); onChange(); }); showHelp();
+  root.append(h("div", { class: "row", style: "gap:10px;align-items:center" },
+    h("label", { class: "f", style: "margin:0;min-width:220px" }, h("span", {}, "Draw from the textbook"), scope), scopeHelp));
+
+  // summary + retrieval plan + actions
+  root.append(h("div", { class: "qb-summary", id: "qbSummary", style: "margin-top:12px" }),
+    h("ul", { class: "qb-plan", id: "qbPlan" }),
+    h("div", { class: "row", style: "margin-top:12px" },
+      h("button", { class: "primary", id: "qbGo", type: "button", onclick: () => generateArtifact(builderKind) }, "Generate " + kindLabel),
+      h("button", { class: "ghost", type: "button", onclick: () => $("qbuilder").classList.add("hidden") }, "Close"),
+      h("span", { class: "status", id: "qbProblem" })));
+  refreshSummary();
+}
+
+function refreshSummary() {
+  const problem = specProblem();
+  $("qbProblem").textContent = problem; $("qbProblem").className = "status" + (problem ? " err" : "");
+  $("qbGo").disabled = !!problem;
+  const total = bSpec.types.reduce((a, r) => a + (Number(r.count) || 0), 0);
+  const marks = bSpec.types.reduce((a, r) => a + (Number(r.count) || 0) * (Number(r.marks_each) || 0), 0);
+  const sum = $("qbSummary"); sum.textContent = "";
+  sum.append(h("span", {}, h("strong", {}, String(total)), " questions"));
+  if (marks) sum.append(h("span", {}, h("strong", {}, String(marks)), " marks"));
+  sum.append(h("span", { class: "tag" }, bSpec.types.length + " type" + (bSpec.types.length === 1 ? "" : "s")));
+  // retrieval strategy preview — pure server call, no LLM cost; debounced while typing
+  clearTimeout(planTimer);
+  const plan = $("qbPlan"); plan.textContent = "";
+  if (problem) return;
+  planTimer = setTimeout(async () => {
+    try {
+      const r = await api("POST", "/artifacts/retrieval-plan", orderedSpec());
+      if (!r.ok) return;
+      const data = await r.json(); plan.textContent = "";
+      data.passes.forEach((p) => plan.append(h("li", {}, "🔎 ", h("b", {}, GRAN_LABEL[p.granularity] || p.granularity),
+        p.granularity === "narrow" || p.granularity === "broad" ? " · top " + p.top_n : " · top " + p.top_n + " sections", " — " + p.why)));
+    } catch (_) { /* the preview is a nicety */ }
+  }, 300);
+}
 
 async function generateArtifact(kind) {
   artifactKind = kind;
@@ -615,7 +832,9 @@ async function generateArtifact(kind) {
   st.innerHTML = '<span class="spinner"></span> Generating the ' + kind + ' (intake → grounding)…';
   document.querySelectorAll("[data-artifact]").forEach((b) => (b.disabled = true));
   try {
-    const res = await api("POST", "/artifacts/" + kind + "/generate", readBrief());
+    const isAssessment = ASSESSMENT_KINDS.includes(kind);
+    const res = await api("POST", "/artifacts/" + kind + "/generate",
+      isAssessment && QMETA ? { ...readBrief(), spec: orderedSpec() } : readBrief());
     if (!res.ok) { const e = await res.json().catch(() => ({}));
       st.className = "status err";
       st.textContent = "Failed: " + (typeof e.detail === "string" ? e.detail : res.status); return; }
@@ -625,13 +844,20 @@ async function generateArtifact(kind) {
     $("artifactFmt").innerHTML = "";
     fmts.forEach((f) => $("artifactFmt").append(h("option", { value: f }, f)));
     $("artifactPanel").classList.remove("hidden");
+    $("artifactRebuild").classList.toggle("hidden", !ASSESSMENT_KINDS.includes(kind));
+    $("qbuilder").classList.add("hidden");
     renderArtifactEditor();
     st.textContent = kind + " ready — edit it below or ✨ Improve, then export.";
   } catch (err) { st.className = "status err"; st.textContent = "Network error: " + err.message; }
   finally { document.querySelectorAll("[data-artifact]").forEach((b) => (b.disabled = false)); }
 }
 document.querySelectorAll("[data-artifact]").forEach((btn) =>
-  btn.addEventListener("click", () => generateArtifact(btn.dataset.artifact)));
+  btn.addEventListener("click", () => {
+    const kind = btn.dataset.artifact;
+    // quiz / worksheet: ask WHAT to ask first; slides have nothing to configure
+    if (ASSESSMENT_KINDS.includes(kind)) openBuilder(kind); else generateArtifact(kind);
+  }));
+$("artifactRebuild").addEventListener("click", () => openBuilder(artifactKind));
 $("artifactImproveAll").addEventListener("click", () => openArtifactImprove("*"));
 
 // a section heading with an inline "✨ Improve" button, for artifacts
@@ -648,19 +874,22 @@ function objectiveItem(o, rr) {
     field("Statement", bound(o, "statement", { area: true })));
 }
 function questionItem(q, arr, rr) {
-  return itemCard(q.id || "question", () => { arr.splice(arr.indexOf(q), 1); rr(); },
+  const dt = q.difficulty ? " · " + q.difficulty : "";
+  return itemCard((q.id || "question") + " · " + q.type + dt, () => { arr.splice(arr.indexOf(q), 1); rr(); },
     h("div", { class: "grid" },
       field("ID", bound(q, "id")),
       field("Type", (() => { const s = boundSelect(q, "type", Q_TYPES); s.addEventListener("change", rr); return s; })())),
     field("Prompt", bound(q, "prompt", { area: true })),
-    field("Answer", bound(q, "answer")),
+    questionAnswerField(q),
     csvField("Objective IDs", q, "objective_ids"),
-    q.type === "mcq" ? (() => { q.options = q.options || [""]; return h("div", {},
-      h("p", { class: "sub" }, "Options (MCQ)"), stringList(q.options, "option", rr)); })() : null);
+    ...questionTypeFields(q, (a, ph) => stringList(a, ph, rr), rr));
 }
 function renderArtifactEditor() {
   const root = $("artifactEditor"); root.textContent = "";
   const rr = renderArtifactEditor, a = artifact;
+  const notes = $("artifactNotes"); notes.textContent = "";
+  if ((a.notes || []).length)
+    notes.append(h("div", { class: "banner err" }, h("ul", {}, ...a.notes.map((n) => h("li", {}, n)))));
   root.append(h("div", { class: "grid" },
     field("Topic", bound(a, "topic")),
     field("Grade", bound(a.curriculum_ref, "grade", { type: "number" })),
@@ -1115,10 +1344,9 @@ function renderEditor() {
           field("ID", bound(q, "id")),
           field("Type", (() => { const s = boundSelect(q, "type", Q_TYPES); s.addEventListener("change", rr); return s; })())),
         field("Prompt", bound(q, "prompt", { area: true })),
-        field("Answer", bound(q, "answer")),
+        questionAnswerField(q),
         csvField("Objective IDs", q, "objective_ids"),
-        q.type === "mcq" ? (() => { q.options = q.options || []; return h("div", {},
-          h("p", { class: "sublabel" }, "Options (MCQ)"), lineList(q.options, "an answer option…")); })() : null),
+        ...questionTypeFields(q, (a, ph) => lineList(a, ph), rr)),
       { id: "", type: "short_answer", prompt: "", answer: "", objective_ids: [], options: null }, rr)));
 
   // ── homework (optional) ─────────────────────────────────────────────────
