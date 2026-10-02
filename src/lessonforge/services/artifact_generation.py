@@ -34,6 +34,7 @@ from ..providers.base import LLMClient
 from ..rag.grounding import GroundingBundle, GroundingRetriever, ensure_sources
 from ..util import extract_json
 from .assessment_retrieval import AssessmentGrounder
+from .assessment_scope import AssessmentScope
 from .model_assembler import assemble_model
 from .normalize import normalize_artifact, normalize_question
 
@@ -93,7 +94,8 @@ class ArtifactGenerator(ABC):
             return GroundingBundle()
 
     def _prompt(
-        self, brief: NormalizedBrief, grounding_ctx: str, spec: AssessmentSpec | None = None
+        self, brief: NormalizedBrief, grounding_ctx: str, spec: AssessmentSpec | None = None,
+        scope: AssessmentScope | None = None,
     ) -> str:
         return _PROMPT_TEMPLATE.format(
             kind=self.kind.value.replace("_", " "),
@@ -106,12 +108,22 @@ class ArtifactGenerator(ABC):
             requirements=self._requirements().strip(),
         )
 
-    def generate(self, brief: NormalizedBrief, spec: AssessmentSpec | None = None) -> BaseModel:
-        if spec is not None and not self.supports_spec:
+    def _normalizer_for(self, scope: AssessmentScope | None) -> Normalizer | None:
+        return self.normalizer
+
+    def generate(
+        self, brief: NormalizedBrief, spec: AssessmentSpec | None = None,
+        scope: AssessmentScope | None = None,
+    ) -> BaseModel:
+        """``spec`` is the question blueprint; ``scope`` anchors the artifact to
+        objectives that already exist (a lesson/unit) instead of inventing its own."""
+        if (spec is not None or scope is not None) and not self.supports_spec:
             raise ValueError(f"a {self.kind.value} has no question blueprint to apply")
+        if scope is not None and spec is None:
+            raise ValueError("an assessment scope needs a question blueprint")
         bundle = self._ground(brief, spec)
         grounding_ctx = bundle.as_prompt_context()
-        prompt = self._prompt(brief, grounding_ctx, spec)
+        prompt = self._prompt(brief, grounding_ctx, spec, scope)
         result = self.llm.complete(
             prompt, system=self._system, json_schema=self.model.model_json_schema()
         )
@@ -119,7 +131,7 @@ class ArtifactGenerator(ABC):
             result.text,
             model=self.model,
             llm=self.llm,
-            normalizer=self.normalizer,
+            normalizer=self._normalizer_for(scope),
             max_repairs=self.max_repairs,
         )
         if not outcome.ok or outcome.obj is None:
@@ -132,11 +144,11 @@ class ArtifactGenerator(ABC):
         # none — so every generated artifact quotes a source.
         if hasattr(obj, "grounding_sources"):
             obj.grounding_sources = ensure_sources(bundle.sources)
-        return self._finalize(obj, brief=brief, grounding_ctx=grounding_ctx, spec=spec)
+        return self._finalize(obj, brief=brief, grounding_ctx=grounding_ctx, spec=spec, scope=scope)
 
     def _finalize(
         self, obj: BaseModel, *, brief: NormalizedBrief, grounding_ctx: str,
-        spec: AssessmentSpec | None,
+        spec: AssessmentSpec | None, scope: AssessmentScope | None = None,
     ) -> BaseModel:
         """Post-generation hook: enforce anything the prompt could only *ask* for."""
         return obj
@@ -213,7 +225,7 @@ Topic: {topic}
 Language mode: {language} (English body; Nepali terms where natural).
 
 {grounding}
-
+{scope_block}
 BLUEPRINT — write EXACTLY these questions, no more and no fewer:
 {blueprint}
 
@@ -310,24 +322,64 @@ class _AssessmentGenerator(ArtifactGenerator):
             return super()._ground(brief)
         return AssessmentGrounder(self.grounding).ground(brief, spec)
 
-    def _prompt(self, brief, grounding_ctx, spec=None):
+    def _normalizer_for(self, scope):
+        """With a scope, the objectives are NOT the model's to write: force the fixed
+        ones into the data before validation, and re-point any question whose
+        objective ids are missing/unknown (round-robin, so coverage stays even) — a
+        model that paraphrases an objective id can't fail the whole artifact."""
+        if scope is None:
+            return self.normalizer
+        fixed = [o.model_dump(mode="json") for o in scope.objectives]
+        ids = [o["id"] for o in fixed]
+
+        def normalize(data):
+            out, notes = _normalize_generated(data)
+            if isinstance(out, dict):
+                out["objectives"] = [dict(o) for o in fixed]
+                for i, q in enumerate(out.get("questions") or []):
+                    if not isinstance(q, dict):
+                        continue
+                    have = q.get("objective_ids")
+                    keep = [x for x in have if x in ids] if isinstance(have, list) else []
+                    q["objective_ids"] = keep or [ids[i % len(ids)]]
+            return out, notes
+
+        return normalize
+
+    def _prompt(self, brief, grounding_ctx, spec=None, scope=None):
         if spec is None:
             return super()._prompt(brief, grounding_ctx)
         example = self._example(brief)
         example["questions"] = _examples(spec.types)
+        scope_block = ""
+        if scope is not None:
+            example["objectives"] = [o.model_dump(mode="json") for o in scope.objectives[:2]]
+            for q in example["questions"]:
+                q["objective_ids"] = [scope.objectives[0].id]
+            scope_block = (
+                f"\nASSESSMENT SCOPE\n{scope.focus}\n"
+                "FIXED OBJECTIVES — copy them verbatim into \"objectives\" (same ids); every "
+                "question's objective_ids must use these ids, and the questions should cover "
+                "ALL of them:\n"
+                + "\n".join(f"- {o.id}: {o.statement} ({o.bloom.value})" for o in scope.objectives)
+                + "\n"
+            )
         # the generic options/pairs line names every type; the per-type rules replace it
         reqs = "\n".join(l for l in self._requirements().strip().splitlines()
                          if '"options" is for' not in l)
+        if scope is not None:
+            reqs = reqs.replace("Provide 1–3 objectives",
+                                "Use the FIXED objectives given above, copied verbatim")
         return _ASSESSMENT_PROMPT.format(
             kind=self.kind.value, grade=brief.grade, subject=brief.subject,
             topic=brief.topic, language=brief.language, grounding=grounding_ctx,
-            blueprint=_blueprint_lines(spec.types), difficulty_guide=_DIFFICULTY_GUIDE,
+            scope_block=scope_block, blueprint=_blueprint_lines(spec.types), difficulty_guide=_DIFFICULTY_GUIDE,
             type_rules=_type_rules(spec.types),
             example=json.dumps(example, ensure_ascii=False, indent=2),
             requirements=reqs,
         )
 
-    def _finalize(self, obj, *, brief, grounding_ctx, spec):
+    def _finalize(self, obj, *, brief, grounding_ctx, spec, scope=None):
         if spec is None:
             return obj
         notes: list[str] = []

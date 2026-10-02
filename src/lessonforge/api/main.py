@@ -48,6 +48,7 @@ from ..rag.documents import (
 from ..rag.loaders import split_front_matter
 from ..services.artifact_generation import generatable_kinds
 from ..services.assessment_retrieval import plan_passes
+from ..services.assessment_scope import scope_from_lesson, scope_from_unit
 from ..services.chat.pipeline import ChatEvent
 from ..services.unit_coherence import UnitCoherence
 from .deps import get_container
@@ -117,6 +118,22 @@ class ArtifactGenerateRequest(GenerateRequest):
     author's question blueprint (types × counts × difficulty × instructions)."""
 
     spec: AssessmentSpec | None = None
+
+
+class LessonAssessmentRequest(BaseModel):
+    """Build a quiz/worksheet FROM a lesson. ``ldd`` is the lesson as the teacher has
+    it now (possibly edited and unsaved) — its objectives become the assessment's."""
+
+    ldd: LessonDesignDocument
+    spec: AssessmentSpec
+
+
+class UnitAssessmentRequest(BaseModel):
+    """Build a quiz/worksheet FROM a saved unit: ``days`` (1-based; omit for every
+    day) picks which days' objectives it covers."""
+
+    spec: AssessmentSpec
+    days: list[int] | None = None
 
 
 class RefineLessonRequest(BaseModel):
@@ -889,6 +906,48 @@ def create_app() -> FastAPI:
             return generator.generate(brief, spec=req.spec)
         except ValueError as exc:  # could not assemble a valid artifact
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def _assessment(c: Container, kind: ArtifactKind, brief: NormalizedBrief,
+                    spec: AssessmentSpec, scope):
+        """Shared tail of the from-lesson / from-unit routes: personalise the brief the
+        way every build is, then generate against the fixed objectives."""
+        _generatable(kind)
+        generator = c.artifact_generator(kind)
+        if not generator.supports_spec:
+            raise HTTPException(status_code=422,
+                                detail=f"a {kind.value} has no question blueprint.")
+        brief = c.profile_store.load().personalize(brief)
+        try:
+            return generator.generate(brief, spec=spec, scope=scope)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/artifacts/{kind}/from-lesson", tags=["artifacts"])
+    def assessment_from_lesson(
+        kind: ArtifactKind, req: LessonAssessmentRequest, c: Container = Depends(get_container)
+    ):
+        """A quiz/worksheet for ONE lesson: topic, grade, subject, framework and — the
+        point — the lesson's own objectives are reused, so every question maps to
+        what that lesson taught. Returns the editable IR like standalone generation."""
+        brief, scope = scope_from_lesson(req.ldd)
+        return _assessment(c, kind, brief, req.spec, scope)
+
+    @app.post("/units/{document_id}/assessment/{kind}", tags=["units"])
+    def assessment_from_unit(
+        document_id: str, kind: ArtifactKind, req: UnitAssessmentRequest,
+        c: Container = Depends(get_container),
+    ):
+        """An end-of-unit (or chosen-days) test from a saved unit. Every selected
+        day's objectives are carried over (id'd ``D2-O1``…) and the prompt requires the
+        questions to spread across all of them."""
+        unit = c.get_document_service().head_unit(document_id)
+        if unit is None:
+            raise HTTPException(status_code=404, detail="unit not found")
+        try:
+            brief, scope = scope_from_unit(unit, req.days)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _assessment(c, kind, brief, req.spec, scope)
 
     @app.post("/artifacts/{kind}/export", tags=["artifacts"])
     def export_generated_artifact(

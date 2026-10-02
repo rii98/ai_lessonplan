@@ -383,6 +383,10 @@ function renderUnit(unit, doc) {
   body.append(h("h3", { class: "section" }, "Export"));
   body.append(h("div", { class: "row" },
     h("button", { class: "primary", onclick: () => exportUnit(exportStatus) }, "Download unit (.zip)"),
+    currentDocId ? h("button", { class: "ghost", title: "Build an end-of-unit test tied to every day's objectives",
+      onclick: () => { location.href = `/?assess=unit&unit=${encodeURIComponent(currentDocId)}&kind=quiz`; } }, "Unit test…") : null,
+    currentDocId ? h("button", { class: "ghost", title: "Build a unit worksheet tied to every day's objectives",
+      onclick: () => { location.href = `/?assess=unit&unit=${encodeURIComponent(currentDocId)}&kind=worksheet`; } }, "Unit worksheet…") : null,
     doc ? h("a", { href: `/library?doc=${doc.id}`, class: "sub", style: "margin:0" }, "Open in Library →") : null,
     exportStatus));
 

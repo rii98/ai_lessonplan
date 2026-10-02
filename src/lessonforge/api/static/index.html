@@ -359,6 +359,7 @@
         <button class="ghost" data-artifact="slides">Just slides</button>
         <span class="status" id="artifactStatus"></span>
       </div>
+      <div id="createAssessHost">
       <div class="qb hidden" id="qbuilder"></div>
       <div class="hidden" id="artifactPanel" style="margin-top:8px">
         <div class="row" style="justify-content:space-between;align-items:center;margin-bottom:2px">
@@ -377,6 +378,7 @@
           <button class="primary" id="artifactExport">Export</button>
           <span class="status" id="artifactExportStatus"></span>
         </div>
+      </div>
       </div>
     </div>
   </div>
@@ -407,10 +409,18 @@
         <button class="ghost" data-export="slides">Slides</button>
         <button class="ghost" data-export="worksheet">Worksheet</button>
         <button class="ghost" data-export="quiz">Quiz</button>
+        <button class="ghost" data-assess-lesson="quiz" title="Choose question types; questions are tied to this lesson's objectives">Quiz from this lesson…</button>
+        <button class="ghost" data-assess-lesson="worksheet" title="Choose question types; questions are tied to this lesson's objectives">Worksheet from this lesson…</button>
         <button class="primary" id="exportZip">Download all (.zip)</button>
       </div>
       <div class="status" id="exportStatus"></div>
     </div>
+  </div>
+
+  <!-- ── Assessment built FROM a lesson or unit (builder + editor move in here) ── -->
+  <div class="card hidden" id="assessCard">
+    <h2>Create an assessment <span class="q-name" id="assessSource"></span></h2>
+    <div class="body" id="lessonAssessHost"></div>
   </div>
 
 </div>
@@ -700,7 +710,7 @@ function loadSavedSpec() {
   } catch (_) { /* storage blocked or corrupt → fall back to the preset */ }
   return null;
 }
-function saveSpec() { try { localStorage.setItem(BSPEC_KEY, JSON.stringify(bSpec)); } catch (_) {} }
+function saveSpec() { try { localStorage.setItem(BSPEC_KEY, JSON.stringify({ types: bSpec.types })); } catch (_) {} }  // scope is per-source, not remembered
 function rowFor(m) {
   return { type: m.type, count: m.default_count, difficulty: "mixed", marks_each: m.default_marks, instruction: "" };
 }
@@ -713,6 +723,7 @@ function orderedSpec() {
       marks_each: r.marks_each ? Number(r.marks_each) : null, instruction: (r.instruction || "").trim() })) };
 }
 function specProblem() {
+  if (builderSource.type === "unit" && !builderSource.selected.size) return "Pick at least one day.";
   if (!bSpec.types.length) return "Pick at least one question type.";
   const lim = QMETA.limits;
   for (const r of bSpec.types) {
@@ -724,13 +735,24 @@ function specProblem() {
   return total > lim.max_total ? "That's " + total + " questions — the limit is " + lim.max_total + "." : "";
 }
 
-function openBuilder(kind) {
-  builderKind = kind;
+// where the assessment comes from: the Create form's brief, an open lesson, or a saved unit
+let builderSource = { type: "brief" };
+function openBuilder(kind, source = { type: "brief" }, keepArtifact = false) {
+  builderKind = kind; builderSource = source;
   if (!bSpec.types.length) {
     const saved = loadSavedSpec();
-    const start = saved || (QMETA && { scope: "auto", types: QMETA.presets[0].types });
-    if (start) { bSpec.scope = start.scope || "auto"; bSpec.types = start.types.map((r) => ({ instruction: "", ...r })); }
+    const start = saved || (QMETA && { types: QMETA.presets[0].types });
+    if (start) bSpec.types = start.types.map((r) => ({ instruction: "", ...r }));
   }
+  // a unit test ranges over the whole chapter; a lesson quiz stays on its own topic
+  bSpec.scope = source.type === "unit" ? "chapter" : "auto";
+  const fromDoc = source.type !== "brief";
+  const host = fromDoc ? $("lessonAssessHost") : $("createAssessHost");
+  host.append($("qbuilder"), $("artifactPanel"));
+  $("assessCard").classList.toggle("hidden", !fromDoc);
+  $("assessSource").textContent = source.type === "lesson" ? "— from this lesson"
+    : source.type === "unit" ? "— from “" + source.title + "”" : "";
+  if (!keepArtifact) $("artifactPanel").classList.add("hidden");   // a previous artifact belongs to its own source
   $("qbuilder").classList.remove("hidden");
   renderBuilder();
   $("qbuilder").scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -746,8 +768,22 @@ function renderBuilder() {
     return;
   }
   const kindLabel = builderKind === "quiz" ? "quiz" : "worksheet";
-  root.append(h("h3", { class: "qb-title" }, "Build your " + kindLabel),
-    h("p", { class: "sub" }, "Choose the question types, then how many of each, how hard, and (optionally) tell the AI how to write them."));
+  const src = builderSource;
+  const title = src.type === "unit" ? "Build a unit " + (builderKind === "quiz" ? "test" : "worksheet")
+    : src.type === "lesson" ? "Build a " + kindLabel + " for this lesson" : "Build your " + kindLabel;
+  root.append(h("h3", { class: "qb-title" }, title));
+  if (src.type === "lesson")
+    root.append(h("p", { class: "sub" }, "Every question is tied to this lesson's own objectives: " +
+      ldd.objectives.map((o) => o.id).join(", ") + ". Nothing outside what the lesson teaches."));
+  else if (src.type === "unit") {
+    root.append(h("p", { class: "sub" }, "Questions are tied to each chosen day's objectives and spread across all of them. Pick the days to cover:"));
+    root.append(h("div", { class: "row", style: "gap:6px;margin-bottom:8px" }, ...src.days.map((d) => {
+      const cb = h("input", { type: "checkbox", style: "width:auto" }); cb.checked = src.selected.has(d.n);
+      cb.addEventListener("change", () => { cb.checked ? src.selected.add(d.n) : src.selected.delete(d.n); refreshSummary(); });
+      return h("label", { class: "chip", title: d.topic }, cb, "Day " + d.n + ": " + truncate(d.topic, 28));
+    })));
+  } else
+    root.append(h("p", { class: "sub" }, "Choose the question types, then how many of each, how hard, and (optionally) tell the AI how to write them."));
 
   // presets
   root.append(h("div", { class: "row", style: "gap:6px" },
@@ -797,7 +833,7 @@ function renderBuilder() {
     h("div", { class: "row", style: "margin-top:12px" },
       h("button", { class: "primary", id: "qbGo", type: "button", onclick: () => generateArtifact(builderKind) }, "Generate " + kindLabel),
       h("button", { class: "ghost", type: "button", onclick: () => $("qbuilder").classList.add("hidden") }, "Close"),
-      h("span", { class: "status", id: "qbProblem" })));
+      h("span", { class: "status", id: "qbProblem" }), h("span", { class: "status", id: "qbStatus" })));
   refreshSummary();
 }
 
@@ -826,15 +862,31 @@ function refreshSummary() {
   }, 300);
 }
 
+// the status line lives in the Create card AND in the builder; keep both in step
+function statusBoth() {
+  const els = () => [$("artifactStatus"), $("qbStatus")].filter(Boolean);
+  const proxy = {};
+  for (const k of ["className", "textContent", "innerHTML"])
+    Object.defineProperty(proxy, k, { set: (v) => els().forEach((e) => { e[k] = v; }) });
+  return proxy;
+}
 async function generateArtifact(kind) {
   artifactKind = kind;
-  const st = $("artifactStatus"); st.className = "status";
+  const st = statusBoth(); st.className = "status";
   st.innerHTML = '<span class="spinner"></span> Generating the ' + kind + ' (intake → grounding)…';
-  document.querySelectorAll("[data-artifact]").forEach((b) => (b.disabled = true));
+  document.querySelectorAll("[data-artifact],[data-assess-lesson]").forEach((b) => (b.disabled = true));
   try {
     const isAssessment = ASSESSMENT_KINDS.includes(kind);
-    const res = await api("POST", "/artifacts/" + kind + "/generate",
-      isAssessment && QMETA ? { ...readBrief(), spec: orderedSpec() } : readBrief());
+    let url = "/artifacts/" + kind + "/generate", body = readBrief();
+    if (isAssessment && QMETA) {
+      const spec = orderedSpec(), src = builderSource;
+      if (src.type === "lesson") { url = "/artifacts/" + kind + "/from-lesson"; body = { ldd, spec }; }
+      else if (src.type === "unit") {
+        url = "/units/" + encodeURIComponent(src.id) + "/assessment/" + kind;
+        body = { spec, days: [...src.selected].sort((a, b) => a - b) };
+      } else body = { ...body, spec };
+    }
+    const res = await api("POST", url, body);
     if (!res.ok) { const e = await res.json().catch(() => ({}));
       st.className = "status err";
       st.textContent = "Failed: " + (typeof e.detail === "string" ? e.detail : res.status); return; }
@@ -849,7 +901,7 @@ async function generateArtifact(kind) {
     renderArtifactEditor();
     st.textContent = kind + " ready — edit it below or ✨ Improve, then export.";
   } catch (err) { st.className = "status err"; st.textContent = "Network error: " + err.message; }
-  finally { document.querySelectorAll("[data-artifact]").forEach((b) => (b.disabled = false)); }
+  finally { document.querySelectorAll("[data-artifact],[data-assess-lesson]").forEach((b) => (b.disabled = false)); }
 }
 document.querySelectorAll("[data-artifact]").forEach((btn) =>
   btn.addEventListener("click", () => {
@@ -857,7 +909,12 @@ document.querySelectorAll("[data-artifact]").forEach((btn) =>
     // quiz / worksheet: ask WHAT to ask first; slides have nothing to configure
     if (ASSESSMENT_KINDS.includes(kind)) openBuilder(kind); else generateArtifact(kind);
   }));
-$("artifactRebuild").addEventListener("click", () => openBuilder(artifactKind));
+$("artifactRebuild").addEventListener("click", () => openBuilder(artifactKind, builderSource, true));
+document.querySelectorAll("[data-assess-lesson]").forEach((btn) =>
+  btn.addEventListener("click", () => {
+    if (!ldd) return;
+    openBuilder(btn.dataset.assessLesson, { type: "lesson" });
+  }));
 $("artifactImproveAll").addEventListener("click", () => openArtifactImprove("*"));
 
 // a section heading with an inline "✨ Improve" button, for artifacts
@@ -1441,9 +1498,26 @@ function enterEditUI(label) {
   $("reviewCard").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+// "/?assess=unit&unit=<id>&kind=quiz": an end-of-unit test built from a saved unit
+async function bootUnitAssessment(unitId, kind) {
+  try {
+    const res = await api("GET", "/units/" + encodeURIComponent(unitId));
+    if (!res.ok) throw new Error("unit not found");
+    const unit = (await res.json()).unit;
+    const days = unit.days.map((d, i) => ({ n: i + 1, topic: d.topic }));
+    const waitQMETA = async () => { for (let i = 0; i < 20 && !QMETA; i++) await new Promise((r) => setTimeout(r, 150)); };
+    await waitQMETA();
+    openBuilder(kind, { type: "unit", id: unitId, title: unit.title, days, selected: new Set(days.map((d) => d.n)) });
+  } catch (e) {
+    $("assessCard").classList.remove("hidden");
+    $("lessonAssessHost").append(h("div", { class: "banner err" }, "Couldn't open the unit: " + e.message));
+  }
+}
+
 async function bootEdit() {
   const q = new URLSearchParams(location.search);
   const unitId = q.get("unit"), dayStr = q.get("day"), docId = q.get("doc");
+  if (q.get("assess") === "unit" && unitId) return bootUnitAssessment(unitId, q.get("kind") === "worksheet" ? "worksheet" : "quiz");
   if (!unitId && !docId) return;
   try {
     if (unitId && dayStr) {
