@@ -43,6 +43,20 @@ AMBIGUOUS = [
     "is there a test on this unit?",
     "prashna",
 ]
+# Indirect phrasings — how students actually talk. The LLM classifier is what really
+# catches these; the lexical layer is the fallback when it is down, so we hold it to a
+# recall floor and watch it as skills/triggers change.
+INDIRECT = [
+    "help me revise osmosis", "i want to revise chapter 3", "can i try some problems on fractions",
+    "how well do i know the water cycle", "i have an exam tomorrow on force, help me prepare",
+    "let me see if i understood photosynthesis", "can you check if i get this",
+    "i'd like some exercises on algebra", "throw some mcq at me", "challenge me on cells",
+    "i need to study for my science test", "give me something to solve on motion",
+    "what can i do to test myself on this?", "drill me on formulas", "hit me with 10 on sound",
+    "mock paper for grade 8", "malai photosynthesis ko prashna deu",
+    "मलाई यो विषयमा परीक्षा दिनुहोस्", "revision questions on the heart", "worksheet on fractions",
+    "i want to see how much i remember", "practice for me",
+]
 # Ordinary questions: no skill scores → zero extra LLM calls.
 PLAIN = [
     "explain photosynthesis",
@@ -76,8 +90,10 @@ class ScriptLLM(LLMClient):
 
 
 def _hybrid(reply=None, **cfg):
+    """A hybrid router; the lexical gate unless a test asks otherwise (the shipped
+    default is ``gate="always"`` — see ``test_default_config_classifies_every_turn``)."""
     llm = ScriptLLM(reply)
-    return HybridRouter(ChatIntentConfig(**cfg), SPECS, llm), llm
+    return HybridRouter(ChatIntentConfig(**{"gate": "lexical", **cfg}), SPECS, llm), llm
 
 
 # ── the lexical gate ─────────────────────────────────────────────────────────
@@ -94,6 +110,11 @@ def test_ambiguous_words_pass_the_gate_but_not_strongly(text):
 @pytest.mark.parametrize("text", PLAIN)
 def test_plain_questions_do_not_pass_the_gate(text):
     assert QUIZ.lexical_score(text) < 0.3, text
+
+
+def test_lexical_fallback_keeps_a_recall_floor_on_indirect_phrasings():
+    hit = [t for t in INDIRECT if QUIZ.lexical_score(t) >= 0.3]
+    assert len(hit) / len(INDIRECT) >= 0.75, f"missed: {[t for t in INDIRECT if t not in hit]}"
 
 
 def test_followups_only_count_right_after_the_skill_ran():
@@ -165,6 +186,19 @@ def test_classifier_prompt_is_built_from_the_skill_specs_and_context():
     assert "- quiz:" in p and QUIZ.description in p
     assert 'NOT quiz: "what is a quiz?"' in p          # counter-examples sharpen the router
     assert "slots: topic" in p and "we covered osmosis" in p and "Osmosis quiz" in p
+
+
+def test_default_config_classifies_every_turn_so_paraphrases_are_not_lost():
+    cfg = ChatIntentConfig()
+    assert cfg.gate == "always"
+    llm = ScriptLLM({"intent": "quiz", "confidence": 0.9, "slots": {"topic": "osmosis"}})
+    router = HybridRouter(cfg, SPECS, llm)
+    # none of these contain a quiz keyword — a lexical gate would never have seen them
+    for text in ("can you check if i get this", "give me something to solve on motion",
+                 "i want to see how much i remember"):
+        assert QUIZ.lexical_score(text) < 0.3
+        assert router.route(text, RouterState()).skill == "quiz", text
+    assert len(llm.calls) == 3
 
 
 def test_gate_always_classifies_every_turn():

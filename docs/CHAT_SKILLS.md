@@ -23,12 +23,16 @@ Layers, cheapest first — so the common case (a plain question) costs **nothing
 |---|-------|------|--------------|
 | 1 | **Awaiting** | free | The last assistant turn asked for a missing slot ("What topic?") → a short reply goes back to that skill. "cancel / never mind" drops it. |
 | 2 | **Follow-up** | free | "another one", "harder" right after a skill ran → back to that skill. |
-| 3 | **Lexical gate** | free | Each skill contributes weighted regex triggers (English, Romanised and Devanagari Nepali). Nothing above the gate → plain question, **no LLM call**. |
-| 4 | **LLM classifier** | 1 fast-model call, *only if gated* | Sees the skill catalogue (descriptions, examples, **counter-examples**), recent turns, and artifacts already made; returns `{intent, confidence, slots}`. Resolves "quiz me on *this*", tells "what is a quiz?" (a question) from "quiz me" (a command). |
+| 3 | **Lexical gate** *(opt-in: `gate: lexical`)* | free | Each skill contributes weighted regex triggers (English, Romanised and Devanagari Nepali). Nothing above the gate → plain question, **no LLM call** — but it misses paraphrases ("help me revise…", "challenge me on…"). |
+| 4 | **LLM classifier** | 1 fast-model call **per turn** (default `gate: always`), run **in parallel** with query-transform + retrieval so it adds ~no latency; `timeout_s` fails open to a plain answer | Sees the skill catalogue (descriptions, examples, **counter-examples**), recent turns, and artifacts already made; returns `{intent, confidence, slots}`. Resolves "quiz me on *this*", tells "what is a quiz?" (a question) from "quiz me" (a command). |
 | 5 | **Threshold** | free | Below `min_confidence` the skill does **not** run — answering is safer than acting on a guess. |
 
 Providers (`chat.intent.provider`): `none` (kill switch) · `rules` (deterministic, free) ·
-`hybrid` (default). `chat.intent.gate: always` classifies every turn (max recall).
+`hybrid` (default). **Why `gate: always`:** a gate in front of the LLM can only lose recall —
+students rarely say "quiz" — so the most robust design classifies every turn, and *hides* the
+cost by running it concurrently with the normal answer's preparation (a skill turn discards
+that work; a plain turn already has it). The lexical triggers remain as the fallback when the
+LLM is down (79% recall on indirect phrasings, held by a test) and as the opt-in cheap mode.
 
 Every decision is a `RoutedIntent` — streamed as an `intent` SSE event and stored on the
 assistant message (`meta.intent`): the raw material for **measuring and improving routing**.

@@ -36,8 +36,11 @@ QUIZ = {"topic": "Sound", "curriculum_ref": {"board": "CDC", "grade": 8, "subjec
 class AppLLM(LLMClient):
     def complete(self, prompt, *, system=None, json_schema=None, temperature=None):
         if system and "intent router" in system:
-            return LLMResult(text=json.dumps({"intent": "quiz", "confidence": 0.95,
-                                              "slots": {"topic": "sound", "count": 3, "types": ["mcq"]}}), raw={})
+            msg = prompt.split("Latest user message:")[-1].lower()
+            if "quiz" in msg:
+                return LLMResult(text=json.dumps({"intent": "quiz", "confidence": 0.95,
+                                                  "slots": {"topic": "sound", "count": 3, "types": ["mcq"]}}), raw={})
+            return LLMResult(text=json.dumps({"intent": "qa", "confidence": 0.9}), raw={})
         return LLMResult(text=json.dumps(QUIZ), raw={})
 
     def stream(self, prompt, *, system=None, temperature=None):

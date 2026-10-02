@@ -15,6 +15,7 @@ be swapped or faked without touching this file.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from concurrent.futures import Future, ThreadPoolExecutor
 
 from ...config import ChatConfig
 from ...domain.chat import (
@@ -64,6 +65,9 @@ class ChatPipeline:
         self.router = router
         self.skills = skills or {}
         self.artifacts = artifacts
+        # The router runs concurrently with query-transform + retrieval (see stream),
+        # so classifying EVERY turn costs ~no latency.
+        self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="intent")
 
     def stream(
         self, conversation: Conversation, request: ChatMessageRequest
@@ -81,19 +85,30 @@ class ChatPipeline:
             filters = conversation.defaults.filters(self.config.retrieval.filter_fields)
         collections = conversation.defaults.collections
 
-        # 2b. intent: is this a plain question, or a request for a skill (a quiz…)?
-        routed = self._route(request.message, history, conversation)
+        # 2b. intent: start routing NOW, in parallel with the (slower) QA preparation
+        # below. A turn that turns out to be a skill request throws the QA work away;
+        # a plain question has already done it, so routing adds ~no latency.
+        route_future = self._submit_route(request.message, history, conversation)
+
+        # 3. transform → 4. retrieve+fuse → 5. build numbered context.
+        prep_error: Exception | None = None
+        transformed = built = None
+        try:
+            transformed = self.transformer.transform(request.message, view.recent)
+            chunks = self.retriever.retrieve(
+                transformed, mode=mode, filters=filters, collections=collections
+            )
+            built = self.context_builder.build(transformed.standalone, chunks)
+        except Exception as exc:  # only fatal if this turns out to be a plain question
+            prep_error = exc
+
+        routed = self._await_route(route_future)
         if routed.skill != QA and routed.skill in self.skills:
             yield from self._run_skill(conversation, request, routed, history, view,
                                        prev_len, mode, filters)
             return
-
-        # 3. transform → 4. retrieve+fuse → 5. build numbered context.
-        transformed = self.transformer.transform(request.message, view.recent)
-        chunks = self.retriever.retrieve(
-            transformed, mode=mode, filters=filters, collections=collections
-        )
-        built = self.context_builder.build(transformed.standalone, chunks)
+        if prep_error is not None:
+            raise prep_error
 
         # 6. persist the user turn (with the scope actually used, for auditing).
         user_meta = {"mode": mode.value, "filters": filters}
@@ -141,12 +156,13 @@ class ChatPipeline:
         })
 
     # ── intent routing + skills ──────────────────────────────────────────────
-    def _route(
+    def _submit_route(
         self, message: str, history: list[ChatMessage], conversation: Conversation
-    ) -> RoutedIntent:
-        """Ask the router; any failure is a plain answer (routing must never break chat)."""
+    ) -> Future[RoutedIntent] | None:
+        """Build the router's view of the conversation (on this thread — the store is
+        not touched from workers) and start classifying in the background."""
         if self.router is None or not self.skills:
-            return RoutedIntent()
+            return None
         try:
             last = history[-1] if history and history[-1].role is Role.assistant else None
             last_intent = (last.meta.get("intent") or {}) if last else {}
@@ -156,8 +172,24 @@ class ChatPipeline:
                 artifacts_note=self._artifacts_note(conversation),
                 history=history[-6:],
             )
-            return self.router.route(message, state)
+            return self._pool.submit(self._safe_route, message, state)
         except Exception:
+            return None
+
+    def _safe_route(self, message: str, state: RouterState) -> RoutedIntent:
+        try:
+            return self.router.route(message, state)  # type: ignore[union-attr]
+        except Exception:
+            return RoutedIntent()
+
+    def _await_route(self, future: Future[RoutedIntent] | None) -> RoutedIntent:
+        """The decision, or a plain answer if routing is unavailable or too slow."""
+        if future is None:
+            return RoutedIntent()
+        try:
+            return future.result(timeout=self.config.intent.timeout_s)
+        except Exception:  # timeout or worker failure: fail open
+            future.cancel()
             return RoutedIntent()
 
     def _artifacts_note(self, conversation: Conversation) -> str:

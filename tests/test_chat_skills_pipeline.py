@@ -50,8 +50,8 @@ class RoutedLLM(LLMClient):
         return True
 
 
-def _build(fake_embedder, fake_store, fake_reranker, llm, *, router=None):
-    config = ChatConfig()
+def _build(fake_embedder, fake_store, fake_reranker, llm, *, router=None, gate="always", **intent):
+    config = ChatConfig(intent={"gate": gate, **intent})
     config.retrieval.collections = []
     store = MemoryChatStore()
     deps = SkillDeps(llm=llm, llm_fast=llm, grounding=None, config=config)
@@ -69,9 +69,9 @@ def _build(fake_embedder, fake_store, fake_reranker, llm, *, router=None):
 
 @pytest.fixture
 def parts(fake_embedder, fake_store, fake_reranker):
-    def make(intent=None, router=None):
+    def make(intent=None, router=None, **cfg):
         llm = RoutedLLM(intent)
-        return (llm, *_build(fake_embedder, fake_store, fake_reranker, llm, router=router))
+        return (llm, *_build(fake_embedder, fake_store, fake_reranker, llm, router=router, **cfg))
     return make
 
 
@@ -100,12 +100,79 @@ def test_quiz_request_becomes_a_persisted_artifact(parts):
     assert store.get(conv.id).title == "quiz me on sound"                          # still auto-titles
 
 
-def test_plain_question_flow_is_untouched_and_costs_no_extra_llm_call(parts):
-    llm, pipe, store, conv = parts()
+def test_plain_question_flow_is_untouched(parts):
+    llm, pipe, store, conv = parts()           # default: every turn is classified…
     events = _say(pipe, conv, "explain photosynthesis")
-    assert [e.type for e in events] == ["token", "sources", "done"]      # no intent/artifact noise
+    assert [e.type for e in events] == ["token", "sources", "done"]      # …but no intent/artifact noise
     assert store.messages(conv.id)[1].meta["intent"]["skill"] == "qa"
-    assert not any("intent router" in c for c in llm.calls)             # the gate kept the LLM out
+    assert any("intent router" in c for c in llm.calls)
+
+
+def test_lexical_gate_keeps_the_llm_out_of_plain_questions(parts):
+    llm, pipe, _store, conv = parts(gate="lexical")
+    _say(pipe, conv, "explain photosynthesis")
+    assert not any("intent router" in c for c in llm.calls)
+
+
+def test_a_paraphrase_with_no_quiz_keywords_still_becomes_a_quiz(parts):
+    _, pipe, _store, conv = parts({"intent": "quiz", "confidence": 0.9,
+                                  "slots": {"topic": "osmosis", "types": ["mcq"], "count": 3}})
+    events = _say(pipe, conv, "help me revise osmosis")
+    assert any(e.type == "artifact" for e in events)
+
+
+# ── routing runs in parallel and can never stall or break the turn ────────────
+def test_routing_overlaps_with_retrieval_on_a_worker_thread(parts):
+    import threading
+    seen = {}
+    started, release = threading.Event(), threading.Event()
+
+    class Slow(IntentRouter):
+        def route(self, message, state):
+            seen["router_thread"] = threading.current_thread().name
+            started.set()
+            release.wait(2)
+            return RoutedIntent()
+
+    class Probe(PassthroughTransformer):
+        """Runs during the QA prep: proves the router has ALREADY started (overlap)."""
+        def transform(self, question, history):
+            seen["router_started_during_prep"] = started.wait(2)
+            release.set()
+            return super().transform(question, history)
+
+    _, pipe, _store, conv = parts(router=Slow())
+    pipe.transformer = Probe()
+    _say(pipe, conv, "explain photosynthesis")
+    assert seen["router_started_during_prep"] is True
+    assert seen["router_thread"].startswith("intent") and seen["router_thread"] != threading.current_thread().name
+
+
+def test_a_slow_router_times_out_and_the_turn_is_a_plain_answer(parts):
+    import time
+
+    class Hang(IntentRouter):
+        def route(self, message, state):
+            time.sleep(0.6)
+            return RoutedIntent("quiz", 1.0, {"topic": "x"})
+
+    _, pipe, _store, conv = parts(router=Hang(), timeout_s=0.05)
+    assert [e.type for e in _say(pipe, conv, "quiz me on x")] == ["token", "sources", "done"]
+
+
+def test_a_skill_turn_survives_a_failing_qa_preparation(parts):
+    _llm, pipe, _store, conv = parts({"intent": "quiz", "confidence": 0.9,
+                                    "slots": {"topic": "sound", "types": ["mcq"], "count": 3}})
+    pipe.retriever.retrieve = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("vector store down"))
+    events = _say(pipe, conv, "quiz me on sound")          # retrieval is irrelevant to a quiz
+    assert any(e.type == "artifact" for e in events)
+
+
+def test_a_plain_turn_still_surfaces_a_failing_qa_preparation(parts):
+    _, pipe, _store, conv = parts()
+    pipe.retriever.retrieve = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("vector store down"))
+    with pytest.raises(RuntimeError, match="vector store down"):
+        _say(pipe, conv, "explain photosynthesis")
 
 
 def test_missing_topic_asks_then_the_next_message_completes_the_quiz(parts):

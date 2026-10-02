@@ -396,14 +396,20 @@ class ChatIntentConfig(BaseModel):
       triggers only — free, deterministic, lower recall), or ``hybrid`` (a free
       lexical gate decides whether the fast LLM is worth calling, then the LLM
       classifies and extracts slots).
-    - ``gate``: ``lexical`` only consults the LLM when a skill's trigger words
-      appeared (ordinary questions pay nothing); ``always`` classifies every turn
-      (max recall, +1 fast-model call per message).
+    - ``gate``: ``always`` (default) classifies every turn with the fast model — the
+      most robust choice, because students rarely use a skill's keywords ("help me
+      revise", "challenge me on cells"). The call runs in PARALLEL with query
+      transform + retrieval, so it adds ~no latency. ``lexical`` only consults the LLM
+      when a skill's trigger words appeared (free for ordinary questions, but misses
+      paraphrases).
+    - ``timeout_s``: how long a turn waits for the router; on timeout it is answered
+      as a plain question (routing can never stall or break chat).
     - ``min_confidence``: below this a detected skill is NOT run — the turn falls back
       to a normal answer rather than doing something the user didn't clearly ask for."""
 
     provider: str = "hybrid"        # none | rules | hybrid
-    gate: str = "lexical"           # lexical | always
+    gate: str = "always"            # always | lexical
+    timeout_s: float = 8.0
     min_confidence: float = 0.6
     history_turns: int = 3          # recent turns shown to the classifier
 

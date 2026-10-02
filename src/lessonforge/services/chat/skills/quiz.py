@@ -38,6 +38,14 @@ SPEC = SkillSpec(
         "ask me some questions about the water cycle",
         "i want to practise mcqs on force and motion",
         "another one, but harder",
+        # indirect phrasings — students rarely say "quiz"; the LLM must generalise
+        "help me revise osmosis",
+        "challenge me on cells",
+        "how well do I know the water cycle?",
+        "I have a test tomorrow, can I try some problems?",
+        "hit me with 10 on sound",
+        "let me see if I understood this",
+        "give me a mock paper for grade 8",
     ),
     counter_examples=(
         "what is a quiz?",
@@ -45,6 +53,9 @@ SPEC = SkillSpec(
         "explain photosynthesis",
         "what questions come in the SEE science exam?",
         "give me a lesson plan on fractions",
+        "help me understand osmosis",
+        "what should I revise for the science exam?",
+        "when is the science test?",
     ),
     slots={
         "topic": "what to be quizzed on, self-contained (resolve 'this'/'it' from the conversation)",
@@ -62,7 +73,14 @@ SPEC = SkillSpec(
         Trigger(r"\b(?:i\s+want|let'?s|can\s+(?:you|i)|help\s+me)\s+(?:to\s+)?practi[cs]e\b"),
         Trigger(r"\bcheck\s+(?:my\s+)?(?:knowledge|understanding)\b"),
         Trigger(r"\bsee\s+how\s+much\s+i\s+(?:know|understand)\b"),
-        Trigger(r"प्रश्न\s*(?:सोध|दे)", 0.9),          # Nepali: "ask/give me questions"
+        Trigger(r"\bchallenge\s+me\b|\bhit\s+me\s+with\b|\bthrow\s+(?:some\s+)?\w+\s+at\s+me\b"),
+        Trigger(r"\bhow\s+(?:well|much)\s+do\s+i\s+(?:know|remember|understand)\b"),
+        Trigger(r"\blet\s+me\s+(?:see|check|find\s+out)\s+if\s+i\b|\bsee\s+if\s+i\s+(?:get|understood|know)\b"),
+        Trigger(r"\bmock\s+(?:test|paper|exam|quiz)\b"),
+        Trigger(r"\b(?:i(?:'d| would)?\s+(?:like|need|want)|can\s+i\s+(?:have|get|try)|let\s+me\s+try)\s+(?:some\s+|a\s+few\s+|\d+\s+)?(?:exercises?|problems?|questions?)\b"),
+        Trigger(r"\b(?:revis(?:e|ion)|study\s+for|prepare\s+for)\b", 0.5),   # → the LLM decides
+        Trigger(r"\b(?:exercises?|worksheet)\b", 0.4),
+        Trigger(r"प्रश्न\s*(?:सोध|दे)|परीक्षा\s*(?:दिनुहोस्|लिनुहोस्)", 0.9),          # Nepali: "ask/give me questions"
         Trigger(r"\bprashna\b|क्विज|अभ्यास", 0.5),       # Romanised / Devanagari cues → LLM decides
         Trigger(r"\b(?:quiz|quizzes|mcqs?|questions?|practi[cs]e|exam|test)\b", 0.4),
     ),
