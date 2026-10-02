@@ -21,6 +21,8 @@ from ..domain.assessment import (
     AssessmentSpec,
 )
 from ..domain.chat import (
+    ArtifactAttempt,
+    ChatArtifact,
     ChatMessageRequest,
     Conversation,
     CreateConversationRequest,
@@ -1190,12 +1192,14 @@ def create_app() -> FastAPI:
     def get_conversation(
         conversation_id: str, c: Container = Depends(get_container)
     ) -> dict[str, object]:
-        """A conversation with its full message history (for reloading a thread)."""
+        """A conversation with its full message history (for reloading a thread) and
+        the artifacts (quizzes…) its turns produced, with attempt summaries."""
         conv = _get_conversation(c, conversation_id)
         msgs = c.get_chat_store().messages(conversation_id)
         return {
             "conversation": conv.model_dump(by_alias=True),
             "messages": [m.model_dump() for m in msgs],
+            "artifacts": c.get_artifact_service().summaries(conversation_id),
         }
 
     @app.patch("/chat/conversations/{conversation_id}", response_model=Conversation, tags=["chat"])
@@ -1245,6 +1249,101 @@ def create_app() -> FastAPI:
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    # ── chat artifacts: interactive quizzes the assistant made, played & revisited ──
+    def _artifact(c: Container, artifact_id: str) -> ChatArtifact:
+        art = c.get_chat_store().get_artifact(artifact_id)
+        if art is None:
+            raise HTTPException(status_code=404, detail="artifact not found")
+        return art
+
+    def _attempt(c: Container, attempt_id: str) -> tuple[ArtifactAttempt, ChatArtifact]:
+        att = c.get_chat_store().get_attempt(attempt_id)
+        if att is None:
+            raise HTTPException(status_code=404, detail="attempt not found")
+        return att, _artifact(c, att.artifact_id)
+
+    @app.get("/chat/artifacts/{artifact_id}", tags=["chat"])
+    def get_chat_artifact(artifact_id: str, c: Container = Depends(get_container)):
+        """The artifact as the PLAYER sees it — questions and choices, never answers."""
+        art = _artifact(c, artifact_id)
+        svc = c.get_artifact_service().for_kind(art.kind)
+        from ..services.chat.quiz_play import play_view
+
+        return {"summary": svc.summary(art), "play": play_view(art),
+                "attempts": svc.list_attempts(art)}
+
+    @app.delete("/chat/artifacts/{artifact_id}", tags=["chat"])
+    def delete_chat_artifact(
+        artifact_id: str, c: Container = Depends(get_container)
+    ) -> dict[str, bool]:
+        _artifact(c, artifact_id)
+        return {"deleted": c.get_chat_store().delete_artifact(artifact_id)}
+
+    @app.post("/chat/artifacts/{artifact_id}/attempts", tags=["chat"])
+    def start_attempt(artifact_id: str, c: Container = Depends(get_container)):
+        """Begin a new play-through (the quiz can be retaken any number of times)."""
+        art = _artifact(c, artifact_id)
+        att = c.get_artifact_service().for_kind(art.kind).start(art)
+        return {"attempt_id": att.id, "total": att.total}
+
+    @app.post("/chat/attempts/{attempt_id}/answer", tags=["chat"])
+    def answer_question(
+        attempt_id: str, payload: dict[str, Any] = Body(...), c: Container = Depends(get_container)
+    ):
+        """Grade one answer on the server and reveal the right answer + explanation.
+        Written answers are judged (or self-checked: send ``self_mark`` afterwards)."""
+        att, art = _attempt(c, attempt_id)
+        qid = str(payload.get("question_id", "")).strip()
+        if not qid:
+            raise HTTPException(status_code=422, detail="`question_id` is required")
+        try:
+            return c.get_artifact_service().for_kind(art.kind).answer(
+                art, att, qid, payload.get("response"), payload.get("self_mark"))
+        except KeyError:
+            raise HTTPException(status_code=422, detail=f"unknown question {qid!r}") from None
+
+    @app.post("/chat/attempts/{attempt_id}/finish", tags=["chat"])
+    def finish_attempt(attempt_id: str, c: Container = Depends(get_container)):
+        """End the attempt now (unanswered questions count as missed) and return the
+        full review."""
+        att, art = _attempt(c, attempt_id)
+        svc = c.get_artifact_service().for_kind(art.kind)
+        return svc.review(art, svc.finish(art, att))
+
+    @app.get("/chat/attempts/{attempt_id}", tags=["chat"])
+    def get_attempt_review(attempt_id: str, c: Container = Depends(get_container)):
+        """Revisit an attempt: every answered question with its verdict and the answer."""
+        att, art = _attempt(c, attempt_id)
+        return c.get_artifact_service().for_kind(art.kind).review(art, att)
+
+    @app.post("/chat/attempts/{attempt_id}/retry-missed", tags=["chat"])
+    def retry_missed(attempt_id: str, c: Container = Depends(get_container)):
+        """A new quiz of just the questions this attempt got wrong (no LLM)."""
+        att, art = _attempt(c, attempt_id)
+        svc = c.get_artifact_service().for_kind(art.kind)
+        try:
+            new = svc.retry_missed(art, att)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return svc.summary(new)
+
+    @app.post("/chat/artifacts/{artifact_id}/export", tags=["chat"])
+    def export_chat_quiz(
+        artifact_id: str, c: Container = Depends(get_container),
+        fmt: str = Query(default="docx"),
+    ) -> Response:
+        """Download the quiz as a printable file — the same IR and renderers as the
+        worksheet/quiz exports, so a teacher can print what a student played."""
+        art = _artifact(c, artifact_id)
+        if art.kind != "quiz":
+            raise HTTPException(status_code=422, detail="only quizzes can be exported")
+        try:
+            rendered = c.exporter.render_artifact(
+                ArtifactKind.quiz, Quiz.model_validate(art.payload), fmt=fmt)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return _file_response(rendered)
 
     return app
 

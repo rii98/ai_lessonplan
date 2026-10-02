@@ -389,6 +389,35 @@ class ChatSynthesisConfig(BaseModel):
     require_citations: bool = True
 
 
+class ChatIntentConfig(BaseModel):
+    """Intent detection — which skill (quiz, …) a user turn is asking for.
+
+    - ``provider``: ``none`` (everything is a plain answer), ``rules`` (lexical
+      triggers only — free, deterministic, lower recall), or ``hybrid`` (a free
+      lexical gate decides whether the fast LLM is worth calling, then the LLM
+      classifies and extracts slots).
+    - ``gate``: ``lexical`` only consults the LLM when a skill's trigger words
+      appeared (ordinary questions pay nothing); ``always`` classifies every turn
+      (max recall, +1 fast-model call per message).
+    - ``min_confidence``: below this a detected skill is NOT run — the turn falls back
+      to a normal answer rather than doing something the user didn't clearly ask for."""
+
+    provider: str = "hybrid"        # none | rules | hybrid
+    gate: str = "lexical"           # lexical | always
+    min_confidence: float = 0.6
+    history_turns: int = 3          # recent turns shown to the classifier
+
+
+class ChatQuizConfig(BaseModel):
+    """The interactive quiz skill."""
+
+    enabled: bool = True
+    default_count: int = 5
+    max_count: int = 15
+    default_grade: int = 8          # when the conversation has no grade tag
+    llm_grading: bool = True        # LLM judges typed short/long answers (else self-check)
+
+
 class ChatConfig(BaseModel):
     """The QA chatbot subsystem — a second product surface over the same corpus.
     Every stage is config-tuneable; secrets/DSNs stay env-driven under
@@ -400,6 +429,8 @@ class ChatConfig(BaseModel):
     context: ChatContextConfig = Field(default_factory=ChatContextConfig)
     memory: ChatMemoryConfig = Field(default_factory=ChatMemoryConfig)
     synthesis: ChatSynthesisConfig = Field(default_factory=ChatSynthesisConfig)
+    intent: ChatIntentConfig = Field(default_factory=ChatIntentConfig)
+    quiz: ChatQuizConfig = Field(default_factory=ChatQuizConfig)
 
 
 class Settings(BaseSettings):

@@ -287,11 +287,20 @@ def _type_rules(rows: list[TypeSpec]) -> str:
     return "\n".join(f"- {r.type.value}: {QUESTION_TYPES[r.type].rule}" for r in rows)
 
 
-def _examples(rows: list[TypeSpec]) -> list[dict[str, Any]]:
+_EXPLANATION_EXAMPLE = "One sentence telling the student WHY this is the answer."
+_EXPLANATION_RULE = (
+    "- Every question MUST have an \"explanation\": one or two student-facing sentences "
+    "saying why the answer is right (and, for MCQ, why the tempting wrong option is wrong)."
+)
+
+
+def _examples(rows: list[TypeSpec], explanations: bool = False) -> list[dict[str, Any]]:
     out = []
     for i, r in enumerate(rows, 1):
         q = dict(QUESTION_TYPES[r.type].example)
         q["id"] = f"Q{i}"
+        if explanations:
+            q["explanation"] = _EXPLANATION_EXAMPLE
         out.append(q)
     return out
 
@@ -350,7 +359,7 @@ class _AssessmentGenerator(ArtifactGenerator):
         if spec is None:
             return super()._prompt(brief, grounding_ctx)
         example = self._example(brief)
-        example["questions"] = _examples(spec.types)
+        example["questions"] = _examples(spec.types, spec.explanations)
         scope_block = ""
         if scope is not None:
             example["objectives"] = [o.model_dump(mode="json") for o in scope.objectives[:2]]
@@ -367,6 +376,8 @@ class _AssessmentGenerator(ArtifactGenerator):
         # the generic options/pairs line names every type; the per-type rules replace it
         reqs = "\n".join(l for l in self._requirements().strip().splitlines()
                          if '"options" is for' not in l)
+        if spec.explanations:
+            reqs += "\n" + _EXPLANATION_RULE
         if scope is not None:
             reqs = reqs.replace("Provide 1–3 objectives",
                                 "Use the FIXED objectives given above, copied verbatim")
@@ -387,7 +398,7 @@ class _AssessmentGenerator(ArtifactGenerator):
         short = _shortfall(questions, spec)
         if short:
             questions = _conform(
-                questions + self._top_up(obj, brief, grounding_ctx, short), spec
+                questions + self._top_up(obj, brief, grounding_ctx, short, spec.explanations), spec
             )
             short = _shortfall(questions, spec)
         for row in short:  # row.count is the amount still missing
@@ -407,7 +418,8 @@ class _AssessmentGenerator(ArtifactGenerator):
         obj.notes = notes
         return obj
 
-    def _top_up(self, obj, brief, grounding_ctx, missing: list[TypeSpec]) -> list[Question]:
+    def _top_up(self, obj, brief, grounding_ctx, missing: list[TypeSpec],
+                explanations: bool = False) -> list[Question]:
         """One bounded attempt to write only the missing questions. Any failure
         (non-JSON, an invalid question) just yields fewer — the shortfall is then
         reported honestly instead of failing the whole artifact."""
@@ -417,7 +429,7 @@ class _AssessmentGenerator(ArtifactGenerator):
             existing="\n".join(f"- {q.prompt}" for q in obj.questions) or "- (none)",
             objective_ids=", ".join(o.id for o in obj.objectives),
             grounding=grounding_ctx, type_rules=_type_rules(missing),
-            example=json.dumps({"questions": _examples(missing)}, ensure_ascii=False, indent=2),
+            example=json.dumps({"questions": _examples(missing, explanations)}, ensure_ascii=False, indent=2),
         )
         try:
             raw = extract_json(self.llm.complete(prompt, system=self._system).text)

@@ -95,6 +95,41 @@ class ChatDefaults(BaseModel):
         return where
 
 
+class ChatArtifact(BaseModel):
+    """A structured, interactive thing a chat turn produced — a quiz today; flashcards,
+    a study plan or a worksheet tomorrow. It is NOT message text: it has its own
+    identity, is persisted beside the conversation, and is shown in a side panel the
+    user can reopen any time. ``kind`` selects its renderer/validator; ``payload`` is
+    the kind's own document (for a quiz: the :class:`Quiz` IR), so a new artifact
+    kind needs no schema change here."""
+
+    id: str = Field(default_factory=_new_id)
+    conversation_id: str
+    message_id: str | None = None   # the assistant message that produced it
+    kind: str
+    title: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    meta: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=_now)
+
+
+class ArtifactAttempt(BaseModel):
+    """One play-through of an artifact (a quiz attempt). Many per artifact, so a quiz
+    can be retaken and the history revisited. ``state`` is the kind's own progress
+    record (for a quiz: the per-question answers and verdicts)."""
+
+    id: str = Field(default_factory=_new_id)
+    artifact_id: str
+    conversation_id: str
+    kind: str
+    status: str = "in_progress"     # in_progress | completed
+    score: float = 0.0
+    total: int = 0
+    state: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
 class Conversation(BaseModel):
     id: str = Field(default_factory=_new_id)
     owner_id: str = "default"

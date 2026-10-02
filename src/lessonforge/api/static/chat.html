@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="/static/vendor/katex.min.css" />
 <link rel="stylesheet" href="/static/vendor/highlight-github.min.css" media="(prefers-color-scheme: light)" />
 <link rel="stylesheet" href="/static/vendor/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)" />
+<link rel="stylesheet" href="/static/chat_artifacts.css" />
 <style>
   :root {
     --bg: #f6f7f9; --panel: #ffffff; --ink: #1a2230; --muted: #667085;
@@ -258,6 +259,16 @@
         <div class="hint">Answers are grounded in your collections and cite their sources. Enter to send · Shift+Enter for a newline.</div>
       </div>
     </main>
+
+    <!-- the side canvas: interactive artifacts (quizzes…) the assistant made -->
+    <section class="canvas" id="canvas" aria-label="Quiz">
+      <header>
+        <span class="ttl" id="canvasTitle">Quiz</span>
+        <select id="canvasPick" title="Switch between this chat's quizzes"></select>
+        <button class="x" id="canvasClose" title="Close">✕</button>
+      </header>
+      <div class="cbody" id="canvasBody"></div>
+    </section>
   </div>
 
   <div class="scrim" id="scrim"></div>
@@ -284,6 +295,7 @@
 <script src="/static/vendor/katex.min.js"></script>
 <script src="/static/vendor/purify.min.js"></script>
 <script src="/static/vendor/highlight.min.js"></script>
+<script src="/static/chat_artifacts.js"></script>
 <script>
 "use strict";
 const $ = (s, r=document) => r.querySelector(s);
@@ -310,6 +322,7 @@ function throttle(fn, ms){
 const state = {
   config: { collections: [], filter_fields: [], default_mode: "scoped" },
   convos: [], currentId: null, current: null, streaming: false,
+  artifacts: [],            // this conversation's quizzes (summaries), oldest first
   scope: { mode: "scoped", grade: null, subject: null, class: null, collections: null },
 };
 
@@ -456,17 +469,19 @@ async function loadConvos(){ state.convos = await api("GET", "/chat/conversation
 async function newConvo(){
   const conv = await api("POST", "/chat/conversations", { title: "New chat", defaults: scopeToDefaults() });
   state.convos.unshift(conv); state.currentId = conv.id; state.current = conv;
+  state.artifacts = []; closeCanvas();
   renderConvos(); renderThread([]); $("#input").focus();
 }
 async function deleteConvo(id){
   await api("DELETE", `/chat/conversations/${id}`);
   state.convos = state.convos.filter(c => c.id !== id);
-  if (state.currentId === id){ state.currentId = null; state.current = null; renderThread([]); }
+  if (state.currentId === id){ state.currentId = null; state.current = null; state.artifacts = []; closeCanvas(); renderThread([]); }
   renderConvos();
 }
 async function selectConvo(id){
   const data = await api("GET", `/chat/conversations/${id}`);
   state.currentId = id; state.current = data.conversation;
+  state.artifacts = data.artifacts || []; closeCanvas();
   defaultsToScope(data.conversation.defaults || {});
   renderConvos(); renderThread(data.messages);
 }
@@ -505,7 +520,7 @@ function currentFilters(){
 function renderThread(messages){
   const thread = $("#thread"); thread.innerHTML = "";
   if (!messages.length){ thread.appendChild(welcome()); return; }
-  for (const m of messages) thread.appendChild(bubble(m.role, m.content, m.citations || []));
+  for (const m of messages) thread.appendChild(bubble(m.role, m.content, m.citations || [], m.meta || {}));
   scrollDown();
 }
 function welcome(){
@@ -514,12 +529,14 @@ function welcome(){
   const sug = el("div","suggest");
   ["What misconceptions do Grade 6 students have about photosynthesis?",
    "Summarise the learning outcomes for Grade 7 Science.",
-   "Give me a local-context hook for teaching fractions."].forEach(q => {
+   "Give me a local-context hook for teaching fractions.",
+   "Quiz me on photosynthesis."].forEach(q => {
     const b = el("button"); b.textContent = q; b.onclick = () => { $("#input").value = q; send(); }; sug.appendChild(b);
   });
   w.appendChild(sug); return w;
 }
-function bubble(role, content, citations){
+function bubble(role, content, citations, meta){
+  meta = meta || {};
   const wrap = el("div", "msg " + (role === "user" ? "user" : "ai"));
   const av = el("div","avatar"); av.textContent = role === "user" ? "You"[0] : "◆";
   const body = el("div","body");
@@ -533,11 +550,76 @@ function bubble(role, content, citations){
     const refs = el("div","refs"); refs.hidden = !(citations && citations.length);
     if (citations && citations.length) renderRefs(refs, citations);
     body.appendChild(refs);
+    const holder = el("div", "art-holder"); body.appendChild(holder);
+    (meta.artifact_ids || []).forEach(id => { const a = state.artifacts.find(x => x.id === id); if (a) holder.appendChild(artifactCard(a)); });
+    if (content && !(meta.artifact_ids || []).length && !(meta.intent && meta.intent.skill && meta.intent.skill !== "qa"))
+      body.appendChild(quickActions());
+    wrap._holder = holder;
   }
   wrap.append(av, body);
   wrap._prose = prose; wrap._refs = body.querySelector(".refs");
   return wrap;
 }
+// ── artifacts: cards under a message + the side canvas ─────────────────────────
+function artifactStatus(a){
+  if (a.in_progress) return "In progress";
+  if (!a.attempts) return `${a.question_count} questions · not attempted`;
+  const tail = a.best != null ? ` · best ${a.best % 1 ? a.best.toFixed(1) : a.best}/${a.question_count}` : "";
+  return `${a.question_count} questions · ${a.attempts} attempt${a.attempts>1?"s":""}${tail}`;
+}
+function artifactCard(a){
+  const card = el("div", "art-card"); card.dataset.artifact = a.id;
+  const ic = el("div","ic"); ic.textContent = "🧠";
+  const tx = el("div","tx");
+  const t = el("div","t"); t.textContent = a.title;
+  const s = el("div","s"); s.textContent = artifactStatus(a);
+  tx.append(t, s);
+  const go = el("div","go"); go.textContent = "Open ›";
+  card.append(ic, tx, go);
+  card.onclick = () => openArtifact(a.id);
+  return card;
+}
+function quickActions(){
+  const row = el("div","quick-row");
+  const b = el("button"); b.textContent = "🧠 Quiz me on this";
+  b.onclick = () => { $("#input").value = "Quiz me on this"; send(); };
+  row.appendChild(b); return row;
+}
+function upsertArtifact(a){
+  const i = state.artifacts.findIndex(x => x.id === a.id);
+  if (i >= 0) state.artifacts[i] = a; else state.artifacts.push(a);
+  document.querySelectorAll(`.art-card[data-artifact="${a.id}"]`).forEach(c => c.replaceWith(artifactCard(a)));
+  fillPick();
+}
+function fillPick(){
+  const pick = $("#canvasPick"); const cur = pick.value;
+  pick.innerHTML = "";
+  state.artifacts.forEach((a, i) => { const o = el("option"); o.value = a.id; o.textContent = `${i+1}. ${a.title}`.slice(0, 40); pick.appendChild(o); });
+  if (cur) pick.value = cur;
+  pick.style.display = state.artifacts.length > 1 ? "" : "none";
+}
+function openCanvas(){ $(".app").classList.add("canvas-open"); }
+function closeCanvas(){ $(".app").classList.remove("canvas-open"); }
+async function openArtifact(id){
+  openCanvas(); fillPick(); $("#canvasPick").value = id;
+  $("#canvasBody").innerHTML = `<p class="empty">Loading…</p>`;
+  await window.ChatArtifacts.open(id);
+}
+function initArtifacts(){
+  window.ChatArtifacts.init({
+    body: $("#canvasBody"), titleEl: $("#canvasTitle"), api, renderRich, toast,
+    onChange: upsertArtifact,
+    onNew: (s) => { upsertArtifact(s); openArtifact(s.id); },
+    onDeleted: (id) => {
+      state.artifacts = state.artifacts.filter(a => a.id !== id);
+      document.querySelectorAll(`.art-card[data-artifact="${id}"]`).forEach(c => c.remove());
+      fillPick(); closeCanvas();
+    },
+  });
+  $("#canvasClose").onclick = closeCanvas;
+  $("#canvasPick").onchange = (e) => openArtifact(e.target.value);
+}
+
 function renderRefs(container, citations){
   container.innerHTML = `<div class="refs-h">${citations.length} reference${citations.length>1?"s":""}</div>`;
   citations.forEach(c => {
@@ -582,13 +664,13 @@ async function send(){
   const thread = $("#thread");
   if (thread.querySelector(".welcome")) thread.innerHTML = "";
   thread.appendChild(bubble("user", text, []));
-  const ai = bubble("assistant", "", []);
+  const ai = bubble("assistant", "", [], {});
   thread.appendChild(ai);
   ai._prose.innerHTML = `<span class="typing"><i></i><i></i><i></i></span>`;
   scrollDown();
   state.streaming = true; $("#send").disabled = true;
 
-  let answer = "", citations = [];
+  let answer = "", citations = [], skillTurn = false;
   // Full Markdown+math+code render is heavier than a string assignment, so
   // during streaming we coalesce repaints (≤ ~1 per 90ms). The final answer is
   // always painted once more below, so nothing is lost between throttle ticks.
@@ -614,6 +696,20 @@ async function send(){
           citations = ev.data || [];
           paintAnswer(ai._prose, answer, citations);
           if (citations.length){ ai._refs.hidden = false; renderRefs(ai._refs, citations); }
+        } else if (ev.event === "intent"){
+          const d = ev.data || {};
+          if (d.skill && d.skill !== "qa"){
+            skillTurn = true;
+            const chip = el("div","intent-chip");
+            chip.textContent = d.skill === "quiz" ? "🎯 Quiz request" : `🎯 ${d.skill}`;
+            ai._prose.parentNode.insertBefore(chip, ai._prose);
+          }
+        } else if (ev.event === "status"){
+          ai._prose.innerHTML = `<span class="typing"><i></i><i></i><i></i></span> <span style="color:var(--muted)">${esc(ev.data || "")}</span>`;
+        } else if (ev.event === "artifact"){
+          upsertArtifact(ev.data);
+          ai._holder.appendChild(artifactCard(ev.data));
+          openArtifact(ev.data.id);
         } else if (ev.event === "done"){
           if (ev.data && ev.data.title){ // first message named the conversation
             const c = state.convos.find(x => x.id === state.currentId); if (c){ c.title = ev.data.title; renderConvos(); }
@@ -624,8 +720,10 @@ async function send(){
       }
     }
     repaint.cancel();
-    if (answer) paintAnswer(ai._prose, answer, citations);   // guaranteed final full render
-    else ai._prose.innerHTML = `<em style="color:var(--muted)">No answer was produced.</em>`;
+    if (answer){
+      paintAnswer(ai._prose, answer, citations);   // guaranteed final full render
+      if (!skillTurn && !ai._holder.children.length) ai._prose.closest(".body").appendChild(quickActions());
+    } else ai._prose.innerHTML = `<em style="color:var(--muted)">No answer was produced.</em>`;
     scrollDown();
   } catch(err){
     repaint.cancel();
@@ -673,6 +771,7 @@ async function saveScope(){
 // ── wiring ───────────────────────────────────────────────────────────────────────
 function autoGrow(t){ t.style.height = "auto"; t.style.height = Math.min(t.scrollHeight, 180) + "px"; }
 function init(){
+  initArtifacts();
   $("#newChat").onclick = newConvo;
   $("#send").onclick = send;
   $("#input").addEventListener("input", e => autoGrow(e.target));

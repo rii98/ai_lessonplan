@@ -30,8 +30,7 @@ _BREADCRUMB_SEP = " > "  # must match MarkdownChunker.breadcrumb_sep
 # titled "The Universe". Applied only for MATCHING, never to the displayed label.
 _NUMBERING_RE = re.compile(r"^\s*(?:\d+(?:\.\d+)*\.?|[a-zA-Z]|[ivxIVX]+)[.)]\s+")
 _STOPWORDS = frozenset(
-    "the a an of to in on and or for with without into from by as is are be its "
-    "this that these those study regarding".split()
+    ["the", "a", "an", "of", "to", "in", "on", "and", "or", "for", "with", "without", "into", "from", "by", "as", "is", "are", "be", "its", "this", "that", "these", "those", "study", "regarding"]
 )
 
 
@@ -223,7 +222,7 @@ class CoverageOutline:
         return "\n".join([head, *(f"- {s}" for s in self.sections)])
 
 
-def coverage_gaps(sections: list[str], plan: "UnitPlan", *, min_overlap: float = 0.5) -> list[str]:
+def coverage_gaps(sections: list[str], plan: UnitPlan, *, min_overlap: float = 0.5) -> list[str]:
     """Outline sections the plan appears to skip — a report of likely omissions,
     not a hard gate.
 

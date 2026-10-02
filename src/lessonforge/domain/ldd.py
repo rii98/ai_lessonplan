@@ -121,6 +121,9 @@ class Question(BaseModel):
     marks: int | None = Field(default=None, ge=0)
     # Marking points for a written answer (long_answer/short_answer/numerical).
     key_points: list[str] = Field(default_factory=list)
+    # Student-facing "why this is the answer" — shown as feedback by interactive
+    # quizzes (chat). Empty for printed assessments, which only need the key.
+    explanation: str = ""
 
     @field_validator("difficulty", "marks", mode="before")
     @classmethod

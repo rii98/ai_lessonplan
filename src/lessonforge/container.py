@@ -27,10 +27,14 @@ from .rag.planner import RetrievalPlanner, build_retrieval_planner
 from .rag.retriever import Retriever
 from .services.artifact_generation import ArtifactGenerator, build_generator
 from .services.artifact_refine import ArtifactRefiner
+from .services.chat.artifacts import ArtifactService
 from .services.chat.context import ContextBuilder
+from .services.chat.intent import build_intent_router
 from .services.chat.memory import ConversationMemory
 from .services.chat.pipeline import ChatPipeline
+from .services.chat.quiz_play import LLMGrader, RuleGrader
 from .services.chat.retrieve import ChatRetriever
+from .services.chat.skills import SkillDeps, build_skills
 from .services.chat.store import ChatStore
 from .services.chat.synthesize import AnswerSynthesizer
 from .services.chat.transform import build_query_transformer
@@ -88,6 +92,7 @@ class Container:
     # so existing call sites/tests keep working; wired from ``settings.chat`` below.
     chat_store: ChatStore | None = None
     chat_pipeline: ChatPipeline | None = None
+    artifact_service: ArtifactService | None = None
     # The document/version memory layer. Built lazily (like chat) so its backend can
     # fail in isolation without 500-ing the lesson/corpus surfaces.
     document_store: DocumentStore | None = None
@@ -153,6 +158,16 @@ class Container:
             self.chat_store = build_chat_store(self.settings.chat.store)
         return self.chat_store
 
+    def get_artifact_service(self) -> ArtifactService:
+        """Quiz (and future artifact) play/attempt service over the chat store. Typed
+        written answers are judged by the fast model when ``chat.quiz.llm_grading`` is
+        on; objective types are always graded by rules."""
+        if self.artifact_service is None:
+            grader = (LLMGrader(self.llm_fast) if self.settings.chat.quiz.llm_grading
+                      else RuleGrader())
+            self.artifact_service = ArtifactService(self.get_chat_store(), grader)
+        return self.artifact_service
+
     def get_chat_pipeline(self) -> ChatPipeline:
         """The advanced-RAG streaming chat pipeline, built on first use and cached.
         Uses the cheap/fast model for query understanding, compression, and summaries;
@@ -160,6 +175,13 @@ class Container:
         if self.chat_pipeline is None:
             chat = self.settings.chat
             store = self.get_chat_store()
+            # skills (quiz, …) + the router built from their specs — enabling a new
+            # skill is registering it; nothing here names a concrete one
+            deps = SkillDeps(llm=self.llm, llm_fast=self.llm_fast, grounding=self.grounding,
+                             config=chat)
+            skills = build_skills(deps, enabled=lambda n: n != "quiz" or chat.quiz.enabled)
+            router = build_intent_router(chat.intent, llm=self.llm_fast,
+                                         specs=[s.spec for s in skills.values()])
             self.chat_pipeline = ChatPipeline(
                 store=store,
                 memory=ConversationMemory(store, chat.memory, llm=self.llm_fast),
@@ -168,6 +190,7 @@ class Container:
                 context_builder=ContextBuilder(chat.context, llm=self.llm_fast),
                 synthesizer=AnswerSynthesizer(self.llm, chat.synthesis),
                 config=chat,
+                router=router, skills=skills, artifacts=self.get_artifact_service(),
             )
         return self.chat_pipeline
 

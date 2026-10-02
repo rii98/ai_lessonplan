@@ -26,7 +26,13 @@ from pathlib import Path
 from typing import Any
 
 from ...config import ChatStoreConfig
-from ...domain.chat import ChatDefaults, ChatMessage, Conversation
+from ...domain.chat import (
+    ArtifactAttempt,
+    ChatArtifact,
+    ChatDefaults,
+    ChatMessage,
+    Conversation,
+)
 from ..registry import register_chat_store
 
 
@@ -69,6 +75,32 @@ class ChatStore(ABC):
         """Messages in chronological order. ``limit`` keeps only the most recent
         ``limit`` (still returned oldest-first) for windowed memory."""
 
+    # ── artifacts (a quiz etc. a turn produced) and their play-through attempts ──
+    @abstractmethod
+    def add_artifact(self, artifact: ChatArtifact) -> ChatArtifact: ...
+
+    @abstractmethod
+    def get_artifact(self, artifact_id: str) -> ChatArtifact | None: ...
+
+    @abstractmethod
+    def list_artifacts(self, conversation_id: str) -> list[ChatArtifact]:
+        """A conversation's artifacts, oldest first (the order they were made)."""
+
+    @abstractmethod
+    def delete_artifact(self, artifact_id: str) -> bool:
+        """Delete an artifact and its attempts. Returns whether it existed."""
+
+    @abstractmethod
+    def save_attempt(self, attempt: ArtifactAttempt) -> ArtifactAttempt:
+        """Insert or replace an attempt (it is rewritten as the user answers)."""
+
+    @abstractmethod
+    def get_attempt(self, attempt_id: str) -> ArtifactAttempt | None: ...
+
+    @abstractmethod
+    def list_attempts(self, artifact_id: str) -> list[ArtifactAttempt]:
+        """An artifact's attempts, newest first."""
+
     @classmethod
     def from_config(cls, cfg: ChatStoreConfig) -> ChatStore:  # pragma: no cover
         raise NotImplementedError
@@ -82,6 +114,8 @@ class MemoryChatStore(ChatStore):
     def __init__(self) -> None:
         self._convs: dict[str, Conversation] = {}
         self._msgs: dict[str, list[ChatMessage]] = {}
+        self._artifacts: dict[str, ChatArtifact] = {}
+        self._attempts: dict[str, ArtifactAttempt] = {}
         self._lock = threading.Lock()
 
     @classmethod
@@ -122,7 +156,43 @@ class MemoryChatStore(ChatStore):
         with self._lock:
             existed = self._convs.pop(conversation_id, None) is not None
             self._msgs.pop(conversation_id, None)
+            gone = {a.id for a in self._artifacts.values() if a.conversation_id == conversation_id}
+            for aid in gone:
+                self._artifacts.pop(aid, None)
+            for tid in [t.id for t in self._attempts.values() if t.artifact_id in gone]:
+                self._attempts.pop(tid, None)
         return existed
+
+    def add_artifact(self, artifact: ChatArtifact) -> ChatArtifact:
+        with self._lock:
+            self._artifacts[artifact.id] = artifact
+        return artifact
+
+    def get_artifact(self, artifact_id: str) -> ChatArtifact | None:
+        return self._artifacts.get(artifact_id)
+
+    def list_artifacts(self, conversation_id: str) -> list[ChatArtifact]:
+        found = [a for a in self._artifacts.values() if a.conversation_id == conversation_id]
+        return sorted(found, key=lambda a: a.created_at)
+
+    def delete_artifact(self, artifact_id: str) -> bool:
+        with self._lock:
+            existed = self._artifacts.pop(artifact_id, None) is not None
+            for tid in [t.id for t in self._attempts.values() if t.artifact_id == artifact_id]:
+                self._attempts.pop(tid, None)
+        return existed
+
+    def save_attempt(self, attempt: ArtifactAttempt) -> ArtifactAttempt:
+        with self._lock:
+            self._attempts[attempt.id] = attempt
+        return attempt
+
+    def get_attempt(self, attempt_id: str) -> ArtifactAttempt | None:
+        return self._attempts.get(attempt_id)
+
+    def list_attempts(self, artifact_id: str) -> list[ArtifactAttempt]:
+        found = [t for t in self._attempts.values() if t.artifact_id == artifact_id]
+        return sorted(found, key=lambda t: t.created_at, reverse=True)
 
     def add_message(self, conversation_id: str, message: ChatMessage) -> ChatMessage:
         with self._lock:
@@ -187,6 +257,38 @@ class _SqlChatStore(ChatStore):
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS ix_chat_messages_conv "
                 "ON chat_messages (conversation_id, ord)"
+            )
+            cur.execute(
+                "CREATE TABLE IF NOT EXISTS chat_artifacts ("
+                " id TEXT PRIMARY KEY,"
+                " conversation_id TEXT NOT NULL,"
+                " message_id TEXT,"
+                " kind TEXT NOT NULL,"
+                " title TEXT NOT NULL,"
+                " payload TEXT NOT NULL,"
+                " meta TEXT NOT NULL,"
+                " created_at TEXT NOT NULL)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS ix_chat_artifacts_conv "
+                "ON chat_artifacts (conversation_id, created_at)"
+            )
+            cur.execute(
+                "CREATE TABLE IF NOT EXISTS chat_attempts ("
+                " id TEXT PRIMARY KEY,"
+                " artifact_id TEXT NOT NULL,"
+                " conversation_id TEXT NOT NULL,"
+                " kind TEXT NOT NULL,"
+                " status TEXT NOT NULL,"
+                " score REAL NOT NULL,"
+                " total INTEGER NOT NULL,"
+                " state TEXT NOT NULL,"
+                " created_at TEXT NOT NULL,"
+                " updated_at TEXT NOT NULL)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS ix_chat_attempts_artifact "
+                "ON chat_attempts (artifact_id, created_at)"
             )
             conn.commit()
 
@@ -286,10 +388,106 @@ class _SqlChatStore(ChatStore):
                 self._q("DELETE FROM chat_messages WHERE conversation_id = ?"), (conversation_id,)
             )
             cur.execute(
+                self._q("DELETE FROM chat_attempts WHERE conversation_id = ?"), (conversation_id,)
+            )
+            cur.execute(
+                self._q("DELETE FROM chat_artifacts WHERE conversation_id = ?"), (conversation_id,)
+            )
+            cur.execute(
                 self._q("DELETE FROM chat_conversations WHERE id = ?"), (conversation_id,)
             )
             conn.commit()
         return existed
+
+    # ── artifacts + attempts ─────────────────────────────────────────────────
+    _ART_COLS = "id, conversation_id, message_id, kind, title, payload, meta, created_at"
+    _ATT_COLS = ("id, artifact_id, conversation_id, kind, status, score, total, state, "
+                 "created_at, updated_at")
+
+    @staticmethod
+    def _art_from_row(r: Any) -> ChatArtifact:
+        return ChatArtifact(
+            id=r[0], conversation_id=r[1], message_id=r[2], kind=r[3], title=r[4],
+            payload=json.loads(r[5]), meta=json.loads(r[6]), created_at=r[7],
+        )
+
+    @staticmethod
+    def _att_from_row(r: Any) -> ArtifactAttempt:
+        return ArtifactAttempt(
+            id=r[0], artifact_id=r[1], conversation_id=r[2], kind=r[3], status=r[4],
+            score=r[5], total=r[6], state=json.loads(r[7]), created_at=r[8], updated_at=r[9],
+        )
+
+    def add_artifact(self, artifact: ChatArtifact) -> ChatArtifact:
+        with self._connect() as (conn, cur):
+            cur.execute(
+                self._q(f"INSERT INTO chat_artifacts ({self._ART_COLS}) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
+                (artifact.id, artifact.conversation_id, artifact.message_id, artifact.kind,
+                 artifact.title, json.dumps(artifact.payload), json.dumps(artifact.meta),
+                 artifact.created_at.isoformat()),
+            )
+            conn.commit()
+        return artifact
+
+    def get_artifact(self, artifact_id: str) -> ChatArtifact | None:
+        with self._connect() as (_conn, cur):
+            cur.execute(self._q(f"SELECT {self._ART_COLS} FROM chat_artifacts WHERE id = ?"),
+                        (artifact_id,))
+            row = cur.fetchone()
+        return self._art_from_row(row) if row else None
+
+    def list_artifacts(self, conversation_id: str) -> list[ChatArtifact]:
+        with self._connect() as (_conn, cur):
+            cur.execute(
+                self._q(f"SELECT {self._ART_COLS} FROM chat_artifacts "
+                        "WHERE conversation_id = ? ORDER BY created_at ASC"),
+                (conversation_id,))
+            rows = cur.fetchall()
+        return [self._art_from_row(r) for r in rows]
+
+    def delete_artifact(self, artifact_id: str) -> bool:
+        with self._connect() as (conn, cur):
+            cur.execute(self._q("SELECT 1 FROM chat_artifacts WHERE id = ?"), (artifact_id,))
+            existed = cur.fetchone() is not None
+            cur.execute(self._q("DELETE FROM chat_attempts WHERE artifact_id = ?"), (artifact_id,))
+            cur.execute(self._q("DELETE FROM chat_artifacts WHERE id = ?"), (artifact_id,))
+            conn.commit()
+        return existed
+
+    def save_attempt(self, attempt: ArtifactAttempt) -> ArtifactAttempt:
+        row = (attempt.status, attempt.score, attempt.total, json.dumps(attempt.state),
+               attempt.updated_at.isoformat(), attempt.id)
+        with self._connect() as (conn, cur):
+            cur.execute(
+                self._q("UPDATE chat_attempts SET status=?, score=?, total=?, state=?, "
+                        "updated_at=? WHERE id=?"), row)
+            if cur.rowcount == 0:  # portable upsert (no dialect-specific ON CONFLICT)
+                cur.execute(
+                    self._q(f"INSERT INTO chat_attempts ({self._ATT_COLS}) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+                    (attempt.id, attempt.artifact_id, attempt.conversation_id, attempt.kind,
+                     attempt.status, attempt.score, attempt.total, json.dumps(attempt.state),
+                     attempt.created_at.isoformat(), attempt.updated_at.isoformat()),
+                )
+            conn.commit()
+        return attempt
+
+    def get_attempt(self, attempt_id: str) -> ArtifactAttempt | None:
+        with self._connect() as (_conn, cur):
+            cur.execute(self._q(f"SELECT {self._ATT_COLS} FROM chat_attempts WHERE id = ?"),
+                        (attempt_id,))
+            row = cur.fetchone()
+        return self._att_from_row(row) if row else None
+
+    def list_attempts(self, artifact_id: str) -> list[ArtifactAttempt]:
+        with self._connect() as (_conn, cur):
+            cur.execute(
+                self._q(f"SELECT {self._ATT_COLS} FROM chat_attempts "
+                        "WHERE artifact_id = ? ORDER BY created_at DESC"),
+                (artifact_id,))
+            rows = cur.fetchall()
+        return [self._att_from_row(r) for r in rows]
 
     def add_message(self, conversation_id: str, message: ChatMessage) -> ChatMessage:
         with self._connect() as (conn, cur):

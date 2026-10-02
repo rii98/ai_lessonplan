@@ -184,6 +184,9 @@ class AssessmentSpec(BaseModel):
     types: list[TypeSpec] = Field(min_length=1)
     # auto: pick retrieval per type (recommended). Otherwise force one granularity.
     scope: Scope = "auto"
+    # Ask the model for a student-facing ``explanation`` on every question (the
+    # feedback an interactive quiz shows after each answer). Off for printed sheets.
+    explanations: bool = False
 
     @model_validator(mode="after")
     def _valid(self) -> AssessmentSpec:
@@ -259,6 +262,9 @@ class QuestionView:
     response_lines: int = 0                           # ruled lines to write on
     answer: str = ""                                  # the answer-key text
     key_points: list[str] = field(default_factory=list)
+    # The key as letters, for machine grading: matching → the letter of each left
+    # item's partner (in left order); ordering → the letters in correct order.
+    answer_letters: list[str] = field(default_factory=list)
 
 
 # Ruled lines under a written-answer question. The legacy flat layout keeps one
@@ -293,12 +299,14 @@ def view(q: Question, number: int, *, default_marks: int | None = None,
         v.right = [f"{_letter(j)}. {pairs[k].right}" for j, k in enumerate(order)]
         letter_of = {k: _letter(j) for j, k in enumerate(order)}
         v.answer = ",  ".join(f"{i + 1}–{letter_of[i]}" for i in range(len(pairs)))
+        v.answer_letters = [letter_of[i] for i in range(len(pairs))]
     elif t is QuestionType.ordering:
         steps = q.options or []
         order = _shuffled(len(steps), f"{q.id}|{q.prompt}")
         v.choices = [f"{_letter(j)}. {steps[k]}" for j, k in enumerate(order)]
         letter_of = {k: _letter(j) for j, k in enumerate(order)}
         v.answer = " → ".join(letter_of[i] for i in range(len(steps)))
+        v.answer_letters = [letter_of[i] for i in range(len(steps))]
         v.response_lines = 1
     else:
         v.response_lines = _RESPONSE_LINES.get(t, 1)

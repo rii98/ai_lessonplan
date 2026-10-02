@@ -277,6 +277,8 @@ def normalize_question(q: Any, notes: list[str], where: str) -> None:
         q.pop("key_points", None)
     if q.get("answer") is None:
         q["answer"] = ""
+    if q.get("explanation") is None:
+        q.pop("explanation", None)
     _norm_pairs(q, notes, where)
     if q.get("type") != "matching" and q.get("pairs") is not None:
         q["pairs"] = None
