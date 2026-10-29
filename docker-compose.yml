@@ -56,6 +56,10 @@ services:
       # Use the Docker-backed Postgres for chat persistence.
       LF__CHAT__STORE__PROVIDER: postgres
       CHAT_DB_URL: postgresql://lessonforge:lessonforge@postgres:5432/lessonforge
+      # Generated lessons/units + version history live in the same Postgres, so
+      # they survive container recreation (a sqlite file in the container does not).
+      LF__DOCUMENTS__PROVIDER: postgres
+      DOCS_DB_URL: postgresql://lessonforge:lessonforge@postgres:5432/lessonforge
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach host Ollama on Linux
     depends_on:
