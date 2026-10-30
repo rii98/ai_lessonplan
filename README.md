@@ -320,6 +320,13 @@ Edboox authenticates, LessonForge authorizes. Design and decisions:
 - **Contract** — `/api/v1` is versioned; `docs/openapi.v1.json` is checked in and
   CI fails on any breaking change. Chat streaming: [`docs/CHAT_EVENTS.md`](docs/CHAT_EVENTS.md).
 
+- **Owner console** — `/admin` (superadmins): people (disable, refresh, delete
+  their data), owners (read-only), knowledge record book, usage, audit log,
+  maintenance — no terminal needed for day-to-day work.
+- **Live sign-in demo** — off by default; `LF_DEMO=true docker compose --profile dev
+  up -d`, then the fake Edboox's `/demo`: press *Next* to watch the real sign-in
+  between the two apps, including a replayed and a tampered pass being refused.
+
 Switching to the real Edboox is configuration only: `EDBOOX_ISSUER`,
 `EDBOOX_JWKS_URL`, `EDBOOX_LOGIN_URL`, `EDBOOX_WEB_ORIGIN`, `EDBOOX_API_URL`,
 `EDBOOX_API_KEY` (+ `LF_SESSION_SECRET`).

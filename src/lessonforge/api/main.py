@@ -30,7 +30,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ..config import load_settings
 from . import errors
 from .deps import get_container
-from .routers import artifacts, chat, corpus, documents, lessons, platform, reports
+from .routers import admin, artifacts, chat, corpus, demo, documents, lessons, platform, reports
 
 log = logging.getLogger("lessonforge.api")
 
@@ -112,7 +112,7 @@ def create_app() -> FastAPI:
 
     for router in (platform.pages, platform.ops, platform.api, lessons.router,
                    documents.router, artifacts.router, corpus.router, chat.router,
-                   reports.router):
+                   reports.router, admin.router, demo.router):
         app.include_router(router)
     return app
 

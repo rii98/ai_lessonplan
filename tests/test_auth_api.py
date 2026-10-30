@@ -25,6 +25,7 @@ AREAS: list[tuple[str, Perm | None]] = [
     (r"^/api/v1/corpus/", Perm.CORPUS_MANAGE),
     (r"^/api/v1/health/providers$", Perm.OPS),
     (r"^/api/v1/(events|reports/)", Perm.REPORTS_READ),
+    (r"^/api/v1/admin/", Perm.ADMIN),
 ]
 ROLES = {  # role → (sub, token role claim, school, granted superadmin?)
     "student": ("student:1", "student", "sch-7", False),
@@ -145,7 +146,7 @@ def test_logout_clears_the_session(env):
 
 def test_pages_are_static_shells_and_public(env):
     _, client = env
-    for page in ("/", "/chat", "/units", "/library", "/corpus"):
+    for page in ("/", "/chat", "/units", "/library", "/corpus", "/admin"):
         r = client.get(page)
         assert r.status_code == 200 and 'src="/static/lf.js"' in r.text
 

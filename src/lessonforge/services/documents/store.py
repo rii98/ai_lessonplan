@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from ...config import DocumentStoreConfig
-from ...db.pool import Database, as_uuid, id_str, jsonb
+from ...db.pool import Database, as_uuid, contains_pattern, id_str, jsonb
 from ...domain.document import (
     DocumentKind,
     DocumentVersion,
@@ -89,6 +89,10 @@ class DocumentStore(ABC):
 
     @abstractmethod
     def delete(self, document_id: str, *, owner_id: str) -> bool: ...
+
+    @abstractmethod
+    def counts(self) -> dict[str, int]:
+        """Totals for the owner console: documents per kind, and shared ones."""
 
     @classmethod
     def from_config(cls, cfg: DocumentStoreConfig, *, db: Database | None = None) -> DocumentStore:  # pragma: no cover
@@ -199,6 +203,12 @@ class MemoryDocumentStore(DocumentStore):
             doc = doc.model_copy(update={"visibility": visibility, "shared_at": shared_at})
             self._docs[document_id] = doc
             return doc
+
+    def counts(self):
+        docs = list(self._docs.values())
+        return {"lesson": sum(d.kind == DocumentKind.lesson for d in docs),
+                "unit": sum(d.kind == DocumentKind.unit for d in docs),
+                "shared": sum(d.visibility == Visibility.school for d in docs)}
 
     def delete(self, document_id, *, owner_id):
         with self._lock:
@@ -336,7 +346,7 @@ class PostgresDocumentStore(DocumentStore):
                 params.append(val)
         if q:
             sql += " AND d.title ILIKE %s"
-            params.append("%" + q.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_") + "%")
+            params.append(contains_pattern(q))
         if cursor is not None:
             sql += " AND (d.shared_at, d.id) < (%s, %s)"
             params += [cursor.ts, as_uuid(cursor.id)]
@@ -426,3 +436,11 @@ class PostgresDocumentStore(DocumentStore):
             cur.execute("DELETE FROM documents WHERE id = %s AND owner_id = %s RETURNING 1",
                         (did, oid))
             return cur.fetchone() is not None
+
+    def counts(self):
+        with self.db.tx() as cur:
+            cur.execute("SELECT count(*) FILTER (WHERE kind = 'lesson') AS lesson, "
+                        "count(*) FILTER (WHERE kind = 'unit') AS unit, "
+                        "count(*) FILTER (WHERE visibility = 'school') AS shared FROM documents")
+            return {k: int(v) for k, v in cur.fetchone().items()}
+

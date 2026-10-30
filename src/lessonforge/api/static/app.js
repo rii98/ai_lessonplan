@@ -252,6 +252,7 @@ const NAV = [
   { href: "/library", label: "Library", key: "library" },
   { href: "/chat", label: "Chat", key: "chat" },
   { href: "/corpus", label: "Knowledge base", key: "corpus" },
+  { href: "/admin", label: "Owner", key: "admin" },   // hidden by lf.js unless you're an owner
 ];
 function mountNav(active, title, subtitle) {
   const header = document.querySelector("header.top");

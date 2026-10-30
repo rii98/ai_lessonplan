@@ -158,6 +158,14 @@ class Container:
         # would let a chat-store misconfiguration abort the whole container and 500
         # every endpoint (get_container is @lru_cache'd, so the failure would recur).
 
+    def get_admin_service(self):
+        """The owner's operations (console + CLI share it)."""
+        from .services.admin import AdminService
+
+        return AdminService(self.platform, vector_store=self.vector_store, llm=self.llm,
+                            counts=lambda: {"documents": self.get_document_store().counts(),
+                                            "chat": self.get_chat_store().counts()})
+
     def warm(self) -> None:
         """Build the lazily-wired subsystems up front (called once at startup, before
         serving), so concurrent first requests never race to construct them."""

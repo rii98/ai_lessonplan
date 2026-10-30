@@ -90,6 +90,17 @@ class JwksCache:
                 raise AuthError("auth.invalid", "token signed with an unknown key")
             return self._keys[kid]
 
+    def status(self) -> dict[str, Any]:
+        """What we hold for this issuer (refreshing if stale) — for the owner console
+        and the sign-in demo. Never raises."""
+        try:
+            with self._lock:
+                if time.monotonic() - self._fetched_at > self.ttl_s or not self._keys:
+                    self._refresh(time.monotonic())
+            return {"jwks_url": self.url, "ok": True, "kids": sorted(k for k in self._keys if k)}
+        except AuthError as exc:
+            return {"jwks_url": self.url, "ok": False, "kids": [], "error": exc.message}
+
     def _refresh(self, now: float) -> None:
         try:
             client = self._http or httpx.Client(timeout=self.timeout_s)
@@ -121,6 +132,19 @@ class JwtVerifier(TokenVerifier):
                                 min_refetch_s=cfg.jwks_min_refetch_s, http=http)
             for i in cfg.issuers if i.jwks_url
         }
+
+    def key_status(self) -> list[dict[str, Any]]:
+        """Per trusted issuer: which signing keys we currently hold."""
+        out = []
+        for i in self.cfg.issuers:
+            entry: dict[str, Any] = {"name": i.name, "issuer": i.issuer,
+                                     "algorithms": i.algorithms}
+            if i.issuer in self._jwks:
+                entry.update(self._jwks[i.issuer].status())
+            else:
+                entry.update({"ok": bool(i.hs256_secret), "kids": [], "jwks_url": None})
+            out.append(entry)
+        return out
 
     def verify(self, token: str, purpose: TokenPurpose) -> VerifiedToken:
         issuer = self._issuer_of(token)

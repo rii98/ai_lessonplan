@@ -69,6 +69,11 @@ def chat_page() -> HTMLResponse:
     return _page("chat.html", "LessonForge chat")
 
 
+@pages.get("/admin", response_class=HTMLResponse)
+def admin_page() -> HTMLResponse:
+    return _page("admin.html", "Owner console")
+
+
 # ── launch / logout (the LTI-style flow our UI rides on) ─────────────────────
 @pages.post("/auth/launch")
 async def launch(request: Request, c: Container = Depends(get_container)) -> Response:
@@ -148,7 +153,7 @@ def provider_health(c: Container = Depends(get_container)) -> dict[str, object]:
 # ── me ───────────────────────────────────────────────────────────────────────
 _PAGES = (("/", "Lesson editor", Perm.AUTHOR), ("/units", "Units", Perm.AUTHOR),
           ("/library", "Library", Perm.AUTHOR), ("/chat", "Chat", Perm.CHAT),
-          ("/corpus", "Knowledge base", Perm.CORPUS_MANAGE))
+          ("/corpus", "Knowledge base", Perm.CORPUS_MANAGE), ("/admin", "Owner console", Perm.ADMIN))
 
 
 @api.get("/me", tags=["me"])

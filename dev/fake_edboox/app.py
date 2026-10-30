@@ -35,7 +35,7 @@ import jwt
 import psycopg
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import FastAPI, Form, Header, HTTPException, Request
+from fastapi import Body, FastAPI, Form, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from psycopg.rows import dict_row
 
@@ -48,6 +48,8 @@ API_KEY = os.environ.get("EDBOOX_API_KEY", "dev-edboox-api-key")
 DATA_DIR = Path(os.environ.get("EDBOOX_DATA_DIR", "/data"))
 KID = os.environ.get("EDBOOX_KEY_ID", "edboox-dev-1")
 SESSION_COOKIE = "edboox_session"
+DEMO = os.environ.get("EDBOOX_DEMO", "false").lower() in ("1", "true", "yes")
+HERE = Path(__file__).parent
 LAUNCH_TTL_S, API_TTL_S = 60, 900
 
 
@@ -91,6 +93,7 @@ CREATE TABLE IF NOT EXISTS teaching_assignments (
   teacher_id int REFERENCES teachers(id) ON DELETE CASCADE,
   grade text NOT NULL, section text NOT NULL DEFAULT '', subject text NOT NULL,
   PRIMARY KEY (teacher_id, grade, section, subject));
+ALTER TABLE teachers ADD COLUMN IF NOT EXISTS is_admin boolean NOT NULL DEFAULT false;
 """
 
 
@@ -116,6 +119,8 @@ def _db():
 def _seed() -> None:
     with _db() as conn:
         conn.execute(SCHEMA)
+        # the platform owner is Edboox's admin too (manages students & teachers)
+        conn.execute("UPDATE teachers SET is_admin = true WHERE username = 'owner'")
         if conn.execute("SELECT 1 FROM schools LIMIT 1").fetchone():
             return
         pw = _hash("password")
@@ -145,6 +150,7 @@ def _seed() -> None:
             conn.execute("INSERT INTO students (school_id, username, password_hash, full_name, grade, "
                          "section, medium, optional_subjects) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                          (school, user, pw, name, grade, section, medium, optional))
+        conn.execute("UPDATE teachers SET is_admin = true WHERE username = 'owner'")
 
 
 @asynccontextmanager
@@ -251,6 +257,10 @@ def dashboard(request: Request):
         return RedirectResponse("/login", status_code=303)
     extra = (f"Grade: {html.escape(user['grade'])}" if user["kind"] == "student"
              else "<a href=/usage>📈 AI usage report</a>")
+    if user.get("is_admin"):
+        extra += " · <a href=/admin>🏫 Manage students &amp; teachers</a>"
+    if DEMO:
+        extra += " · <a href=/demo>🔐 Live sign-in demo</a>"
     return _page("Edboox", f"""<div class=card><h2>Namaste, {html.escape(user['full_name'])}</h2>
       <p class=muted>{user['kind']} · school {html.escape(user['school_id'])} · {user['sub']}</p>
       <p>{extra}</p>
@@ -354,3 +364,187 @@ def usage(request: Request):
 @app.get("/health")
 def health():
     return JSONResponse({"status": "ok"})
+
+
+# ── Edboox admin: add / remove students and teachers ─────────────────────────
+# Edboox is the system of record for people; LessonForge only ever sees them
+# through signed tokens and the context projection.
+def _require_admin(request: Request) -> dict[str, Any]:
+    user = _current(request)
+    if user is None or not user.get("is_admin"):
+        raise HTTPException(403, "Edboox admins only")
+    return user
+
+
+def _opts(values: list[str], selected: str | None = None) -> str:
+    return "".join(f"<option{' selected' if v == selected else ''}>{html.escape(v)}</option>"
+                   for v in values)
+
+
+def _remove_btn(kind: str, pid: int, what: str) -> str:
+    return (f"<form method=post action=/admin/{kind}/{pid}/delete "
+            f"onsubmit=\"return confirm('Remove this {what} from Edboox?')\">"
+            f"<button style='background:#b91c1c'>Remove</button></form>")
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin_page(request: Request, msg: str = ""):
+    _require_admin(request)
+    with _db() as conn:
+        schools = conn.execute("SELECT * FROM schools ORDER BY id").fetchall()
+        students = conn.execute("SELECT * FROM students ORDER BY school_id, grade, id").fetchall()
+        teachers = conn.execute("SELECT * FROM teachers ORDER BY school_id, id").fetchall()
+        assign = conn.execute("SELECT * FROM teaching_assignments ORDER BY teacher_id").fetchall()
+    by_t: dict[int, list[str]] = {}
+    for a in assign:
+        by_t.setdefault(a["teacher_id"], []).append(
+            f"{a['grade']}{' ' + a['section'] if a['section'] else ''} · {a['subject']}")
+    school_ids = [sc["id"] for sc in schools]
+    grades = [f"Class {n}" for n in range(1, 13)]
+    e = html.escape
+    srows = "".join(
+        f"<tr><td>student:{r['id']}</td><td>{e(r['full_name'])}</td><td>{e(r['username'])}</td>"
+        f"<td>{r['school_id']}</td><td>{e(r['grade'])} {e(r['section'] or '')}</td>"
+        f"<td>{e(r['medium'] or '')}</td><td>{_remove_btn('students', r['id'], 'student')}</td></tr>"
+        for r in students)
+    trows = "".join(
+        f"<tr><td>teacher:{t['id']}</td><td>{e(t['full_name'])}"
+        f"{' <b>(admin)</b>' if t['is_admin'] else ''}</td><td>{e(t['username'])}</td>"
+        f"<td>{t['school_id']}</td><td>{'<br>'.join(e(x) for x in by_t.get(t['id'], []))}</td>"
+        f"<td>{'' if t['is_admin'] else _remove_btn('teachers', t['id'], 'teacher')}</td></tr>"
+        for t in teachers)
+    note = f"<p style='color:#047857'><b>{e(msg)}</b></p>" if msg else ""
+    return _page("Edboox admin", f"""<p><a href=/>← back</a></p>{note}
+      <div class=card><h2>Students</h2><table><tr><th>Edboox id</th><th>Name</th><th>Username</th>
+      <th>School</th><th>Class</th><th>Medium</th><th></th></tr>{srows}</table>
+      <h3>Add a student</h3><form method=post action=/admin/students>
+      <p><input name=full_name placeholder="Full name" required> <input name=username placeholder=username required>
+      <input name=password placeholder=password value=password required></p>
+      <p><select name=school_id>{_opts(school_ids)}</select> <select name=grade>{_opts(grades, 'Class 8')}</select>
+      <input name=section placeholder="Section (A)" size=6>
+      <select name=medium>{_opts(['nepali', 'english'])}</select> <button>Add student</button></p></form></div>
+      <div class=card><h2>Teachers</h2><table><tr><th>Edboox id</th><th>Name</th><th>Username</th>
+      <th>School</th><th>Teaches</th><th></th></tr>{trows}</table>
+      <h3>Add a teacher</h3><form method=post action=/admin/teachers>
+      <p><input name=full_name placeholder="Full name" required> <input name=username placeholder=username required>
+      <input name=password placeholder=password value=password required>
+      <select name=school_id>{_opts(school_ids)}</select></p>
+      <p><textarea name=assignments rows=3 cols=60
+        placeholder="One per line: Class 8 | A | Science and Technology"></textarea></p>
+      <button>Add teacher</button></form></div>
+      <p class=muted>Removing someone here removes them from Edboox only. To delete what LessonForge
+      holds about them, use LessonForge's Owner console → People → Delete their data.</p>""")
+
+
+@app.post("/admin/students")
+def add_student(request: Request, full_name: str = Form(...), username: str = Form(...),
+                password: str = Form(...), school_id: str = Form(...), grade: str = Form(...),
+                section: str = Form(""), medium: str = Form("nepali")):
+    _require_admin(request)
+    try:
+        with _db() as conn:
+            row = conn.execute(
+                "INSERT INTO students (school_id, username, password_hash, full_name, grade, "
+                "section, medium) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+                (school_id, username.strip(), _hash(password), full_name.strip(), grade,
+                 section.strip() or None, medium)).fetchone()
+    except psycopg.errors.UniqueViolation:
+        return RedirectResponse("/admin?msg=That+username+is+taken", status_code=303)
+    return RedirectResponse(f"/admin?msg=Added+student:{row['id']}", status_code=303)
+
+
+@app.post("/admin/teachers")
+def add_teacher(request: Request, full_name: str = Form(...), username: str = Form(...),
+                password: str = Form(...), school_id: str = Form(...),
+                assignments: str = Form("")):
+    _require_admin(request)
+    try:
+        with _db() as conn, conn.transaction():
+            tid = conn.execute(
+                "INSERT INTO teachers (school_id, username, password_hash, full_name) "
+                "VALUES (%s,%s,%s,%s) RETURNING id",
+                (school_id, username.strip(), _hash(password), full_name.strip())).fetchone()["id"]
+            for line in assignments.splitlines():
+                parts = [x.strip() for x in line.split("|")]
+                if len(parts) == 3 and parts[0] and parts[2]:
+                    conn.execute("INSERT INTO teaching_assignments VALUES (%s,%s,%s,%s) "
+                                 "ON CONFLICT DO NOTHING", (tid, parts[0], parts[1], parts[2]))
+    except psycopg.errors.UniqueViolation:
+        return RedirectResponse("/admin?msg=That+username+is+taken", status_code=303)
+    return RedirectResponse(f"/admin?msg=Added+teacher:{tid}", status_code=303)
+
+
+@app.post("/admin/{kind}/{pid}/delete")
+def remove_person(request: Request, kind: str, pid: int):
+    _require_admin(request)
+    if kind not in ("students", "teachers"):
+        raise HTTPException(404)
+    with _db() as conn:
+        guard = " AND NOT is_admin" if kind == "teachers" else ""
+        conn.execute(f"DELETE FROM {kind} WHERE id = %s{guard}", (pid,))
+    return RedirectResponse(f"/admin?msg=Removed+{kind[:-1]}:{pid}", status_code=303)
+
+
+# ── live sign-in demo (EDBOOX_DEMO, off by default) ──────────────────────────
+def _demo_on() -> None:
+    if not DEMO:
+        raise HTTPException(404, "demo is off (set LF_DEMO=true)")
+
+
+@app.get("/demo", response_class=HTMLResponse)
+def demo_page():
+    if not DEMO:
+        return _page("Demo off", "<div class=card><h2>The live sign-in demo is off</h2>"
+                     "<p>Start the stack with <code>LF_DEMO=true docker compose --profile dev "
+                     "up -d</code> to switch it on (in both apps).</p></div>")
+    with _db() as conn:
+        users = ([{"u": r["username"], "label": f"{r['full_name']} — student, {r['grade']}, "
+                                                f"{r['school_id']}"}
+                  for r in conn.execute("SELECT * FROM students ORDER BY id").fetchall()]
+                 + [{"u": r["username"], "label": f"{r['full_name']} — teacher, {r['school_id']}"}
+                    for r in conn.execute("SELECT * FROM teachers ORDER BY id").fetchall()])
+    page = (HERE / "demo.html").read_text(encoding="utf-8")
+    return HTMLResponse(page.replace("__LF_URL__", LF_PUBLIC_URL)
+                        .replace("__USERS__", json.dumps(users)))
+
+
+@app.post("/demo/api/login")
+def demo_login(request: Request, body: dict = Body(...)):
+    _demo_on()
+    username, password = str(body.get("username", "")), str(body.get("password", ""))
+    with _db() as conn:
+        for kind, table in (("teacher", "teachers"), ("student", "students")):
+            row = conn.execute(f"SELECT * FROM {table} WHERE username = %s", (username,)).fetchone()
+            if row and _verify(password, row["password_hash"]):
+                sub = f"{kind}:{row['id']}"
+                resp = JSONResponse({"sub": sub, "name": row["full_name"], "role": kind,
+                                     "school_id": row["school_id"], "grade": row.get("grade"),
+                                     "password_check": "scrypt hash matched — inside Edboox only"})
+                resp.set_cookie(SESSION_COOKIE, jwt.encode(
+                    {"sub": sub, "iat": int(time.time())}, request.app.state.session_secret,
+                    algorithm="HS256"), httponly=True, samesite="lax")
+                return resp
+    raise HTTPException(401, "wrong username or password")
+
+
+@app.post("/demo/api/pass")
+def demo_pass(request: Request):
+    """Exactly what 'Open AI assistant' mints, returned as JSON instead of a form."""
+    _demo_on()
+    user = _current(request)
+    if user is None:
+        raise HTTPException(401, "sign in first")
+    token = _mint(request.app, user, LAUNCH_TTL_S)
+    return {"token": token, "header": jwt.get_unverified_header(token),
+            "claims": jwt.decode(token, options={"verify_signature": False}),
+            "signed_with": f"Edboox's PRIVATE key '{KID}' (it never leaves Edboox)"}
+
+
+@app.get("/demo/api/projection")
+def demo_projection(request: Request):
+    """What Edboox answers when LessonForge asks about this user (Contract 3)."""
+    _demo_on()
+    user = _current(request)
+    if user is None:
+        raise HTTPException(401, "sign in first")
+    return user_context(user["sub"], x_api_key=API_KEY)

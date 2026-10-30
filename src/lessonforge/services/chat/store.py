@@ -110,6 +110,10 @@ class ChatStore(ABC):
         """An artifact's attempts, newest first."""
 
     @abstractmethod
+    def counts(self) -> dict[str, int]:
+        """Totals for the owner console: conversations, messages, quizzes, attempts."""
+
+    @abstractmethod
     def attempts_by_artifact(self, conversation_id: str) -> dict[str, list[ArtifactAttempt]]:
         """Every attempt in a conversation grouped by artifact (newest first) — one
         read for all of a conversation's artifact summaries."""
@@ -244,6 +248,11 @@ class MemoryChatStore(ChatStore):
     def list_attempts(self, artifact_id):
         return sorted((t for t in self._attempts.values() if t.artifact_id == artifact_id),
                       key=lambda t: t.created_at, reverse=True)
+
+    def counts(self):
+        return {"conversations": len(self._convs),
+                "messages": sum(len(m) for m in self._msgs.values()),
+                "artifacts": len(self._artifacts), "attempts": len(self._attempts)}
 
     def attempts_by_artifact(self, conversation_id):
         out: dict[str, list[ArtifactAttempt]] = defaultdict(list)
@@ -483,3 +492,12 @@ class PostgresChatStore(ChatStore):
                 att = _att(r)
                 out[att.artifact_id].append(att)
         return dict(out)
+
+    def counts(self):
+        with self.db.tx() as cur:   # message total comes from the counters (no scan)
+            cur.execute("SELECT (SELECT count(*) FROM chat_conversations) AS conversations, "
+                        "(SELECT COALESCE(sum(message_count), 0) FROM chat_conversations) AS messages, "
+                        "(SELECT count(*) FROM chat_artifacts) AS artifacts, "
+                        "(SELECT count(*) FROM chat_attempts) AS attempts")
+            return {k: int(v) for k, v in cur.fetchone().items()}
+

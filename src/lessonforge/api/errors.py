@@ -25,6 +25,7 @@ from ..auth.verifier import AuthError
 from ..db.pool import DatabaseUnavailable
 from ..pagination import InvalidCursor
 from ..providers.base import UpstreamUnavailable
+from ..services.admin import AdminError
 from ..services.documents.service import DocumentConflict, DocumentForbidden, DocumentNotFound
 
 log = logging.getLogger("lessonforge.api")
@@ -100,6 +101,10 @@ def install(app: FastAPI, *, login_url: str = "") -> None:
 
     @app.exception_handler(DocumentConflict)
     async def _doc409(request: Request, exc: DocumentConflict):
+        return envelope(request, 409, "conflict", str(exc))
+
+    @app.exception_handler(AdminError)
+    async def _admin409(request: Request, exc: AdminError):
         return envelope(request, 409, "conflict", str(exc))
 
     @app.exception_handler(InvalidCursor)

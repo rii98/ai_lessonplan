@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Live sign-in: Edboox → LessonForge</title>
+<style>
+  :root { --ed: #2563eb; --lf: #2f6f4f; --ink: #1f2937; --muted: #6b7280; --line: #e5e7eb;
+          --bad: #b91c1c; --ok: #047857; --bg: #f8fafc; --hdr: #c2410c; --pay: #7c3aed; --sig: #0891b2; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; margin: 0; color: var(--ink); background: var(--bg); }
+  header { padding: 14px 20px; background: #fff; border-bottom: 1px solid var(--line);
+           display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; }
+  .stage { display: grid; grid-template-columns: 1fr 1.25fr 1fr; gap: 14px; padding: 16px 20px; }
+  @media (max-width: 1000px) { .stage { grid-template-columns: 1fr; } }
+  .app { background: #fff; border-radius: 12px; border: 2px solid var(--line); padding: 12px; min-height: 260px; }
+  .app h2 { margin: 0 0 8px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .app.edboox h2 { color: var(--ed); } .app.lf h2 { color: var(--lf); }
+  .app.active.edboox { border-color: var(--ed); box-shadow: 0 0 0 4px #2563eb22; }
+  .app.active.lf { border-color: var(--lf); box-shadow: 0 0 0 4px #2f6f4f22; }
+  .facts div { font-size: 13px; padding: 3px 0; border-bottom: 1px dashed var(--line); }
+  .facts b { color: var(--muted); font-weight: 500; }
+  .wire { background: #0f172a; color: #e2e8f0; border-radius: 12px; padding: 12px; font: 12px/1.5 ui-monospace, monospace;
+          max-height: 420px; overflow: auto; }
+  .wire .m { margin-bottom: 8px; padding-left: 8px; border-left: 3px solid #475569; }
+  .wire .m.to-lf { border-color: #4ade80; } .wire .m.to-ed { border-color: #60a5fa; }
+  .wire .m.bad { border-color: #f87171; }
+  .wire .ar { color: #94a3b8; }
+  .card { margin: 0 20px 16px; background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .step-n { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  .card h3 { margin: 4px 0 6px; }
+  .why { color: var(--muted); margin: 0 0 10px; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button { font: inherit; padding: 8px 16px; border-radius: 8px; border: 1px solid #cbd5e1; background: #fff; cursor: pointer; }
+  button.primary { background: var(--ed); color: #fff; border: 0; }
+  button:disabled { opacity: .5; cursor: default; }
+  select, input { font: inherit; padding: 7px 10px; border-radius: 8px; border: 1px solid #cbd5e1; }
+  .jwt { word-break: break-all; font: 12px/1.5 ui-monospace, monospace; background: #f1f5f9; padding: 10px; border-radius: 8px; }
+  .jwt .h { color: var(--hdr); } .jwt .p { color: var(--pay); } .jwt .s { color: var(--sig); }
+  pre { background: #f1f5f9; padding: 10px; border-radius: 8px; overflow: auto; font-size: 12px; max-height: 260px; margin: 6px 0; }
+  .ok { color: var(--ok); font-weight: 600; } .bad { color: var(--bad); font-weight: 600; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+  .progress { height: 4px; background: var(--line); margin: 0 20px 12px; border-radius: 4px; overflow: hidden; }
+  .progress > div { height: 100%; background: var(--ed); transition: width .3s; }
+  .timer { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔐 Live sign-in: <span style="color:var(--ed)">Edboox</span> → <span style="color:var(--lf)">LessonForge</span></h1>
+  <div class="controls">
+    <span class="step-n" id="counter"></span>
+    <button id="restart">↺ Restart</button>
+    <button id="next" class="primary">Start ▶</button>
+  </div>
+</header>
+<div class="progress"><div id="bar" style="width:0"></div></div>
+
+<div class="stage">
+  <section class="app edboox" id="paneEd"><h2>📘 Edboox <small style="color:var(--muted)">localhost:8200</small></h2>
+    <div class="facts" id="factsEd"><div class="why">Owns the students, teachers and passwords.</div></div></section>
+  <section><div class="wire" id="wire"><div class="ar">— messages between the apps appear here, live —</div></div></section>
+  <section class="app lf" id="paneLf"><h2>🤖 LessonForge <small style="color:var(--muted)" id="lfUrl"></small></h2>
+    <div class="facts" id="factsLf"><div class="why">Holds no passwords. Trusts only Edboox's signature.</div></div></section>
+</div>
+
+<div class="card" id="stepCard"></div>
+
+<script>
+"use strict";
+const LF = "__LF_URL__";
+const USERS = __USERS__;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const pre = (o) => `<pre>${esc(JSON.stringify(o, null, 2))}</pre>`;
+$("lfUrl").textContent = LF.replace(/^https?:\/\//, "");
+
+/* Demo state, filled in as steps really run. */
+const S = {};
+let timer = null;
+
+/* ── wire log + panes ─────────────────────────────────────────────────── */
+function wire(dir, line, detail, bad = false) {
+  const m = document.createElement("div");
+  m.className = "m " + (dir === "lf" ? "to-lf" : dir === "ed" ? "to-ed" : "") + (bad ? " bad" : "");
+  m.innerHTML = `<div>${esc(line)}</div>${detail ? `<div class="ar">${esc(detail)}</div>` : ""}`;
+  $("wire").append(m);
+  $("wire").scrollTop = 1e9;
+}
+function fact(pane, label, value) {
+  const d = document.createElement("div");
+  d.innerHTML = `<b>${esc(label)}:</b> ${value}`;
+  $(pane === "ed" ? "factsEd" : "factsLf").append(d);
+}
+function focus(pane) {
+  $("paneEd").classList.toggle("active", pane === "ed");
+  $("paneLf").classList.toggle("active", pane === "lf");
+}
+async function call(url, opt = {}) {
+  const res = await fetch(url, { credentials: "include", ...opt,
+    headers: { "Content-Type": "application/json", ...(opt.headers || {}) } });
+  let body = null;
+  try { body = await res.json(); } catch { /* empty */ }
+  return { status: res.status, body };
+}
+const lfErr = (b) => (b && b.error) ? `${b.error.code}: ${b.error.message}` : (b && b.detail) || "error";
+function jwtHtml(t) {
+  const [h, p, s] = t.split(".");
+  return `<div class="jwt"><span class="h">${h}</span>.<span class="p">${p}</span>.<span class="s">${s}</span></div>
+    <p class="why"><span style="color:var(--hdr)">header</span> · <span style="color:var(--pay)">payload (readable by anyone)</span> · <span style="color:var(--sig)">signature (only Edboox's private key can make it)</span></p>`;
+}
+function countdown(el, exp) {
+  clearInterval(timer);
+  const tick = () => {
+    const left = Math.round(exp - Date.now() / 1000);
+    el.innerHTML = left > 0 ? `valid for <b class="timer">${left}s</b>` : `<span class="bad">expired — LessonForge will refuse it</span>`;
+    if (left <= 0) clearInterval(timer);
+  };
+  tick(); timer = setInterval(tick, 500);
+}
+
+/* ── the steps: each one RUNS for real when you press Next ───────────────── */
+const STEPS = [
+  { title: "Who is signing in?", pane: null,
+    why: "Pick any Edboox user. Everything after this happens for real between the two apps.",
+    async show(card) {
+      const opts = USERS.map((u) => `<option value="${esc(u.u)}">${esc(u.label)}</option>`).join("");
+      card.insertAdjacentHTML("beforeend", `<div class="controls"><select id="who">${opts}</select>
+        <input id="pw" type="password" value="password" aria-label="password"></div>`);
+      const keep = () => { S.username = $("who").value; S.password = $("pw").value; };
+      keep();
+      $("who").addEventListener("change", keep);
+      $("pw").addEventListener("input", keep);
+      const st = await call(`${LF}/api/v1/demo/status`);
+      if (st.status !== 200) {
+        card.insertAdjacentHTML("beforeend", `<p class="bad">LessonForge's demo endpoints are off. Restart with LF_DEMO=true.</p>`);
+        $("next").disabled = true;
+      }
+    } },
+
+  { title: "1 · Sign in to Edboox", pane: "ed",
+    why: "The password is checked inside Edboox. LessonForge never sees it.",
+    async run(card) {
+      const pw = S.password ?? "password";
+      wire("ed", `Browser → Edboox  POST /login`, `username=${S.username}  password=••••••`);
+      const r = await call("/demo/api/login", { method: "POST", body: JSON.stringify({ username: S.username, password: pw }) });
+      if (r.status !== 200) throw new Error(r.body?.detail || "login failed");
+      S.user = r.body;
+      wire("", `Edboox → Browser  200, Edboox session cookie set`);
+      fact("ed", "signed in", `${esc(r.body.name)} (<code>${r.body.sub}</code>)`);
+      fact("ed", "role / school", `${r.body.role} / ${r.body.school_id}${r.body.grade ? " / " + esc(r.body.grade) : ""}`);
+      card.insertAdjacentHTML("beforeend", pre(r.body));
+    } },
+
+  { title: "2 · Edboox makes a one-time sign-in pass", pane: "ed",
+    why: "When the user clicks “Open AI assistant”, Edboox signs a short note with its PRIVATE key: who this is, for which app, valid 60 seconds, with a unique id (jti).",
+    async run(card) {
+      const r = await call("/demo/api/pass", { method: "POST" });
+      if (r.status !== 200) throw new Error(r.body?.detail || "could not mint");
+      Object.assign(S, { token: r.body.token, header: r.body.header, claims: r.body.claims });
+      wire("", `Edboox signs pass  jti=${r.body.claims.jti.slice(0, 8)}…`, r.body.signed_with);
+      fact("ed", "pass id (jti)", `<code>${r.body.claims.jti.slice(0, 12)}…</code>`);
+      card.insertAdjacentHTML("beforeend", jwtHtml(r.body.token) + `<div class="grid2"><div><b>Header</b>${pre(r.body.header)}</div><div><b>Payload</b>${pre(r.body.claims)}</div></div><p id="cd"></p>`);
+      countdown($("cd"), r.body.claims.exp);
+    } },
+
+  { title: "3 · Edboox publishes its PUBLIC key", pane: "ed",
+    why: "Anyone can download this key. It can CHECK a signature but can never CREATE one — so even LessonForge cannot forge a pass.",
+    async run(card) {
+      wire("ed", `LessonForge → Edboox  GET /.well-known/jwks.json`, "(fetched and cached by LessonForge's verifier)");
+      const r = await call("/.well-known/jwks.json");
+      const kids = r.body.keys.map((k) => k.kid);
+      const match = kids.includes(S.header.kid);
+      wire("", `Edboox → LessonForge  ${kids.length} public key(s): ${kids.join(", ")}`);
+      card.insertAdjacentHTML("beforeend", `<p>The pass says it was signed by key <code>${esc(S.header.kid)}</code> →
+        <span class="${match ? "ok" : "bad"}">${match ? "that key is published ✔" : "unknown key ✘"}</span></p>
+        ${pre({ kid: r.body.keys[0].kid, kty: r.body.keys[0].kty, alg: r.body.keys[0].alg, n: r.body.keys[0].n.slice(0, 48) + "…", e: r.body.keys[0].e })}`);
+    } },
+
+  { title: "4 · The browser carries the pass to LessonForge", pane: "lf",
+    why: "The pass travels in the body of a POST — never in the URL, so it can't leak into history or logs. LessonForge now runs its REAL sign-in code.",
+    async run(card) {
+      wire("lf", `Browser → LessonForge  POST /auth/launch`, `token=${S.token.slice(0, 24)}… (in the body)`);
+      const r = await call(`${LF}/api/v1/demo/launch`, { method: "POST", body: JSON.stringify({ token: S.token }) });
+      if (r.status !== 200) throw new Error(lfErr(r.body));
+      S.trace = r.body;
+      S.i = 0;
+      card.insertAdjacentHTML("beforeend", `<p>LessonForge checked the pass in <b>${r.body.steps.length}</b> stages — press Next to walk through what it did.</p>`);
+    } },
+
+  ...[0, 1, 2, 3, 4, 5, 6].map((k) => ({
+    title: () => `4.${k + 1} · LessonForge: ${S.trace?.steps[k]?.title ?? "…"}`, pane: "lf",
+    why: () => S.trace?.steps[k]?.explain ?? "",
+    skip: () => !S.trace || !S.trace.steps[k],
+    async run(card) {
+      const st = S.trace.steps[k];
+      card.insertAdjacentHTML("beforeend", `<p class="${st.ok ? "ok" : "bad"}">${st.ok ? "✔ passed" : "✘ refused"}</p>${pre(st.detail)}`);
+      wire("", `LessonForge: ${st.title} … ${st.ok ? "ok" : "REFUSED"}`, "", !st.ok);
+      if (st.title.startsWith("Who is this")) {
+        fact("lf", "principal", `<code>${st.detail.principal_id.slice(0, 8)}…</code> = ${esc(st.detail.edboox_identity)}`);
+        fact("lf", "permissions", esc(st.detail.permissions.join(", ")));
+      }
+      if (st.title.startsWith("Which knowledge")) fact("lf", "shelves", esc([].concat(st.detail.spaces).join(", ")));
+      if (st.title.startsWith("Start a LessonForge session")) {
+        fact("lf", "session", "lf_session cookie (httpOnly) — the Edboox pass is now spent");
+        wire("", `LessonForge → Browser  303 → ${st.detail.lands_on}  + Set-Cookie: lf_session`);
+      }
+      if (!st.ok) $("next").disabled = true;
+    } })),
+
+  { title: "5 · Attack: reuse the same pass", pane: "lf",
+    why: "Someone copied the pass from the network and tries it again. Every pass id (jti) is single-use.",
+    async run(card) {
+      wire("lf", `Attacker → LessonForge  POST /auth/launch`, "the SAME token again", true);
+      const r = await call(`${LF}/api/v1/demo/launch`, { method: "POST", body: JSON.stringify({ token: S.token }) });
+      const last = r.body?.steps?.at(-1);
+      const msg = last && !last.ok ? `${last.detail.code}: ${last.detail.message}` : lfErr(r.body);
+      wire("", `LessonForge → Attacker  refused — ${msg}`, "", true);
+      card.insertAdjacentHTML("beforeend", `<p class="bad">✘ Refused: ${esc(msg)}</p>`);
+    } },
+
+  { title: "6 · Attack: edit the pass to become an owner", pane: "lf",
+    why: "The payload is readable, so an attacker changes role → \"superadmin\" and school → another school, keeping Edboox's signature. Any change breaks the signature.",
+    async run(card) {
+      const [h, , s] = S.token.split(".");
+      const forged = { ...S.claims, role: "superadmin", school_id: "sch-9", jti: crypto.randomUUID() };
+      const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(forged)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      const token = `${h}.${b64}.${s}`;
+      wire("lf", `Attacker → LessonForge  POST /auth/launch`, "payload edited: role=superadmin, school_id=sch-9", true);
+      const r = await call(`${LF}/api/v1/demo/launch`, { method: "POST", body: JSON.stringify({ token }) });
+      const last = r.body?.steps?.at(-1);
+      const msg = last && !last.ok ? `${last.detail.code}: ${last.detail.message}` : lfErr(r.body);
+      wire("", `LessonForge → Attacker  refused — ${msg}`, "", true);
+      card.insertAdjacentHTML("beforeend", `<div class="grid2"><div><b>Edited payload</b>${pre(forged)}</div>
+        <div><b>LessonForge says</b><p class="bad">✘ ${esc(msg)}</p><p class="why">(And even a valid token can never grant superadmin — that is a local grant only.)</p></div></div>`);
+    } },
+
+  { title: "7 · LessonForge asks Edboox about the user", pane: "lf",
+    why: "Server to server, with a read-only API key, LessonForge pulls a few details (grade, section, subjects taught) and translates Edboox's words into its own. These only personalise — they never grant access.",
+    async run(card) {
+      wire("ed", `LessonForge → Edboox  GET /api/v1/ai/users/${S.user.sub}`, "X-Api-Key: •••• (read-only)");
+      const raw = await call("/demo/api/projection");
+      const r = await call(`${LF}/api/v1/demo/context`, { method: "POST", headers: { "X-LF-Request": "1" } });
+      if (r.status !== 200) throw new Error(lfErr(r.body));
+      wire("", `Edboox → LessonForge  200 user details`, `mapped by provider "${r.body.provider}"`);
+      const a = r.body.after || {};
+      if (a.student) fact("lf", "grade (mapped)", `${a.student.grade} (Edboox said “${esc(raw.body?.student?.grade)}”)`);
+      if (a.teacher) fact("lf", "teaches", esc((a.teacher.assignments || []).map((x) => `${x.grade} ${x.subject}`).join(", ")));
+      card.insertAdjacentHTML("beforeend", `<div class="grid2"><div><b>What Edboox sent</b>${pre(raw.body)}</div>
+        <div><b>What LessonForge kept (its own words)</b>${pre(r.body.after)}<b>Allowed into AI prompts</b>${pre(r.body.prompt_facts)}</div></div>`);
+    } },
+
+  { title: "8 · Signed in", pane: "lf",
+    why: "From now on the browser talks to LessonForge with its own session cookie. This is exactly what LessonForge's UI asks for on every page.",
+    async run(card) {
+      wire("lf", `Browser → LessonForge  GET /api/v1/me`, "Cookie: lf_session=…");
+      const r = await call(`${LF}/api/v1/me`);
+      if (r.status !== 200) throw new Error(lfErr(r.body));
+      wire("", `LessonForge → Browser  200  ${r.body.subject} as ${r.body.role}`);
+      clearInterval(timer);
+      card.insertAdjacentHTML("beforeend", pre({ name: r.body.name, role: r.body.role, permissions: r.body.permissions,
+        knowledge_spaces: r.body.knowledge_spaces, nav: r.body.nav.map((n) => n.path) })
+        + `<p><a href="${LF}${S.trace.lands_on}" target="_blank" rel="noopener"><button class="primary">Open LessonForge as ${esc(S.user.name)} →</button></a></p>`);
+      $("next").disabled = true;
+    } },
+];
+
+/* ── presenter controls ───────────────────────────────────────────────── */
+let at = -1;
+function label(x) { return typeof x === "function" ? x() : x; }
+async function next() {
+  do { at++; } while (at < STEPS.length && STEPS[at].skip && STEPS[at].skip());
+  if (at >= STEPS.length) return;
+  const step = STEPS[at];
+  $("next").textContent = at === STEPS.length - 1 ? "Done" : "Next ▶";
+  $("counter").textContent = `step ${at + 1} / ${STEPS.length}`;
+  $("bar").style.width = `${Math.round(((at + 1) / STEPS.length) * 100)}%`;
+  focus(step.pane);
+  const card = $("stepCard");
+  card.innerHTML = `<div class="step-n">${step.pane === "ed" ? "Edboox" : step.pane === "lf" ? "LessonForge" : "Setup"}</div>
+    <h3>${esc(label(step.title))}</h3><p class="why">${esc(label(step.why))}</p>`;
+  $("next").disabled = true;
+  try {
+    if (step.show) await step.show(card);
+    if (step.run) await step.run(card);
+  } catch (e) {
+    card.insertAdjacentHTML("beforeend", `<p class="bad">✘ ${esc(e.message)}</p><p class="why">If the pass expired, press Restart and go a little faster — it lives 60 seconds.</p>`);
+    wire("", `error: ${e.message}`, "", true);
+    return;
+  }
+  if (!(at === STEPS.length - 1)) $("next").disabled = false;
+}
+function restart() {
+  clearInterval(timer);
+  for (const k of Object.keys(S)) delete S[k];
+  at = -1;
+  $("wire").innerHTML = '<div class="ar">— messages between the apps appear here, live —</div>';
+  $("factsEd").innerHTML = '<div class="why">Owns the students, teachers and passwords.</div>';
+  $("factsLf").innerHTML = '<div class="why">Holds no passwords. Trusts only Edboox\'s signature.</div>';
+  $("next").disabled = false;
+  next();
+}
+$("next").addEventListener("click", next);
+$("restart").addEventListener("click", restart);
+restart();
+</script>
+</body>
+</html>

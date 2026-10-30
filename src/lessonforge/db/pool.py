@@ -121,3 +121,9 @@ def jsonb(value: Any) -> Any:
     from psycopg.types.json import Jsonb
 
     return Jsonb(value)
+
+
+def contains_pattern(text: str) -> str:
+    """An ILIKE pattern matching ``text`` literally anywhere (wildcards escaped)."""
+    return "%" + text.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_") + "%"
+

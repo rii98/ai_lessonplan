@@ -570,6 +570,13 @@ class ScopeConfig(BaseModel):
     })
 
 
+class DemoConfig(BaseModel):
+    """The live sign-in walkthrough (fake Edboox ``/demo``). OFF by default: when
+    off, its endpoints answer 404 as if they did not exist."""
+
+    enabled: bool = False
+
+
 class ActivityConfig(BaseModel):
     """Content-free usage events Edboox pulls (§15)."""
 
@@ -625,6 +632,7 @@ class Settings(BaseSettings):
     context: ContextConfig = Field(default_factory=ContextConfig)
     scope: ScopeConfig = Field(default_factory=ScopeConfig)
     activity: ActivityConfig = Field(default_factory=ActivityConfig)
+    demo: DemoConfig = Field(default_factory=DemoConfig)
     vocabulary_path: str | None = None  # default: config/vocabulary.yaml next to config.yaml
 
     @classmethod

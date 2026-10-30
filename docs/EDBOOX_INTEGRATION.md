@@ -1129,3 +1129,32 @@ lessonforge-admin backfill-spaces           # once, after upgrading an existing 
 python -m lessonforge.api.contract [--write]  # check / publish docs/openapi.v1.json
 ```
 
+### Owner console and the live sign-in demo (added after the first release)
+
+**Owner console (`/admin`, permission `admin` — superadmin only).** Everything an
+operator used to need a terminal for, built on ONE application service
+(`services/admin.py: AdminService`) that the CLI now also uses, so both doors are
+guarded and audited identically:
+
+| Section | What it does |
+|---|---|
+| Overview | health (LLM, Qdrant, Postgres), schema status, Edboox signing keys held, people/content/corpus counts, settings in effect |
+| People | everyone who has used LessonForge (search by name/id, role, school, status); per person: Edboox details, **Refresh from Edboox**, **Disable/Enable**, **Delete their data** (type the id to confirm) |
+| Owners | superadmins, **read-only** — grant/revoke stay CLI-only (D5) |
+| Knowledge | the record book per shelf/collection; remove a whole document |
+| Usage | the same content-free reports Edboox pulls |
+| Audit log | paged, filterable |
+| Maintenance | clean-up (expired passes, events past retention), backfill shelves, migration status |
+
+Guards: no one can disable/delete their own account; a superadmin can't be
+disabled/deleted from the console (revoke with the CLI first). Adding/removing
+**students and teachers is Edboox's job** — the fake Edboox has `/admin` for that
+(its owner account is an Edboox admin).
+
+**Live sign-in demo (OFF by default).** `LF_DEMO=true docker compose --profile dev
+up -d` enables `/api/v1/demo/*` in LessonForge (404 otherwise; excluded from the API
+contract) and `/demo` in the fake Edboox: a presenter-driven walkthrough where each
+*Next* performs the real call — Edboox login, pass minting, JWKS, the **production**
+`/auth/launch` code (traced, not re-implemented), two live attacks (replay, edited
+pass) being refused, the context pull, and `/me`.
+

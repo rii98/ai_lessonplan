@@ -18,6 +18,7 @@ class Perm(str, Enum):
     CORPUS_MANAGE = "corpus.manage"   # /corpus/*: the knowledge base
     OPS = "ops"                       # provider health, admin reads
     REPORTS_READ = "reports.read"     # /events, /reports/* (tenant-scoped)
+    ADMIN = "admin"                   # owner console: people, audit, maintenance
 
 
 SUPERADMIN = "superadmin"

@@ -255,3 +255,7 @@ activity:
   provider: postgres                    # ← swap: postgres | memory | noop
   retention_days: 400
 
+demo:
+  # Live sign-in walkthrough at the fake Edboox's /demo (dev only). OFF by default.
+  enabled: ${LF_DEMO:-false}
+

@@ -64,14 +64,40 @@ def cmd_grants(p: Platform, a: argparse.Namespace) -> int:
     return 0
 
 
+def _admin(p: Platform, *, with_store: bool = False):
+    """The SAME AdminService the owner console uses — one implementation, two doors."""
+    from ..services.admin import AdminService
+
+    store = None
+    if with_store:
+        from ..providers import registry as _  # noqa: F401  (registers adapters)
+        from ..providers.registry import build_vector_store
+
+        store = build_vector_store(p.settings.vector_store)
+    return AdminService(p, vector_store=store)
+
+
+def _cli_actor():
+    from ..services.admin import Actor
+
+    return Actor(_actor())
+
+
+def _principal_id(p: Platform, a: argparse.Namespace) -> str | None:
+    rec = p.directory.find(a.issuer, a.subject)
+    if rec is None:
+        print("unknown principal (they must have signed in once)", file=sys.stderr)
+    return rec.id if rec else None
+
+
 def _set_disabled(disabled: bool) -> Callable[[Platform, argparse.Namespace], int]:
     def run(p: Platform, a: argparse.Namespace) -> int:
-        ok = p.directory.set_disabled(a.issuer, a.subject, disabled)
-        _audit(p, "principal.disable" if disabled else "principal.enable",
-               f"{a.issuer}:{a.subject}", found=ok)
-        print(("disabled " if disabled else "enabled ") + f"{a.issuer}:{a.subject}" if ok
-              else "unknown principal")
-        return 0 if ok else 1
+        pid = _principal_id(p, a)
+        if pid is None:
+            return 1
+        _admin(p).set_disabled(pid, disabled, _cli_actor())
+        print(("disabled " if disabled else "enabled ") + f"{a.issuer}:{a.subject}")
+        return 0
     return run
 
 
@@ -80,37 +106,32 @@ def cmd_forget(p: Platform, a: argparse.Namespace) -> int:
         print("refusing without --yes: this deletes the user's documents, chats and profile "
               "and anonymises their activity", file=sys.stderr)
         return 2
-    ok = p.directory.delete(a.issuer, a.subject)
-    _audit(p, "principal.forget", f"{a.issuer}:{a.subject}", found=ok)
-    print(f"forgot {a.issuer}:{a.subject}" if ok else "unknown principal")
-    return 0 if ok else 1
+    pid = _principal_id(p, a)
+    if pid is None:
+        return 1
+    _admin(p).forget(pid, a.subject, _cli_actor())
+    print(f"forgot {a.issuer}:{a.subject}")
+    return 0
 
 
 def cmd_sync_context(p: Platform, a: argparse.Namespace) -> int:
-    rec = p.directory.find(a.issuer, a.subject)
-    if rec is None:
-        print("unknown principal (they must have logged in once)", file=sys.stderr)
+    pid = _principal_id(p, a)
+    if pid is None:
         return 1
-    from ..auth.principal import Principal
-
-    principal = Principal(id=rec.id, issuer=rec.issuer, subject=rec.subject,
-                          role=rec.external_role, roles=frozenset({rec.external_role}),
-                          permissions=frozenset(), tenant_id=rec.tenant_id,
-                          display_name=rec.display_name)
-    ctx = p.context.refresh(principal)
-    if ctx is None:
+    out = _admin(p).sync_context(pid, _cli_actor())
+    if not out["refreshed"]:
         print("no context returned (upstream unavailable or user unknown); last-known kept")
         return 1
-    print(ctx.model_dump_json(indent=2))
+    import json
+
+    print(json.dumps(out["context"], indent=2))
     return 0
 
 
 def cmd_purge(p: Platform, a: argparse.Namespace) -> int:
-    tokens = p.replay.purge()
-    events = p.activity_reader.purge_older_than(p.settings.activity.retention_days)
-    _audit(p, "maintenance.purge", "platform", launch_tokens=tokens, activity_events=events)
-    print(f"purged {tokens} expired launch token id(s), {events} activity event(s) older than "
-          f"{p.settings.activity.retention_days} days")
+    out = _admin(p).purge(_cli_actor())
+    print(f"purged {out['launch_tokens']} expired launch token id(s), {out['activity_events']} "
+          f"activity event(s) older than {p.settings.activity.retention_days} days")
     return 0
 
 
@@ -121,18 +142,8 @@ def cmd_audit(p: Platform, a: argparse.Namespace) -> int:
 
 
 def cmd_backfill_spaces(p: Platform, a: argparse.Namespace) -> int:
-    from ..knowledge.scope import GLOBAL_SPACE
-    from ..providers import registry as _  # noqa: F401  (registers adapters)
-    from ..providers.registry import build_vector_store
-    from ..rag.documents import Collection
-
-    store = build_vector_store(p.settings.vector_store)
-    total = 0
-    for col in Collection:
-        n = store.backfill_space(col.value, GLOBAL_SPACE)
-        total += max(n, 0)
-        print(f"{col.value}: {n} point(s) tagged '{GLOBAL_SPACE}'")
-    _audit(p, "corpus.backfill_spaces", "vector_store", points=total)
+    for collection, n in _admin(p, with_store=True).backfill_spaces(_cli_actor()).items():
+        print(f"{collection}: {n} point(s) tagged 'global'")
     return 0
 
 
@@ -168,8 +179,13 @@ def main(argv: list[str] | None = None, *, settings: Settings | None = None,
          platform: Platform | None = None) -> int:
     args = build_parser().parse_args(argv)
     platform = platform or Platform(settings or load_settings())
+    from ..services.admin import AdminError
+
     try:
         return int(args.fn(platform, args))
+    except AdminError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
     finally:
         platform.close()
 

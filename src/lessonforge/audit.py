@@ -24,6 +24,7 @@ class AuditEntry:
     detail: dict[str, Any] = field(default_factory=dict)
     principal_id: str | None = None
     at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    id: int | None = None                # assigned by the store
 
 
 class AuditLog(ABC):
@@ -31,7 +32,10 @@ class AuditLog(ABC):
     def record(self, entry: AuditEntry) -> None: ...
 
     @abstractmethod
-    def recent(self, limit: int = 50) -> list[AuditEntry]: ...
+    def recent(self, limit: int = 50, *, before: int | None = None,
+               action: str | None = None) -> list[AuditEntry]:
+        """Newest first; ``before`` (an entry id) pages backwards; ``action`` filters
+        by prefix (``grant.``, ``corpus.``, ``principal.``…)."""
 
 
 class MemoryAuditLog(AuditLog):
@@ -40,11 +44,16 @@ class MemoryAuditLog(AuditLog):
         self._lock = threading.Lock()
 
     def record(self, entry: AuditEntry) -> None:
-        with self._lock:
-            self.entries.append(entry)
+        from dataclasses import replace
 
-    def recent(self, limit: int = 50) -> list[AuditEntry]:
-        return list(reversed(self.entries[-limit:]))
+        with self._lock:
+            self.entries.append(replace(entry, id=len(self.entries) + 1))
+
+    def recent(self, limit=50, *, before=None, action=None):
+        rows = [e for e in reversed(self.entries)
+                if (before is None or (e.id or 0) < before)
+                and (action is None or e.action.startswith(action))]
+        return rows[:limit]
 
 
 class PostgresAuditLog(AuditLog):
@@ -60,11 +69,19 @@ class PostgresAuditLog(AuditLog):
                  jsonb(entry.detail), entry.at),
             )
 
-    def recent(self, limit: int = 50) -> list[AuditEntry]:
+    def recent(self, limit=50, *, before=None, action=None):
+        sql, params = [], []
+        if before is not None:
+            sql.append("id < %s")
+            params.append(before)
+        if action:
+            sql.append("action LIKE %s")
+            params.append(action.replace("%", r"\%").replace("_", r"\_") + "%")
+        where = f"WHERE {' AND '.join(sql)}" if sql else ""
         with self.db.tx() as cur:
-            cur.execute("SELECT principal_id, actor, action, target, detail, at FROM audit_log "
-                        "ORDER BY id DESC LIMIT %s", (limit,))
-            return [AuditEntry(actor=r["actor"], action=r["action"], target=r["target"],
-                               detail=r["detail"], at=r["at"],
+            cur.execute("SELECT id, principal_id, actor, action, target, detail, at FROM audit_log "
+                        f"{where} ORDER BY id DESC LIMIT %s", [*params, limit])
+            return [AuditEntry(id=r["id"], actor=r["actor"], action=r["action"],
+                               target=r["target"], detail=r["detail"], at=r["at"],
                                principal_id=str(r["principal_id"]) if r["principal_id"] else None)
                     for r in cur.fetchall()]

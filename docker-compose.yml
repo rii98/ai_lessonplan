@@ -32,6 +32,7 @@ x-lf-env: &lf-env
   EDBOOX_API_KEY: ${EDBOOX_API_KEY:-dev-edboox-api-key}
   LF_SESSION_SECRET: ${LF_SESSION_SECRET:-dev-only-session-secret-change-me-0123456789abcdef}
   LF_COOKIE_SECURE: ${LF_COOKIE_SECURE:-false}   # local dev is plain http
+  LF_DEMO: ${LF_DEMO:-false}                     # live sign-in demo; `LF_DEMO=true docker compose …`
 
 services:
   qdrant:
@@ -132,6 +133,7 @@ services:
       EDBOOX_API_KEY: ${EDBOOX_API_KEY:-dev-edboox-api-key}
       LF_PUBLIC_URL: http://localhost:8000        # where the browser is sent on launch
       LF_API_URL: http://api:8000                 # server-to-server (usage page)
+      EDBOOX_DEMO: ${LF_DEMO:-false}              # the /demo walkthrough (off by default)
     volumes:
       - edboox_data:/data                         # its RSA signing key survives restarts
     depends_on:

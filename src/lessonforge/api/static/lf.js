@@ -18,7 +18,7 @@ function lfUrl(path) {
   return /^(https?:)?\/\//.test(path) || path.startsWith(API) ? path : API + path;
 }
 
-const LF_PAGES = ["/", "/units", "/library", "/chat", "/corpus"];
+const LF_PAGES = ["/", "/units", "/library", "/chat", "/corpus", "/admin"];
 
 /* Resolves once the caller may use THIS page. On a page they can't use it
    redirects to one they can and never resolves — so no page load fires a doomed

@@ -121,8 +121,22 @@ def test_cli_grant_revoke_and_audit(platform, capsys):
     assert all(e.actor.startswith("cli:") for e in platform.audit.recent(10))
 
 
+def _student(platform, sub="student:9"):
+    from lessonforge.auth.verifier import VerifiedToken
+
+    return platform.directory.upsert(VerifiedToken(
+        issuer="edboox", subject=sub, role="student", tenant_id="sch-7", display_name="S",
+        grade=8, jti=None, expires_at=0, issued_at=0))
+
+
+def test_cli_superadmins_must_be_revoked_before_removal(platform, capsys):
+    admin(["grant", "--subject", "teacher:5"], platform=platform)
+    assert admin(["disable", "--subject", "teacher:5"], platform=platform) == 1
+    assert "revoke the grant" in capsys.readouterr().err
+
+
 def test_cli_disable_forget_purge(platform, capsys):
-    admin(["grant", "--subject", "student:9"], platform=platform)
+    _student(platform)
     assert admin(["disable", "--subject", "student:9"], platform=platform) == 0
     assert platform.directory.find("edboox", "student:9").disabled
     assert admin(["forget", "--subject", "student:9"], platform=platform) == 2    # needs --yes

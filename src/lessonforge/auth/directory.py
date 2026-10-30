@@ -18,7 +18,8 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
-from ..db.pool import Database, as_uuid, id_str, jsonb
+from ..db.pool import Database, as_uuid, contains_pattern, id_str, jsonb
+from ..pagination import Keyset, Page, page_of
 from .verifier import VerifiedToken
 
 GRANTABLE_ROLES = frozenset({"superadmin"})
@@ -36,6 +37,22 @@ class PrincipalRecord:
     disabled: bool = False
     context: dict[str, Any] = field(default_factory=dict, compare=False, hash=False)
     context_synced_at: datetime | None = None
+    created_at: datetime | None = None
+    last_seen_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PeopleFilter:
+    """Owner-console search over principals."""
+
+    q: str | None = None             # subject or name contains
+    role: str | None = None          # external role, or "superadmin" (has the grant)
+    tenant_id: str | None = None
+    disabled: bool | None = None
+
+
+def _seen_key(r: PrincipalRecord) -> Keyset:
+    return Keyset(r.last_seen_at or datetime.min.replace(tzinfo=UTC), r.id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +99,15 @@ class PrincipalDirectory(ABC):
         """Forget a principal: their documents, chats and profile cascade; their
         activity events are anonymised (enforced by a database trigger)."""
 
+    @abstractmethod
+    def search(self, f: PeopleFilter, *, limit: int,
+               cursor: Keyset | None = None) -> Page[PrincipalRecord]:
+        """Principals, most recently seen first (keyset-paged) — the owner console."""
+
+    @abstractmethod
+    def stats(self) -> dict[str, int]:
+        """Counts for the owner console: total, per external role, superadmins, disabled."""
+
 
 def _check_role(role: str) -> None:
     if role not in GRANTABLE_ROLES:
@@ -111,6 +137,8 @@ class MemoryPrincipalDirectory(PrincipalDirectory):
                 disabled=old.disabled if old else False,
                 context=old.context if old else {},
                 context_synced_at=old.context_synced_at if old else None,
+                created_at=old.created_at if old and old.created_at else datetime.now(UTC),
+                last_seen_at=datetime.now(UTC),
             )
             self._by_key[key] = rec
             self._by_id[rec.id] = key
@@ -135,8 +163,9 @@ class MemoryPrincipalDirectory(PrincipalDirectory):
         _check_role(role)
         with self._lock:
             if (issuer, subject) not in self._by_key:
+                now = datetime.now(UTC)
                 rec = PrincipalRecord(id=str(uuid.uuid4()), issuer=issuer, subject=subject,
-                                      external_role="pending")
+                                      external_role="pending", created_at=now, last_seen_at=now)
                 self._by_key[(issuer, subject)] = rec
                 self._by_id[rec.id] = (issuer, subject)
             roles = self._grants.setdefault((issuer, subject), {})
@@ -170,10 +199,39 @@ class MemoryPrincipalDirectory(PrincipalDirectory):
             self._grants.pop((issuer, subject), None)
             return True
 
+    def search(self, f: PeopleFilter, *, limit: int, cursor: Keyset | None = None):
+        needle = (f.q or "").casefold()
+        rows = []
+        for rec in (self._with_grants(r) for r in self._by_key.values()):
+            if needle and needle not in rec.subject.casefold() and needle not in (
+                    rec.display_name or "").casefold():
+                continue
+            if f.role == "superadmin" and "superadmin" not in rec.grants:
+                continue
+            if f.role not in (None, "superadmin") and rec.external_role != f.role:
+                continue
+            if f.tenant_id is not None and rec.tenant_id != f.tenant_id:
+                continue
+            if f.disabled is not None and rec.disabled != f.disabled:
+                continue
+            rows.append(rec)
+        rows.sort(key=lambda r: (_seen_key(r).ts, r.id), reverse=True)
+        if cursor is not None:
+            rows = [r for r in rows if cursor.before(_seen_key(r).ts, r.id)]
+        return page_of(rows[:limit + 1], limit, _seen_key)
+
+    def stats(self) -> dict[str, int]:
+        recs = [self._with_grants(r) for r in self._by_key.values()]
+        out = {"total": len(recs), "superadmins": sum("superadmin" in r.grants for r in recs),
+               "disabled": sum(r.disabled for r in recs)}
+        for r in recs:
+            out[f"role:{r.external_role}"] = out.get(f"role:{r.external_role}", 0) + 1
+        return out
+
 
 # ── postgres ─────────────────────────────────────────────────────────────────
 _COLS = ("p.id, p.issuer, p.subject, p.external_role, p.display_name, p.tenant_id, "
-         "p.disabled_at, p.context, p.context_synced_at")
+         "p.disabled_at, p.context, p.context_synced_at, p.created_at, p.last_seen_at")
 _GRANTS = ("COALESCE((SELECT array_agg(g.role) FROM role_grants g "
            "WHERE g.principal_id = p.id), '{}') AS grants")
 
@@ -184,7 +242,8 @@ def _record(r: dict[str, Any]) -> PrincipalRecord:
         external_role=r["external_role"], display_name=r["display_name"],
         tenant_id=r["tenant_id"], grants=frozenset(r.get("grants") or ()),
         disabled=r["disabled_at"] is not None, context=r["context"] or {},
-        context_synced_at=r["context_synced_at"],
+        context_synced_at=r["context_synced_at"], created_at=r.get("created_at"),
+        last_seen_at=r.get("last_seen_at"),
     )
 
 
@@ -279,3 +338,43 @@ class PostgresPrincipalDirectory(PrincipalDirectory):
             cur.execute("DELETE FROM principals WHERE issuer = %s AND subject = %s RETURNING 1",
                         (issuer, subject))
             return cur.fetchone() is not None
+
+    def search(self, f: PeopleFilter, *, limit: int, cursor: Keyset | None = None):
+        sql, params = [], []
+        if f.q:
+            like = contains_pattern(f.q)
+            sql.append("(p.subject ILIKE %s OR p.display_name ILIKE %s)")
+            params += [like, like]
+        if f.role == "superadmin":
+            sql.append("EXISTS (SELECT 1 FROM role_grants g WHERE g.principal_id = p.id "
+                       "AND g.role = 'superadmin')")
+        elif f.role is not None:
+            sql.append("p.external_role = %s")
+            params.append(f.role)
+        if f.tenant_id is not None:
+            sql.append("p.tenant_id = %s")
+            params.append(f.tenant_id)
+        if f.disabled is not None:
+            sql.append("p.disabled_at IS NOT NULL" if f.disabled else "p.disabled_at IS NULL")
+        if cursor is not None:
+            sql.append("(p.last_seen_at, p.id) < (%s, %s)")
+            params += [cursor.ts, as_uuid(cursor.id)]
+        where = f"WHERE {' AND '.join(sql)}" if sql else ""
+        with self.db.tx() as cur:
+            cur.execute(f"SELECT {_COLS}, {_GRANTS} FROM principals p {where} "
+                        "ORDER BY p.last_seen_at DESC, p.id DESC LIMIT %s", [*params, limit + 1])
+            rows = [_record(r) for r in cur.fetchall()]
+        return page_of(rows, limit, _seen_key)
+
+    def stats(self) -> dict[str, int]:
+        with self.db.tx() as cur:
+            cur.execute("""SELECT count(*) AS total,
+                                  count(*) FILTER (WHERE disabled_at IS NOT NULL) AS disabled,
+                                  (SELECT count(*) FROM role_grants
+                                    WHERE role = 'superadmin') AS superadmins
+                             FROM principals""")
+            out = dict(cur.fetchone())
+            cur.execute("SELECT external_role, count(*) AS n FROM principals GROUP BY 1")
+            out.update({f"role:{r['external_role']}": r["n"] for r in cur.fetchall()})
+        return {k: int(v) for k, v in out.items()}
+
