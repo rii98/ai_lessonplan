@@ -427,13 +427,14 @@
 
 <div id="refineModal" class="modal hidden" role="dialog" aria-modal="true"></div>
 
+<script src="/static/lf.js"></script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
 const api = async (method, url, body) => {
   const opt = { method, headers: {} };
   if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
-  const res = await fetch(url, opt);
+  const res = await lfFetch(url, opt);
   return res;
 };
 const BLOOM = ["remember","understand","apply","analyze","evaluate","create"];
@@ -600,7 +601,7 @@ $("generate").addEventListener("click", async () => {
   try {
     const res = await api("POST", "/lessons/generate", readBrief());
     if (!res.ok) { const e = await res.json().catch(() => ({}));
-      st.className = "status err"; st.textContent = "Generate failed: " + (e.detail || res.status); return; }
+      st.className = "status err"; st.textContent = "Generate failed: " + lfErr(e, res.status); return; }
     ldd = await res.json();
     st.textContent = "Draft ready — review and edit below.";
     $("reviewCard").classList.remove("hidden");
@@ -889,7 +890,7 @@ async function generateArtifact(kind) {
     const res = await api("POST", url, body);
     if (!res.ok) { const e = await res.json().catch(() => ({}));
       st.className = "status err";
-      st.textContent = "Failed: " + (typeof e.detail === "string" ? e.detail : res.status); return; }
+      st.textContent = "Failed: " + lfErr(e, res.status); return; }
     artifact = await res.json();
     $("artifactKindLabel").textContent = kind;
     const fmts = artifactFormats[kind] || ["docx"];
@@ -1006,7 +1007,7 @@ function openArtifactImprove(target) {
     try {
       const res = await api("POST", "/artifacts/" + artifactKind + "/refine", { artifact, target, instruction });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { status.className = "status err"; status.textContent = "Improve failed: " + (data.detail || res.status); return; }
+      if (!res.ok) { status.className = "status err"; status.textContent = "Improve failed: " + lfErr(data, res.status); return; }
       status.textContent = "";
       if (!data.ok) { results.append(rejectView(data)); return; }
       results.append(artifactDiffView(data, () => { artifact = data.candidate; renderArtifactEditor(); closeRefine(); }));
@@ -1053,7 +1054,7 @@ $("artifactExport").addEventListener("click", async () => {
     const res = await api("POST", "/artifacts/" + artifactKind + "/export?fmt=" + encodeURIComponent(fmt), artifact);
     if (!res.ok) { const e = await res.json().catch(() => ({}));
       st.className = "status err";
-      st.textContent = "Export rejected: " + (typeof e.detail === "string" ? e.detail : "the artifact failed validation.");
+      st.textContent = "Export rejected: " + lfErr(e, "the artifact failed validation.");
       return; }
     const blob = await res.blob();
     const name = filenameFrom(res, artifactKind + "." + fmt);
@@ -1260,7 +1261,7 @@ function openRefine(target) {
     try {
       const res = await api("POST", "/lessons/refine", { ldd, target, instruction });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { status.className = "status err"; status.textContent = "Refine failed: " + (data.detail || res.status); return; }
+      if (!res.ok) { status.className = "status err"; status.textContent = "Refine failed: " + lfErr(data, res.status); return; }
       status.textContent = "";
       if (!data.ok) { results.append(rejectView(data)); return; }
       results.append(diffView(data, () => {
@@ -1473,7 +1474,7 @@ async function download(url, fallback) {
     const res = await api("POST", url, ldd);
     if (!res.ok) { const e = await res.json().catch(() => ({}));
       st.className = "status err";
-      st.textContent = "Export rejected: " + (typeof e.detail === "string" ? e.detail : "the lesson failed a guardrail — run Check guardrails.");
+      st.textContent = "Export rejected: " + lfErr(e, "the lesson failed a guardrail — run Check guardrails.");
       return; }
     const blob = await res.blob();
     const a = h("a", { href: URL.createObjectURL(blob), download: filenameFrom(res, fallback) });
@@ -1576,7 +1577,7 @@ async function saveEdit() {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       st.className = "status err";
-      st.textContent = "Save failed: " + (typeof data.detail === "string" ? data.detail : "the edit failed validation.");
+      st.textContent = "Save failed: " + lfErr(data, "the edit failed validation.");
       return;
     }
     const backId = editMode.kind === "unit-day" ? editMode.unitId : editMode.docId;

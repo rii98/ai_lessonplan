@@ -12,7 +12,9 @@ from typing import Any
 
 import pytest
 
+from lessonforge.auth.principal import Perm, Principal
 from lessonforge.config import Settings
+from lessonforge.knowledge.scope import GLOBAL_SPACE, SPACE_KEY, AccessScope
 from lessonforge.providers.base import (
     Embedder,
     LLMClient,
@@ -58,7 +60,15 @@ class FakeEmbedder(Embedder):
         return out
 
 
+def _in_scope(record: VectorRecord, scope: AccessScope) -> bool:
+    # a point written before spaces existed (no _space) is shared curriculum
+    return scope.allows(record.payload.get(SPACE_KEY, GLOBAL_SPACE))
+
+
 class FakeVectorStore(VectorStore):
+    """In-memory store honouring the port's contract — including knowledge-space
+    isolation: every read and delete is limited to ``scope``."""
+
     def __init__(self) -> None:
         self.data: dict[str, list[VectorRecord]] = {}
 
@@ -66,34 +76,53 @@ class FakeVectorStore(VectorStore):
         self.data.setdefault(name, [])
 
     def upsert(self, name: str, records: list[VectorRecord]) -> None:
-        self.data.setdefault(name, []).extend(records)
+        bucket = self.data.setdefault(name, [])
+        ids = {r.id for r in records}
+        bucket[:] = [r for r in bucket if r.id not in ids] + list(records)  # upsert semantics
 
-    def search(self, name, vector, top_k, where=None) -> list[ScoredRecord]:
-        recs = self.data.get(name, [])
+    def _visible(self, name: str, scope: AccessScope, where=None) -> list[VectorRecord]:
+        recs = [r for r in self.data.get(name, []) if _in_scope(r, scope)]
         if where:
             recs = [r for r in recs if all(r.payload.get(k) == v for k, v in where.items())]
+        return recs
+
+    def search(self, name, vector, top_k, where=None, *, scope) -> list[ScoredRecord]:
+        recs = self._visible(name, scope, where)
         scored = [ScoredRecord(id=r.id, score=1.0 - i * 0.01, payload=r.payload)
                   for i, r in enumerate(recs)]
         return scored[:top_k]
 
-    def count(self, name: str) -> int:
-        return len(self.data.get(name, []))
+    def count(self, name: str, *, scope) -> int:
+        return len(self._visible(name, scope))
 
-    def scroll(self, name, *, limit, offset=None):
-        recs = self.data.get(name, [])
+    def scroll(self, name, *, limit, offset=None, scope):
+        recs = self._visible(name, scope)
         start = int(offset) if offset else 0
         page = recs[start:start + limit]
         out = [StoredRecord(id=r.id, payload=r.payload) for r in page]
         nxt = str(start + limit) if start + limit < len(recs) else None
         return out, nxt
 
-    def delete(self, name: str, ids: list[str]) -> int:
+    def delete(self, name: str, ids: list[str], *, scope) -> int:
         recs = self.data.get(name)
         if not recs:
             return 0
         drop = set(ids)
-        self.data[name] = [r for r in recs if r.id not in drop]
+        self.data[name] = [r for r in recs if not (r.id in drop and _in_scope(r, scope))]
         return len(recs) - len(self.data[name])
+
+    def delete_where(self, name, where, *, scope) -> None:
+        self.data[name] = [r for r in self.data.get(name, [])
+                           if not (_in_scope(r, scope)
+                                   and all(r.payload.get(k) == v for k, v in where.items()))]
+
+    def backfill_space(self, name: str, space: str) -> int:
+        n = 0
+        for r in self.data.get(name, []):
+            if SPACE_KEY not in r.payload:
+                r.payload[SPACE_KEY] = space
+                n += 1
+        return n
 
     def health(self) -> bool:
         return True
@@ -315,3 +344,139 @@ def base_settings_dict() -> dict[str, Any]:
 @pytest.fixture
 def settings(base_settings_dict) -> Settings:
     return Settings(**base_settings_dict)
+
+
+# ── principals & authenticated API clients ───────────────────────────────────
+_ROLE_PERMS = {
+    "student": frozenset({Perm.CHAT}),
+    "teacher": frozenset({Perm.CHAT, Perm.AUTHOR}),
+    "service": frozenset({Perm.REPORTS_READ}),
+    "superadmin": frozenset(Perm),
+}
+
+
+def make_principal(role: str = "teacher", *, tenant: str | None = "sch-1",
+                   subject: str | None = None, grade: int | None = None,
+                   name: str | None = None, superadmin: bool = False) -> Principal:
+    """A principal as the auth service would build it (no token involved)."""
+    import uuid
+
+    roles = frozenset({role, "superadmin"} if superadmin else {role})
+    perms = frozenset().union(*(_ROLE_PERMS.get(r, frozenset()) for r in roles))
+    sub = subject or f"{role}:{uuid.uuid4().hex[:8]}"
+    return Principal(id=str(uuid.uuid4()), issuer="edboox", subject=sub, role=role, roles=roles,
+                     permissions=perms, tenant_id=tenant, display_name=name or sub, grade=grade)
+
+
+SUPERADMIN = make_principal("teacher", subject="teacher:1", superadmin=True, name="Owner")
+
+
+def api_client(container, principal: Principal | None = SUPERADMIN, **kw):
+    """A TestClient over the real app with the container and the authenticated
+    principal overridden — the ONLY way tests bypass token verification (there is
+    no auth-off switch in production code). ``principal=None`` leaves auth real."""
+    from fastapi.testclient import TestClient
+
+    from lessonforge.api.deps import authenticate, get_container
+    from lessonforge.api.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_container] = lambda: container
+    if principal is not None:
+        app.dependency_overrides[authenticate] = lambda: principal
+    return TestClient(app, **kw)
+
+
+def as_principal(client, principal: Principal):
+    """Switch an api_client's caller (role-matrix / IDOR tests)."""
+    from lessonforge.api.deps import authenticate
+
+    client.app.dependency_overrides[authenticate] = lambda: principal
+    return client
+
+
+# ── real Postgres (contract tests) ───────────────────────────────────────────
+@pytest.fixture(scope="session")
+def pg_database():
+    """A fresh, fully-migrated database for the session, or skip.
+
+    Set ``TEST_DATABASE_URL`` (a server the tests may CREATE DATABASE on), e.g.
+    ``postgresql://lessonforge:lessonforge@localhost:55432/lessonforge``. CI runs a
+    Postgres service; locally ``docker compose up -d postgres``."""
+    import os
+    import uuid
+
+    url = os.environ.get("TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("TEST_DATABASE_URL not set — Postgres contract tests skipped")
+    import psycopg
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    from lessonforge.config import DatabaseConfig
+    from lessonforge.db.migrate import migrate
+    from lessonforge.db.pool import Database
+
+    name = f"lf_test_{uuid.uuid4().hex[:10]}"
+    try:
+        admin = psycopg.connect(url, autocommit=True)
+    except psycopg.OperationalError as exc:
+        pytest.skip(f"Postgres unreachable: {exc}")
+    admin.execute(f'CREATE DATABASE "{name}"')
+    test_url = make_conninfo(**{**conninfo_to_dict(url), "dbname": name})
+    with psycopg.connect(test_url, autocommit=True) as conn:
+        migrate(conn, log=lambda *_: None)
+    db = Database(DatabaseConfig(provider="postgres", url=test_url, pool_max=4))
+    yield db
+    db.close()
+    admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    admin.close()
+
+
+@pytest.fixture
+def pg(pg_database):
+    """The session database, emptied before each test (fast: one TRUNCATE)."""
+    with pg_database.tx() as cur:
+        cur.execute("TRUNCATE principals, used_token_ids, audit_log, corpus_sources, "
+                    "activity_events, chat_conversations, documents RESTART IDENTITY CASCADE")
+        cur.execute("DELETE FROM knowledge_spaces WHERE id <> 'global'")
+    return pg_database
+
+
+def pg_principal(db, role: str = "teacher", *, tenant: str | None = "sch-1",
+                 name: str | None = None, **kw) -> Principal:
+    """A principal that also exists in the ``principals`` table (FK targets)."""
+    import uuid
+
+    from lessonforge.auth.directory import PostgresPrincipalDirectory
+    from lessonforge.auth.verifier import VerifiedToken
+
+    sub = kw.pop("subject", None) or f"{role}:{uuid.uuid4().hex[:8]}"
+    rec = PostgresPrincipalDirectory(db).upsert(VerifiedToken(
+        issuer="edboox", subject=sub, role=role, tenant_id=tenant, display_name=name or sub,
+        grade=None, jti=None, expires_at=0, issued_at=0))
+    base = make_principal(role, tenant=tenant, subject=sub, name=name or sub, **kw)
+    from dataclasses import replace
+
+    return replace(base, id=rec.id)
+
+
+
+def build_container(settings: Settings, *, llm=None, store=None, **kw):
+    """A Container over in-memory fakes (no Qdrant/Ollama/models), wired like
+    production — same Platform, same ingestor (vocabulary + knowledge registry)."""
+    from lessonforge.container import Container
+    from lessonforge.export import ExportService
+    from lessonforge.rag.grounding import GroundingRetriever
+    from lessonforge.rag.retriever import Retriever
+    from lessonforge.services.generation import LessonGenerator
+    from lessonforge.services.intake import HeuristicIntake
+
+    llm = llm or FakeLLM()
+    embedder, reranker = FakeEmbedder(), FakeReranker()
+    store = store if store is not None else FakeVectorStore()
+    retriever = Retriever(embedder=embedder, vector_store=store, reranker=reranker)
+    grounding = GroundingRetriever(retriever, settings.grounding)
+    return Container(settings=settings, llm=llm, embedder=embedder, reranker=reranker,
+                     vector_store=store, retriever=retriever, grounding=grounding,
+                     generator=LessonGenerator(llm=llm, grounding=grounding),
+                     exporter=ExportService(settings.export), intake=HeuristicIntake(), **kw)

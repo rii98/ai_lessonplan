@@ -177,6 +177,11 @@
   <div class="card">
     <h2>What's in the knowledge base <span class="spinner hidden" id="ovSpin"></span></h2>
     <div class="body">
+      <div class="row" style="gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <label for="spaceSel"><strong>Knowledge space</strong></label>
+        <select id="spaceSel" style="max-width:280px"></select>
+        <span class="sub" style="margin:0">The shared shelf is visible to every school; a school's shelf only to that school. New records go into the space selected here.</span>
+      </div>
       <div id="ovBanner"></div>
       <div class="kb-grid" id="kbGrid"></div>
     </div>
@@ -313,6 +318,7 @@
 
 </div>
 
+<script src="/static/lf.js"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 // Seeded so the selects are usable before /corpus/overview returns; then refreshed
@@ -335,12 +341,44 @@ function refillCollections() {
   for (const id of COLLECTION_SELECTS) { const el = $(id); if (el) fillCollectionSelect(el); }
 }
 
+// ── knowledge spaces (§16): which shelf we are looking at / writing to ─────
+const NEW_SPACE = "__new__";
+function currentSpace() { return $("spaceSel").value || "global"; }
+async function loadSpaces() {
+  const sel = $("spaceSel");
+  const keep = sel.value || "global";
+  try {
+    const r = await lfFetch("/corpus/spaces");
+    const data = await r.json();
+    if (!r.ok) throw new Error(lfErr(data, `HTTP ${r.status}`));
+    sel.innerHTML = data.spaces.map((s) =>
+      `<option value="${esc(s.id)}"${s.writable ? "" : " disabled"}>${esc(s.name)} (${esc(s.id)})</option>`).join("")
+      + `<option value="${NEW_SPACE}">＋ A school's private shelf…</option>`;
+    sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "global";
+  } catch (e) {
+    sel.innerHTML = '<option value="global">Shared curriculum (global)</option>';
+  }
+}
+$("spaceSel").onchange = async () => {
+  if ($("spaceSel").value === NEW_SPACE) {
+    const id = (prompt("School id (as Edboox sends it, e.g. sch-7):") || "").trim();
+    if (id && /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(id)) {
+      const opt = document.createElement("option");
+      opt.value = `school:${id}`; opt.textContent = `School ${id} (school:${id})`;
+      $("spaceSel").insertBefore(opt, $("spaceSel").lastElementChild);
+      $("spaceSel").value = opt.value;
+    } else { $("spaceSel").value = "global"; }
+  }
+  browseOffset = null;
+  await loadOverview();
+};
+
 // ── overview ────────────────────────────────────────────────────────────
 async function loadOverview() {
   $("ovSpin").classList.remove("hidden");
   banner($("ovBanner"), "err", "");
   try {
-    const r = await fetch("/corpus/overview");
+    const r = await lfFetch(`/corpus/overview?space=${encodeURIComponent(currentSpace())}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
     COLLECTIONS = data.collections.map((c) => c.name);
@@ -374,12 +412,12 @@ async function ingest(collection, records, statusEl, bannerEl) {
   statusEl.innerHTML = '<span class="spinner"></span> Saving…';
   banner(bannerEl, "ok", "");
   try {
-    const r = await fetch("/corpus/ingest", {
+    const r = await lfFetch("/corpus/ingest", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ collection, records }),
+      body: JSON.stringify({ collection, records, space: currentSpace() }),
     });
     const data = await r.json();
-    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    if (!r.ok) throw new Error(lfErr(data, `HTTP ${r.status}`));
     statusEl.textContent = "";
     banner(bannerEl, "ok",
       `Saved <strong>${data.documents}</strong> record(s) → <strong>${data.chunks}</strong> searchable chunk(s). Re-submitting identical text updates in place.`);
@@ -449,7 +487,7 @@ for (const btn of document.querySelectorAll(".tabs button")) {
 // ── add: book (markdown, structure-aware) ─────────────────────────────────
 async function loadChunkers() {
   try {
-    const r = await fetch("/corpus/chunkers");
+    const r = await lfFetch("/corpus/chunkers");
     if (!r.ok) return;
     const data = await r.json();
     const preferred = (data.by_format && data.by_format.markdown) || "markdown";
@@ -492,11 +530,12 @@ $("docPreview").onclick = async () => {
   const st = $("docStatus"); st.innerHTML = '<span class="spinner"></span> Splitting…';
   $("docPreviewOut").innerHTML = "";
   try {
-    const r = await fetch("/corpus/preview", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(docRequest()),
+    const r = await lfFetch("/corpus/preview", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...docRequest(), space: currentSpace() }),
     });
     const data = await r.json();
-    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    if (!r.ok) throw new Error(lfErr(data, `HTTP ${r.status}`));
     st.textContent = "";
     renderPreview(data);
   } catch (e) { st.textContent = ""; banner($("addBanner"), "err", `Preview failed: ${esc(e.message)}`); }
@@ -519,11 +558,12 @@ $("docIngest").onclick = async () => {
   const st = $("docStatus"); st.innerHTML = '<span class="spinner"></span> Chunking, embedding &amp; saving…';
   banner($("addBanner"), "ok", "");
   try {
-    const r = await fetch("/corpus/ingest/document", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(docRequest()),
+    const r = await lfFetch("/corpus/ingest/document", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...docRequest(), space: currentSpace() }),
     });
     const data = await r.json();
-    if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+    if (!r.ok) throw new Error(lfErr(data, `HTTP ${r.status}`));
     st.textContent = "";
     banner($("addBanner"), "ok",
       `Ingested <strong>${data.chunks}</strong> hierarchy-tagged chunk(s) into <strong>${$("d_collection").value}</strong>. Re-ingesting the same book updates in place.`);
@@ -556,7 +596,7 @@ function renderRecords(records, append) {
       if (!armed) { armed = true; btn.textContent = "Confirm delete?"; setTimeout(() => { armed = false; btn.textContent = "Delete"; }, 3000); return; }
       btn.disabled = true; btn.textContent = "Deleting…";
       try {
-        const r = await fetch(`/corpus/collections/${$("br_collection").value}/delete`, {
+        const r = await lfFetch(`/corpus/collections/${$("br_collection").value}/delete`, {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ids: [rec.id] }),
         });
@@ -574,14 +614,14 @@ function renderRecords(records, append) {
 async function loadRecords(append) {
   banner($("browseBanner"), "err", "");
   const name = $("br_collection").value;
-  const params = new URLSearchParams({ limit: "25" });
-  if (append && browseOffset) params.set("offset", browseOffset);
+  const params = new URLSearchParams({ limit: "25", space: currentSpace() });
+  if (append && browseOffset) params.set("cursor", browseOffset);
   try {
-    const r = await fetch(`/corpus/collections/${name}/records?${params}`);
+    const r = await lfFetch(`/corpus/collections/${name}/records?${params}`);
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
-    renderRecords(data.records, append);
-    browseOffset = data.next_offset;
+    renderRecords(data.items, append);
+    browseOffset = data.next_cursor;
     $("br_more").classList.toggle("hidden", !browseOffset);
   } catch (e) {
     banner($("browseBanner"), "err", `Couldn't load records: ${esc(e.message)}`);
@@ -596,7 +636,7 @@ $("g_collection").value = "pedagogical";
 $("b_collection").value = "pedagogical";
 $("d_collection").value = "reference";  // the book tab targets the reference corpus by default
 loadChunkers();
-loadOverview();
+loadSpaces().then(loadOverview);
 </script>
 </body>
 </html>

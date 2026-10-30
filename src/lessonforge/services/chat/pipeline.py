@@ -14,10 +14,16 @@ be swapped or faked without touching this file.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any
 
+from ... import request_context
+from ...activity import events as act
+from ...activity.store import ActivityRecorder
 from ...config import ChatConfig
+from ...context.scope_policy import TurnScope
 from ...domain.chat import (
     ChatArtifact,
     ChatMessage,
@@ -37,6 +43,8 @@ from .transform import QueryTransformer
 
 __all__ = ["ChatEvent", "ChatPipeline"]  # ChatEvent re-exported: the API imports it from here
 
+_ROUTER_HISTORY = 6   # recent messages the intent router sees
+
 
 class ChatPipeline:
     def __init__(
@@ -52,6 +60,7 @@ class ChatPipeline:
         router: IntentRouter | None = None,
         skills: dict[str, Skill] | None = None,
         artifacts: ArtifactService | None = None,
+        activity: ActivityRecorder | None = None,
     ) -> None:
         self.store = store
         self.memory = memory
@@ -65,30 +74,39 @@ class ChatPipeline:
         self.router = router
         self.skills = skills or {}
         self.artifacts = artifacts
+        self.activity = activity
         # The router runs concurrently with query-transform + retrieval (see stream),
         # so classifying EVERY turn costs ~no latency.
         self._pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="intent")
 
     def stream(
-        self, conversation: Conversation, request: ChatMessageRequest
+        self, conversation: Conversation, request: ChatMessageRequest, *,
+        turn: TurnScope | None = None, allowed_skills: frozenset[str] | None = None,
     ) -> Iterator[ChatEvent]:
-        # 1. memory: fetch prior transcript once (window view + length for summary).
-        history = self.store.messages(conversation.id)
-        prev_len = len(history)
+        """One turn. ``turn`` carries server-side scope constraints (ScopePolicy);
+        ``allowed_skills`` the skills this caller may use (``None`` = all)."""
+        started = time.perf_counter()
+        turn = turn or TurnScope()
+        # 1. memory: only the transcript TAIL a turn needs (window + router view) and
+        #    the transcript length — never the whole history.
+        history, prev_len = self.store.tail(
+            conversation.id, limit=max(self.memory.window, _ROUTER_HISTORY))
         view = MemoryView(recent=history[-self.memory.window:], summary=conversation.summary)
 
-        # 2. resolve the two-modes scope (per-message override wins over defaults).
+        # 2. resolve the two-modes scope (per-message override wins over defaults),
+        #    then let the caller's scope policy constrain it (``locked`` overrides).
         mode = request.mode or conversation.defaults.mode
         if request.filters is not None:
             filters = request.filters
         else:
             filters = conversation.defaults.filters(self.config.retrieval.filter_fields)
-        collections = conversation.defaults.collections
+        mode, filters, collections = turn.apply(mode, dict(filters),
+                                                conversation.defaults.collections)
 
         # 2b. intent: start routing NOW, in parallel with the (slower) QA preparation
         # below. A turn that turns out to be a skill request throws the QA work away;
         # a plain question has already done it, so routing adds ~no latency.
-        route_future = self._submit_route(request.message, history, conversation)
+        route_future = self._submit_route(request.message, history, conversation, allowed_skills)
 
         # 3. transform → 4. retrieve+fuse → 5. build numbered context.
         prep_error: Exception | None = None
@@ -96,16 +114,18 @@ class ChatPipeline:
         try:
             transformed = self.transformer.transform(request.message, view.recent)
             chunks = self.retriever.retrieve(
-                transformed, mode=mode, filters=filters, collections=collections
+                transformed, mode=mode, filters=filters, collections=collections,
+                allow_fallback=turn.allow_broad_fallback,
             )
             built = self.context_builder.build(transformed.standalone, chunks)
         except Exception as exc:  # only fatal if this turns out to be a plain question
             prep_error = exc
 
         routed = self._await_route(route_future)
-        if routed.skill != QA and routed.skill in self.skills:
+        if routed.skill != QA and routed.skill in self.skills and (
+                allowed_skills is None or routed.skill in allowed_skills):
             yield from self._run_skill(conversation, request, routed, history, view,
-                                       prev_len, mode, filters)
+                                       prev_len, mode, filters, started)
             return
         if prep_error is not None:
             raise prep_error
@@ -145,8 +165,8 @@ class ChatPipeline:
 
         # 10. title a fresh conversation from its first question; roll the summary.
         title = self._maybe_title(conversation, prev_len, request.message)
-        all_messages = self.store.messages(conversation.id)
-        self.memory.maybe_summarize(conversation, all_messages, prev_len=prev_len)
+        self.memory.maybe_summarize(conversation, prev_len=prev_len, total=prev_len + 2)
+        self._record_turn(routed, filters, conversation, built.citations, started)
 
         yield ChatEvent("done", {
             "citations": len(built.citations),
@@ -157,10 +177,12 @@ class ChatPipeline:
 
     # ── intent routing + skills ──────────────────────────────────────────────
     def _submit_route(
-        self, message: str, history: list[ChatMessage], conversation: Conversation
+        self, message: str, history: list[ChatMessage], conversation: Conversation,
+        allowed: frozenset[str] | None = None,
     ) -> Future[RoutedIntent] | None:
         """Build the router's view of the conversation (on this thread — the store is
-        not touched from workers) and start classifying in the background."""
+        not touched from workers) and start classifying in the background. The
+        worker inherits the request context (usage metering, scope)."""
         if self.router is None or not self.skills:
             return None
         try:
@@ -170,9 +192,10 @@ class ChatPipeline:
                 awaiting=last.meta.get("awaiting") if last else None,
                 last_skill=last_intent.get("skill") if last_intent.get("skill") != QA else None,
                 artifacts_note=self._artifacts_note(conversation),
-                history=history[-6:],
+                history=history[-_ROUTER_HISTORY:],
+                allowed=allowed,
             )
-            return self._pool.submit(self._safe_route, message, state)
+            return request_context.submit_in_context(self._pool, self._safe_route, message, state)
         except Exception:
             return None
 
@@ -209,6 +232,7 @@ class ChatPipeline:
     def _run_skill(
         self, conversation: Conversation, request: ChatMessageRequest, routed: RoutedIntent,
         history: list[ChatMessage], view: MemoryView, prev_len: int, mode, filters,
+        started: float,
     ) -> Iterator[ChatEvent]:
         """Run one skill turn: persist the user message, stream the skill's events
         (saving any artifact as it appears), then persist the assistant turn with the
@@ -233,6 +257,7 @@ class ChatPipeline:
                 elif ev.type == "artifact":
                     art = self._save_artifact(ev.data, reply.id)
                     artifact_ids.append(art.id)
+                    self._record_artifact(art)
                     yield ChatEvent("artifact", self._artifact_payload(art))
                 elif ev.type == "awaiting":
                     awaiting = ev.data
@@ -250,8 +275,8 @@ class ChatPipeline:
         self.store.add_message(conversation.id, reply)
 
         title = self._maybe_title(conversation, prev_len, request.message)
-        self.memory.maybe_summarize(conversation, self.store.messages(conversation.id),
-                                    prev_len=prev_len)
+        self.memory.maybe_summarize(conversation, prev_len=prev_len, total=prev_len + 2)
+        self._record_turn(routed, filters, conversation, [], started)
         yield ChatEvent("done", {"citations": 0, "mode": mode.value, "title": title,
                                  "intent": routed.meta(), "artifacts": artifact_ids})
 
@@ -271,5 +296,55 @@ class ChatPipeline:
         if prev_len > 0 or conversation.title not in ("", "New chat"):
             return None
         title = first_message.strip().splitlines()[0][:60] or "New chat"
-        self.store.update(conversation.id, title=title)
+        self.store.update(conversation.id, owner_id=conversation.owner_id, title=title)
         return title
+
+    # ── activity (content-free; see activity/events.py) ──────────────────────
+    def _record_turn(self, routed: RoutedIntent, filters: dict[str, Any],
+                     conversation: Conversation, citations: list[Any], started: float) -> None:
+        if self.activity is None:
+            return
+        ctx = request_context.current()
+        usage = ctx.usage.snapshot() if ctx else {}
+        metas = [c.metadata or {} for c in citations]
+        subject = filters.get("subject") or conversation.defaults.subject
+        try:
+            props = act.ChatMessage(
+                intent=routed.skill, intent_source=routed.source,
+                confidence=max(0.0, min(1.0, routed.confidence)),
+                subject=str(subject)[:160] if subject else None,
+                chapters=_unique(str(m["chapter"])[:160] for m in metas if m.get("chapter"))[:20],
+                collections=_unique(c.collection for c in citations)[:10],
+                spaces_hit=_unique(str(m["space"]) for m in metas if m.get("space"))[:10],
+                citations=len(citations), grounded=bool(citations),
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                tokens_in=usage.get("tokens_in", 0), tokens_out=usage.get("tokens_out", 0),
+                model=usage.get("model"),
+            )
+        except Exception:   # an odd value must never fail the turn
+            return
+        self.activity.record(act.build_event("chat.message", props, resource_type="conversation",
+                                            resource_id=conversation.id))
+
+    def _record_artifact(self, art: ChatArtifact) -> None:
+        if self.activity is None or art.kind != "quiz":
+            return
+        questions = art.payload.get("questions") or []
+        spec = art.payload.get("spec") or {}
+        try:
+            props = act.QuizCreated(
+                source="chat", questions=len(questions),
+                question_types=_unique(str(q.get("type")) for q in questions
+                                       if isinstance(q, dict) and q.get("type"))[:20],
+                difficulty=str(spec.get("difficulty")) if spec.get("difficulty") else None,
+                subject=(art.payload.get("curriculum_ref") or {}).get("subject"),
+                chapter=art.meta.get("chapter"),
+            )
+        except Exception:
+            return
+        self.activity.record(act.build_event("quiz.created", props, resource_type="quiz",
+                                            resource_id=art.id))
+
+
+def _unique(values) -> list[str]:
+    return list(dict.fromkeys(v for v in values if v))

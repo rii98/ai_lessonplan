@@ -8,6 +8,25 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    services:
+      # Real Postgres for the store/migration contract suites (every store test
+      # runs against memory AND Postgres so the two can never drift).
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lessonforge
+          POSTGRES_PASSWORD: lessonforge
+          POSTGRES_DB: lessonforge
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U lessonforge -d lessonforge"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports: ["6333:6333"]
+    env:
+      TEST_DATABASE_URL: postgresql://lessonforge:lessonforge@localhost:5432/lessonforge
+      QDRANT_URL: http://localhost:6333
     steps:
       - uses: actions/checkout@v4
 
@@ -23,12 +42,36 @@ jobs:
       - name: Lint (ruff)
         run: ruff check .
 
-      # Unit tests only — no Qdrant/Ollama. Live contract tests stay gated behind
-      # RUN_INTEGRATION and are not run in CI.
-      - name: Unit tests
+      # Applies every migration to a fresh database (and fails on drift).
+      - name: Migrations apply cleanly
+        env:
+          DATABASE_URL: postgresql://lessonforge:lessonforge@localhost:5432/lessonforge
+        run: lessonforge-db migrate && lessonforge-db status
+
+      # Unit + Postgres contract tests (incl. the role matrix, corpus isolation,
+      # IDOR and sharing suites). Live LLM tests stay gated behind RUN_INTEGRATION.
+      - name: Tests
         run: pytest -q
+
+      # Knowledge-space isolation against the REAL Qdrant adapter.
+      - name: Qdrant isolation contract
+        env:
+          RUN_INTEGRATION: "1"
+        run: pytest -q tests/contract/test_qdrant_spaces_contract.py
+
+      # The published /api/v1 contract may only grow (breaking → /api/v2).
+      - name: API contract
+        run: python -m lessonforge.api.contract
 
       # Acceptance gate: score the golden exemplar LDDs against the rubric. Fails
       # the build on silent quality drift from a prompt/model/scorer change.
       - name: Eval gate
         run: python -m lessonforge.eval
+
+  fake-edboox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The fake must stay independent: it may never import lessonforge.
+      - name: Fake Edboox shares no code with LessonForge
+        run: "! grep -rnE '^(from|import) lessonforge' dev/fake_edboox"

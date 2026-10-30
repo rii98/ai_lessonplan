@@ -18,15 +18,20 @@ CLI::
 from __future__ import annotations
 
 import argparse
+import hashlib
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..providers.base import Embedder, SparseEmbedder, VectorRecord, VectorStore
 from .chunkers import CHUNKER_REGISTRY, Chunker, ParagraphChunker, build_chunker
-from .documents import DOC_ID_KEY, Chunk, Collection, Document
+from .documents import DOC_ID_KEY, GLOBAL_SPACE, SPACE_KEY, Chunk, Collection, Document
 from .loaders import build_loader, document_from_record
+
+if TYPE_CHECKING:
+    from ..domain.vocabulary import Vocabulary
+    from ..knowledge.registry import KnowledgeRegistry
 
 
 class ChunkerPolicy:
@@ -68,11 +73,14 @@ class IngestReport:
     documents: int = 0
     chunks: int = 0
     sources: set[str] = field(default_factory=set)
+    space: str = GLOBAL_SPACE
+    doc_ids: list[str] = field(default_factory=list)
 
     def merge(self, other: IngestReport) -> None:
         self.documents += other.documents
         self.chunks += other.chunks
         self.sources |= other.sources
+        self.doc_ids.extend(other.doc_ids)
 
 
 class Ingestor:
@@ -86,8 +94,15 @@ class Ingestor:
         sparse_embedder: SparseEmbedder | None = None,
         hybrid: bool = False,
         batch_size: int = 64,
+        vocabulary: Vocabulary | None = None,
+        registry: KnowledgeRegistry | None = None,
     ) -> None:
         self.embedder = embedder
+        # canonicalise grade/subject (unknown subject → ValueError → HTTP 422) so
+        # retrieval filters match what Edboox context produces (D9).
+        self.vocabulary = vocabulary
+        # records one corpus_sources row per document (§16) when wired.
+        self.registry = registry
         self.vector_store = vector_store
         # ``chunker`` is the fallback default; ``chunker_policy`` selects per source
         # format when set (e.g. markdown → structure-aware). Either may be omitted.
@@ -110,26 +125,47 @@ class Ingestor:
         docs: Iterable[Document],
         *,
         chunker: Chunker | None = None,
+        space: str = GLOBAL_SPACE,
+        ingested_by: str | None = None,
     ) -> IngestReport:
+        """Chunk, embed and upsert ``docs`` into ``space`` (default: the shared
+        ``global`` shelf). The space is stamped on every chunk by ingestion alone —
+        a ``_space`` key in record metadata is discarded, never trusted."""
+        from ..knowledge.scope import valid_space
+
+        if not valid_space(space):
+            raise ValueError(f"invalid knowledge space {space!r}")
         chunker = chunker or self.chunker
-        report = IngestReport(collection=collection)
+        report = IngestReport(collection=collection, space=space)
         # group chunks by their actual target collection so a mixed file (records
         # that declare their own `collection`) lands in the right collections.
         by_collection: dict[Collection, list[Chunk]] = {}
+        sources: dict[tuple[str, str], dict[str, Any]] = {}
         for doc in docs:
             report.documents += 1
             report.sources.add(doc.source)
             target = _coerce_collection(doc.metadata.get("collection"), collection)
+            meta = {k: v for k, v in doc.metadata.items() if k != SPACE_KEY}
+            if self.vocabulary is not None:
+                meta = self.vocabulary.normalize_metadata(meta)
             # Stamp the document id on every chunk so hierarchy dereferences
             # (section/chapter expansion) are scoped to this book — identical
             # headings across different books never bleed together. An explicit
-            # doc_id in the record's metadata wins; else the Document's own id.
-            meta = {DOC_ID_KEY: doc.id, **doc.metadata}
-            by_collection.setdefault(target, []).extend(
-                chunker.chunk(
-                    doc.text, collection=target, source=doc.source, metadata=meta
-                )
-            )
+            # doc_id in the record's metadata wins; else the Document's own id. A
+            # school's doc ids are namespaced by its space so they never collide
+            # with the shared shelf's.
+            doc_id = str(meta.pop(DOC_ID_KEY, doc.id))
+            if space != GLOBAL_SPACE:
+                doc_id = f"{space}/{doc_id}"
+            meta = {**meta, DOC_ID_KEY: doc_id, SPACE_KEY: space}
+            chunks = chunker.chunk(doc.text, collection=target, source=doc.source, metadata=meta)
+            by_collection.setdefault(target, []).extend(chunks)
+            entry = sources.setdefault((target.value, doc_id), {
+                "title": str(meta.get("title") or doc.source)[:300], "source": doc.source,
+                "sha": hashlib.sha256(), "chunks": 0})
+            entry["sha"].update(doc.text.encode("utf-8"))
+            entry["chunks"] += len(chunks)
+            report.doc_ids.append(doc_id)
 
         hybrid = self.hybrid_active
         for target, chunks in by_collection.items():
@@ -149,6 +185,17 @@ class Ingestor:
                 ]
                 self.vector_store.upsert(target.value, records)
                 report.chunks += len(records)
+
+        if self.registry is not None and sources:
+            from ..knowledge.registry import CorpusSource
+
+            self.registry.ensure_space(space)
+            self.registry.record_sources([
+                CorpusSource(space_id=space, collection=col, doc_id=doc_id, title=e["title"],
+                             source_label=e["source"], checksum=e["sha"].hexdigest(),
+                             chunks=e["chunks"], ingested_by=ingested_by)
+                for (col, doc_id), e in sources.items()
+            ])
         return report
 
     def ingest_source(
@@ -159,6 +206,8 @@ class Ingestor:
         fmt: str = "jsonl",
         extra_metadata: dict[str, Any] | None = None,
         chunker: Chunker | None = None,
+        space: str = GLOBAL_SPACE,
+        ingested_by: str | None = None,
     ) -> IngestReport:
         loader = build_loader(fmt)
         docs = list(loader.load(path))
@@ -167,7 +216,8 @@ class Ingestor:
                 d.metadata = {**extra_metadata, **d.metadata}
         # explicit chunker wins; else the policy picks by format; else the default.
         chosen = chunker or (self.chunker_policy.for_format(fmt) if self.chunker_policy else None)
-        return self.ingest_documents(collection, docs, chunker=chosen)
+        return self.ingest_documents(collection, docs, chunker=chosen, space=space,
+                                     ingested_by=ingested_by)
 
     def ingest_records(
         self,
@@ -175,6 +225,8 @@ class Ingestor:
         records: list[dict[str, Any]],
         *,
         source_label: str = "upload",
+        space: str = GLOBAL_SPACE,
+        ingested_by: str | None = None,
     ) -> IngestReport:
         """Ingest JSONL-style record dicts posted in-memory (the corpus UI path).
 
@@ -188,7 +240,7 @@ class Ingestor:
             )
             for i, r in enumerate(records, 1)
         ]
-        return self.ingest_documents(collection, docs)
+        return self.ingest_documents(collection, docs, space=space, ingested_by=ingested_by)
 
 
 def _coerce_collection(value: Any, default: Collection) -> Collection:
@@ -212,29 +264,27 @@ def default_seed_dir() -> Path:
     return Path(__file__).resolve().parents[3] / "corpus" / "seed"
 
 
-def ingest_seed(ingestor: Ingestor, seed_dir: Path | None = None) -> IngestReport:
+def ingest_seed(ingestor: Ingestor, seed_dir: Path | None = None, *,
+                space: str = GLOBAL_SPACE) -> IngestReport:
     """Ingest ``corpus/seed/<collection>.jsonl`` for every collection that exists."""
     seed_dir = seed_dir or default_seed_dir()
     total = IngestReport(collection=Collection.curriculum)  # collection field is nominal here
     for collection in Collection:
         path = seed_dir / f"{collection.value}.jsonl"
         if path.exists():
-            total.merge(ingestor.ingest_source(path, collection, fmt="jsonl"))
+            total.merge(ingestor.ingest_source(path, collection, fmt="jsonl", space=space))
     return total
 
 
 def _build_default_ingestor() -> Ingestor:
-    # local import so the module imports cheaply (no provider construction) in tests
+    # local import so the module imports cheaply (no provider construction) in tests.
+    # The container's ingestor carries the vocabulary (subject/grade normalisation)
+    # and the knowledge registry (corpus_sources rows), exactly like the API path.
     from ..container import Container
 
-    c = Container.from_settings()
-    return Ingestor(
-        embedder=c.embedder,
-        vector_store=c.vector_store,
-        chunker_policy=ChunkerPolicy.from_config(c.settings.chunking),
-        sparse_embedder=c.sparse_embedder,
-        hybrid=c.settings.retrieval.hybrid,
-    )
+    ingestor = Container.from_settings().ingestor
+    assert ingestor is not None
+    return ingestor
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -254,12 +304,14 @@ def main(argv: list[str] | None = None) -> int:
                              "default: auto-detected per document")
     parser.add_argument("--grade", type=int, help="metadata: grade for --source")
     parser.add_argument("--subject", help="metadata: subject for --source")
+    parser.add_argument("--space", default=GLOBAL_SPACE,
+                        help="knowledge space: 'global' (every school) or 'school:<id>'")
     args = parser.parse_args(argv)
 
     ingestor = _build_default_ingestor()
 
     if args.seed:
-        report = ingest_seed(ingestor)
+        report = ingest_seed(ingestor, space=args.space)
         print(f"seed ingested: {report.documents} docs → {report.chunks} chunks "
               f"from {len(report.sources)} sources")
         return 0
@@ -285,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
             override = build_chunker(args.chunker or "markdown", **params)
         report = ingestor.ingest_source(
             args.source, Collection(args.collection), fmt=args.format,
-            extra_metadata=extra, chunker=override,
+            extra_metadata=extra, chunker=override, space=args.space,
         )
         print(f"ingested {report.documents} docs → {report.chunks} chunks "
               f"into {report.collection.value}")

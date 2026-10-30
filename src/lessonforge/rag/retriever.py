@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from ..providers.base import Embedder, Reranker, SparseEmbedder, VectorStore
+from ..request_context import current_scope
 from .documents import (
     CHAPTER_KEY,
     CHUNK_INDEX_KEY,
@@ -94,12 +95,18 @@ class Retriever:
         granularity: Granularity = "narrow",
     ) -> list[RetrievedChunk]:
         top_n = top_n or self.rerank_top_n
+        # The caller's knowledge scope (§16) rides on the request context; the store
+        # ANDs it into the query independently of ``where``, so a caller's lenient
+        # "retry without filters" fallback can never widen what is readable.
+        scope = current_scope()
         vector = self.embedder.embed_one(query)
         if self.hybrid_active:
             sparse = self.sparse_embedder.embed_sparse_one(query)  # type: ignore[union-attr]
-            hits = self.vector_store.hybrid_search(collection, vector, sparse, self.top_k, where=where)
+            hits = self.vector_store.hybrid_search(collection, vector, sparse, self.top_k,
+                                                   where=where, scope=scope)
         else:
-            hits = self.vector_store.search(collection, vector, self.top_k, where=where)
+            hits = self.vector_store.search(collection, vector, self.top_k, where=where,
+                                            scope=scope)
         if not hits:
             return []
 
@@ -158,9 +165,7 @@ class Retriever:
     ) -> RetrievedChunk | None:
         """Fetch and stitch every chunk of one section/chapter into one passage."""
         try:
-            records = self.vector_store.fetch(
-                collection, {DOC_ID_KEY: doc_id, group_key: unit}
-            )
+            records = self.fetch(collection, {DOC_ID_KEY: doc_id, group_key: unit})
         except Exception:
             return None  # store can't fetch → caller falls back to the narrow hit
         if not records:
@@ -182,6 +187,13 @@ class Retriever:
         # is the seed's, so an expanded unit ranks where its best chunk ranked.
         payload = {**seed.payload, SOURCE_KEY: seed.payload.get(SOURCE_KEY, "?")}
         return RetrievedChunk(text="\n\n".join(parts), score=seed.score, payload=payload)
+
+    def fetch(self, collection: str, where: dict[str, Any] | None, *,
+              limit: int = 2000) -> list[Any]:
+        """Payload-filtered fetch within the request's knowledge scope — the one
+        door every non-vector read (section/chapter expansion, tables of contents)
+        goes through."""
+        return self.vector_store.fetch(collection, where, scope=current_scope(), limit=limit)
 
     def _log_scores(
         self, collection: str, query: str, chunks: list[RetrievedChunk]

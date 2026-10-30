@@ -5,8 +5,6 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from lessonforge.api.deps import get_container
-from lessonforge.api.main import create_app
 from lessonforge.config import Settings
 from lessonforge.container import Container
 from lessonforge.export import ExportService
@@ -14,7 +12,7 @@ from lessonforge.rag.grounding import GroundingRetriever
 from lessonforge.rag.retriever import Retriever
 from lessonforge.services.generation import LessonGenerator
 from lessonforge.services.intake import HeuristicIntake
-from tests.conftest import FakeEmbedder, FakeLLM, FakeReranker, FakeVectorStore
+from tests.conftest import FakeEmbedder, FakeLLM, FakeReranker, FakeVectorStore, api_client
 
 
 @pytest.fixture
@@ -37,9 +35,7 @@ def client(base_settings_dict, valid_ldd_dict) -> TestClient:
         # deterministic intake so a pasted plan is parsed by regex, not the fake LLM
         intake=HeuristicIntake(),
     )
-    app = create_app()
-    app.dependency_overrides[get_container] = lambda: container
-    return TestClient(app)
+    return api_client(container)
 
 
 def test_health(client):
@@ -49,7 +45,7 @@ def test_health(client):
 
 
 def test_provider_health_reports_wiring(client):
-    resp = client.get("/health/providers")
+    resp = client.get("/api/v1/health/providers")
     assert resp.status_code == 200
     body = resp.json()
     assert body["llm"]["provider"] == "ollama"
@@ -59,7 +55,7 @@ def test_provider_health_reports_wiring(client):
 
 def test_generate_lesson_endpoint(client):
     resp = client.post(
-        "/lessons/generate",
+        "/api/v1/lessons/generate",
         json={"topic": "Environment", "grade": 6, "subject": "Science", "duration_min": 45},
     )
     assert resp.status_code == 200, resp.text
@@ -69,19 +65,19 @@ def test_generate_lesson_endpoint(client):
 
 
 def test_generate_validates_input(client):
-    resp = client.post("/lessons/generate", json={"topic": "x", "grade": 99, "subject": "S"})
+    resp = client.post("/api/v1/lessons/generate", json={"topic": "x", "grade": 99, "subject": "S"})
     assert resp.status_code == 422  # grade out of range
 
 
 def test_generate_requires_topic_or_plan(client):
-    resp = client.post("/lessons/generate", json={"grade": 6, "subject": "Science"})
+    resp = client.post("/api/v1/lessons/generate", json={"grade": 6, "subject": "Science"})
     assert resp.status_code == 422  # neither topic nor existing_plan
 
 
 def test_generate_from_pasted_plan_only(client):
     # US-3: no topic — intake parses it from the pasted plan (heuristic default here)
     resp = client.post(
-        "/lessons/generate",
+        "/api/v1/lessons/generate",
         json={"existing_plan": "Grade 6 Science\nTopic: Environment\nread the textbook"},
     )
     assert resp.status_code == 200, resp.text
@@ -90,7 +86,7 @@ def test_generate_from_pasted_plan_only(client):
 
 def test_intake_endpoint_previews_brief(client):
     resp = client.post(
-        "/lessons/intake",
+        "/api/v1/lessons/intake",
         json={"existing_plan": "Class 7 Science 40 min\nTopic: Sound and Vibration"},
     )
     assert resp.status_code == 200, resp.text
@@ -100,7 +96,7 @@ def test_intake_endpoint_previews_brief(client):
 
 
 def test_critique_endpoint_scores_an_ldd(client, export_ldd_dict):
-    resp = client.post("/lessons/critique", json=export_ldd_dict)
+    resp = client.post("/api/v1/lessons/critique", json=export_ldd_dict)
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert 0.0 <= body["overall"] <= 1.0
@@ -115,7 +111,7 @@ def test_corpus_page_is_served(client):
 
 
 def test_corpus_overview_lists_all_collections_with_counts(client):
-    resp = client.get("/corpus/overview")
+    resp = client.get("/api/v1/corpus/overview")
     assert resp.status_code == 200, resp.text
     cols = {c["name"]: c for c in resp.json()["collections"]}
     assert set(cols) == {"reference", "curriculum", "pedagogical", "exemplar", "local_context"}
@@ -125,7 +121,7 @@ def test_corpus_overview_lists_all_collections_with_counts(client):
 
 def test_corpus_ingest_browse_and_delete_roundtrip(client):
     # add two records via the UI path
-    resp = client.post("/corpus/ingest", json={
+    resp = client.post("/api/v1/corpus/ingest", json={
         "collection": "pedagogical",
         "records": [
             {"text": "soil is an abiotic component", "grade": 6, "subject": "Science", "source": "bank"},
@@ -138,28 +134,28 @@ def test_corpus_ingest_browse_and_delete_roundtrip(client):
     assert body["counts"]["pedagogical"] == 2
 
     # browse them back
-    recs = client.get("/corpus/collections/pedagogical/records").json()["records"]
+    recs = client.get("/api/v1/corpus/collections/pedagogical/records").json()["items"]
     assert len(recs) == 2
     first = next(r for r in recs if r["text"] == "soil is an abiotic component")
     assert first["source"] == "bank" and first["metadata"]["grade"] == 6
     assert "text" not in first["metadata"]  # promoted, not duplicated into metadata
 
     # delete one
-    d = client.post("/corpus/collections/pedagogical/delete", json={"ids": [first["id"]]})
+    d = client.post("/api/v1/corpus/collections/pedagogical/delete", json={"ids": [first["id"]]})
     assert d.status_code == 200 and d.json()["deleted"] == 1
-    assert client.get("/corpus/overview").json()["collections"]
-    remaining = client.get("/corpus/collections/pedagogical/records").json()["records"]
+    assert client.get("/api/v1/corpus/overview").json()["collections"]
+    remaining = client.get("/api/v1/corpus/collections/pedagogical/records").json()["items"]
     assert len(remaining) == 1 and remaining[0]["text"] == "clouds move but are not alive"
 
 
 def test_corpus_ingest_rejects_record_without_text(client):
-    resp = client.post("/corpus/ingest", json={"collection": "curriculum", "records": [{"grade": 6}]})
+    resp = client.post("/api/v1/corpus/ingest", json={"collection": "curriculum", "records": [{"grade": 6}]})
     assert resp.status_code == 422
-    assert "text" in resp.json()["detail"]
+    assert "text" in resp.json()["error"]["message"]
 
 
 def test_corpus_ingest_rejects_unknown_collection(client):
-    resp = client.post("/corpus/ingest", json={"collection": "nonsense", "records": [{"text": "x"}]})
+    resp = client.post("/api/v1/corpus/ingest", json={"collection": "nonsense", "records": [{"text": "x"}]})
     assert resp.status_code == 422
 
 
@@ -170,36 +166,36 @@ _BOOK = ("---\nsource: My Science Grade 6\ngrade: 6\nsubject: Science\n---\n"
 
 
 def test_corpus_chunkers_lists_strategies(client):
-    body = client.get("/corpus/chunkers").json()
+    body = client.get("/api/v1/corpus/chunkers").json()
     assert "markdown" in body["chunkers"] and "paragraph" in body["chunkers"]
     assert body["by_format"]["markdown"] == "markdown"
 
 
 def test_corpus_preview_splits_by_hierarchy_without_storing(client):
-    resp = client.post("/corpus/preview", json={"collection": "reference", "text": _BOOK})
+    resp = client.post("/api/v1/corpus/preview", json={"collection": "reference", "text": _BOOK})
     assert resp.status_code == 200, resp.text
     data = resp.json()
     paths = [c["heading_path"] for c in data["chunks"]]
     assert "Chapter 2 > Biotic Components" in paths
     # preview stores nothing
-    assert client.get("/corpus/overview").json()
-    counts = {c["name"]: c["count"] for c in client.get("/corpus/overview").json()["collections"]}
+    assert client.get("/api/v1/corpus/overview").json()
+    counts = {c["name"]: c["count"] for c in client.get("/api/v1/corpus/overview").json()["collections"]}
     assert counts["reference"] == 0
 
 
 def test_corpus_ingest_document_stores_hierarchy_tagged_chunks(client):
-    resp = client.post("/corpus/ingest/document", json={"collection": "reference", "text": _BOOK})
+    resp = client.post("/api/v1/corpus/ingest/document", json={"collection": "reference", "text": _BOOK})
     assert resp.status_code == 200, resp.text
     assert resp.json()["chunks"] >= 3
     assert resp.json()["counts"]["reference"] >= 3
     # front-matter tags landed on the stored chunks
-    recs = client.get("/corpus/collections/reference/records").json()["records"]
+    recs = client.get("/api/v1/corpus/collections/reference/records").json()["items"]
     assert any(r["metadata"].get("heading_path") for r in recs)
     assert all(r["metadata"].get("grade") == 6 for r in recs)
 
 
 def test_corpus_preview_honors_split_levels_knob(client):
-    resp = client.post("/corpus/preview", json={
+    resp = client.post("/api/v1/corpus/preview", json={
         "collection": "reference", "text": _BOOK, "params": {"split_levels": [1]},
     })
     # splitting only at H1 → the two H2 sections fold into the single H1 chunk
@@ -209,7 +205,7 @@ def test_corpus_preview_honors_split_levels_knob(client):
 
 
 def test_corpus_ingest_document_rejects_unknown_chunker(client):
-    resp = client.post("/corpus/ingest/document", json={
+    resp = client.post("/api/v1/corpus/ingest/document", json={
         "collection": "reference", "text": _BOOK, "chunker": "nope",
     })
     assert resp.status_code == 422

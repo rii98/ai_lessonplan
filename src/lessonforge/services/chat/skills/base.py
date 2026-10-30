@@ -28,6 +28,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
+from ....auth.principal import Perm
 from ....domain.chat import ChatMessage, Conversation
 from ....providers.base import LLMClient
 from ..events import ChatEvent
@@ -60,6 +61,7 @@ class SkillSpec:
     negatives: tuple[str, ...] = ()           # patterns that veto the rules-only router
     followups: tuple[Trigger, ...] = ()       # short follow-ups ("another one") — only
                                               # considered when the previous turn used this skill
+    requires: Perm = Perm.CHAT                # who may use it; the router never offers it to others
 
     def lexical_score(self, text: str, *, after_this_skill: bool = False) -> float:
         """Best trigger weight that matches ``text`` (0 when none)."""

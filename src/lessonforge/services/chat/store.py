@@ -1,31 +1,34 @@
-"""ChatStore — where conversations and their messages are persisted.
+"""ChatStore — where conversations, messages, artifacts and attempts are persisted.
 
-A storage port behind the same registry pattern as :class:`ProfileStore`: swap
-``chat.store.provider`` in config and the backend changes with no code edit.
+A storage port behind the registry pattern: ``chat.store.provider`` picks
+``memory`` (tests) or ``postgres`` (the shared pool). Both implement identical
+semantics; one contract test suite runs against each.
 
-- ``memory`` — in-process dicts. Zero infra, non-persistent; the default seam for
-  tests and a single-process dev run.
-- ``sqlite`` — one file via the stdlib ``sqlite3`` driver. Persistent, no extra
-  service, no new dependency.
-- ``postgres`` — the real, Docker-backed store via ``psycopg``. DSN comes from
-  ``chat.store.url`` (env-driven, e.g. ``${CHAT_DB_URL}``), never hard-coded.
+Access rules live at the entry points (D7): every conversation, artifact and
+attempt that can be named from outside is looked up together with its owner
+(``owner_id`` = the caller's principal id), and a foreign row is simply "not
+found". Children of an already-authorized conversation (its messages, its
+artifact list) are read by conversation id.
 
-The two SQL backends share all row logic in :class:`_SqlChatStore`; they differ
-only in how they connect and in their placeholder token — the loose-coupling
-contract applied to persistence.
+Efficiency notes:
+
+- a message's ``ord`` is allocated by one atomic ``UPDATE … RETURNING`` on the
+  conversation's counter (no ``max()+1`` race, no extra read);
+- a chat turn reads only the transcript *tail* it needs, never the whole history;
+- artifact summaries load every attempt of a conversation in ONE query
+  (:meth:`attempts_by_artifact`), not one query per artifact.
 """
 
 from __future__ import annotations
 
-import json
 import threading
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
-from datetime import UTC
-from pathlib import Path
+from collections import defaultdict
+from datetime import UTC, datetime
 from typing import Any
 
 from ...config import ChatStoreConfig
+from ...db.pool import Database, as_uuid, id_str, jsonb
 from ...domain.chat import (
     ArtifactAttempt,
     ChatArtifact,
@@ -33,565 +36,450 @@ from ...domain.chat import (
     ChatMessage,
     Conversation,
 )
+from ...pagination import Keyset, Page, page_of
 from ..registry import register_chat_store
 
 
-class ChatStore(ABC):
-    """Persists conversations and messages, keyed by id. A missing conversation
-    returns ``None`` (callers raise 404) rather than raising here."""
+def _now() -> datetime:
+    return datetime.now(UTC)
 
+
+class ChatStore(ABC):
+    # ── conversations (owner-scoped) ─────────────────────────────────────────
     @abstractmethod
     def create(self, conversation: Conversation) -> Conversation: ...
 
     @abstractmethod
-    def get(self, conversation_id: str) -> Conversation | None: ...
+    def get(self, conversation_id: str, *, owner_id: str) -> Conversation | None: ...
 
     @abstractmethod
-    def list(self, owner_id: str = "default") -> list[Conversation]:
-        """Conversations for an owner, most-recently-updated first."""
+    def list(self, owner_id: str, *, limit: int, cursor: Keyset | None = None) -> Page[Conversation]:
+        """An owner's conversations, most-recently-updated first, keyset-paged."""
 
     @abstractmethod
-    def update(
-        self,
-        conversation_id: str,
-        *,
-        title: str | None = None,
-        defaults: ChatDefaults | None = None,
-        summary: str | None = None,
-    ) -> Conversation | None:
-        """Patch the given fields (each ``None`` = untouched) and bump
-        ``updated_at``. Returns the updated conversation, or ``None`` if absent."""
+    def update(self, conversation_id: str, *, owner_id: str, title: str | None = None,
+               defaults: ChatDefaults | None = None, summary: str | None = None
+               ) -> Conversation | None:
+        """Patch the given fields (``None`` = untouched) and bump ``updated_at``."""
 
     @abstractmethod
-    def delete(self, conversation_id: str) -> bool:
-        """Delete a conversation and its messages. Returns whether it existed."""
+    def delete(self, conversation_id: str, *, owner_id: str) -> bool:
+        """Delete a conversation with its messages, artifacts and attempts."""
 
+    # ── messages (conversation already authorized) ───────────────────────────
     @abstractmethod
     def add_message(self, conversation_id: str, message: ChatMessage) -> ChatMessage:
-        """Append a message and touch the conversation's ``updated_at``."""
+        """Append a message (next ``ord``) and touch the conversation."""
 
     @abstractmethod
-    def messages(self, conversation_id: str, *, limit: int | None = None) -> list[ChatMessage]:
-        """Messages in chronological order. ``limit`` keeps only the most recent
-        ``limit`` (still returned oldest-first) for windowed memory."""
+    def messages(self, conversation_id: str) -> list[ChatMessage]:
+        """The whole transcript, oldest first (reloading a thread)."""
 
-    # ── artifacts (a quiz etc. a turn produced) and their play-through attempts ──
+    @abstractmethod
+    def tail(self, conversation_id: str, *, limit: int) -> tuple[list[ChatMessage], int]:
+        """The last ``limit`` messages (oldest first) and the transcript length."""
+
+    @abstractmethod
+    def messages_between(self, conversation_id: str, start: int, end: int) -> list[ChatMessage]:
+        """Messages at positions ``[start, end)`` (for rolling summaries)."""
+
+    # ── artifacts ────────────────────────────────────────────────────────────
     @abstractmethod
     def add_artifact(self, artifact: ChatArtifact) -> ChatArtifact: ...
 
     @abstractmethod
-    def get_artifact(self, artifact_id: str) -> ChatArtifact | None: ...
+    def get_artifact(self, artifact_id: str, *, owner_id: str) -> ChatArtifact | None: ...
 
     @abstractmethod
     def list_artifacts(self, conversation_id: str) -> list[ChatArtifact]:
-        """A conversation's artifacts, oldest first (the order they were made)."""
+        """A conversation's artifacts, oldest first."""
 
     @abstractmethod
-    def delete_artifact(self, artifact_id: str) -> bool:
-        """Delete an artifact and its attempts. Returns whether it existed."""
+    def delete_artifact(self, artifact_id: str, *, owner_id: str) -> bool: ...
 
+    # ── attempts ─────────────────────────────────────────────────────────────
     @abstractmethod
     def save_attempt(self, attempt: ArtifactAttempt) -> ArtifactAttempt:
-        """Insert or replace an attempt (it is rewritten as the user answers)."""
+        """Insert or update an attempt (it is rewritten as the user answers)."""
 
     @abstractmethod
-    def get_attempt(self, attempt_id: str) -> ArtifactAttempt | None: ...
+    def get_attempt(self, attempt_id: str, *, owner_id: str) -> ArtifactAttempt | None: ...
 
     @abstractmethod
     def list_attempts(self, artifact_id: str) -> list[ArtifactAttempt]:
         """An artifact's attempts, newest first."""
 
+    @abstractmethod
+    def attempts_by_artifact(self, conversation_id: str) -> dict[str, list[ArtifactAttempt]]:
+        """Every attempt in a conversation grouped by artifact (newest first) — one
+        read for all of a conversation's artifact summaries."""
+
     @classmethod
-    def from_config(cls, cfg: ChatStoreConfig) -> ChatStore:  # pragma: no cover
+    def from_config(cls, cfg: ChatStoreConfig, *, db: Database | None = None) -> ChatStore:  # pragma: no cover
         raise NotImplementedError
 
 
+def _conv_key(c: Conversation) -> Keyset:
+    return Keyset(c.updated_at, c.id)
+
+
+# ── memory ───────────────────────────────────────────────────────────────────
 @register_chat_store("memory")
 class MemoryChatStore(ChatStore):
-    """In-process store. Fast, dependency-free, non-persistent. Thread-safe so a
-    threaded dev server doesn't corrupt the message lists mid-stream."""
+    """In-process store. Dependency-free, non-persistent, thread-safe."""
 
     def __init__(self) -> None:
         self._convs: dict[str, Conversation] = {}
         self._msgs: dict[str, list[ChatMessage]] = {}
         self._artifacts: dict[str, ChatArtifact] = {}
         self._attempts: dict[str, ArtifactAttempt] = {}
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     @classmethod
-    def from_config(cls, cfg: ChatStoreConfig) -> MemoryChatStore:
+    def from_config(cls, cfg: ChatStoreConfig, *, db: Database | None = None) -> MemoryChatStore:
         return cls()
 
-    def create(self, conversation: Conversation) -> Conversation:
+    def _owned(self, conversation_id: str, owner_id: str) -> Conversation | None:
+        c = self._convs.get(conversation_id)
+        return c if c is not None and c.owner_id == owner_id else None
+
+    def create(self, conversation):
         with self._lock:
             self._convs[conversation.id] = conversation
             self._msgs.setdefault(conversation.id, [])
         return conversation
 
-    def get(self, conversation_id: str) -> Conversation | None:
-        return self._convs.get(conversation_id)
+    def get(self, conversation_id, *, owner_id):
+        return self._owned(conversation_id, owner_id)
 
-    def list(self, owner_id: str = "default") -> list[Conversation]:
-        convs = [c for c in self._convs.values() if c.owner_id == owner_id]
-        return sorted(convs, key=lambda c: c.updated_at, reverse=True)
+    def list(self, owner_id, *, limit, cursor=None):
+        convs = sorted((c for c in self._convs.values() if c.owner_id == owner_id),
+                       key=lambda c: (c.updated_at, c.id), reverse=True)
+        if cursor is not None:
+            convs = [c for c in convs if cursor.before(c.updated_at, c.id)]
+        return page_of(convs[:limit + 1], limit, _conv_key)
 
-    def update(self, conversation_id, *, title=None, defaults=None, summary=None):
+    def update(self, conversation_id, *, owner_id, title=None, defaults=None, summary=None):
         with self._lock:
-            conv = self._convs.get(conversation_id)
+            conv = self._owned(conversation_id, owner_id)
             if conv is None:
                 return None
-            data = conv.model_dump()
+            patch: dict[str, Any] = {"updated_at": _now()}
             if title is not None:
-                data["title"] = title
+                patch["title"] = title
             if defaults is not None:
-                data["defaults"] = defaults.model_dump(by_alias=True)
+                patch["defaults"] = defaults
             if summary is not None:
-                data["summary"] = summary
-            updated = Conversation.model_validate(data)
-            updated = updated.model_copy(update={"updated_at": _now()})
+                patch["summary"] = summary
+            updated = conv.model_copy(update=patch)
             self._convs[conversation_id] = updated
             return updated
 
-    def delete(self, conversation_id: str) -> bool:
+    def delete(self, conversation_id, *, owner_id):
         with self._lock:
-            existed = self._convs.pop(conversation_id, None) is not None
+            if self._owned(conversation_id, owner_id) is None:
+                return False
+            del self._convs[conversation_id]
             self._msgs.pop(conversation_id, None)
             gone = {a.id for a in self._artifacts.values() if a.conversation_id == conversation_id}
             for aid in gone:
-                self._artifacts.pop(aid, None)
-            for tid in [t.id for t in self._attempts.values() if t.artifact_id in gone]:
-                self._attempts.pop(tid, None)
-        return existed
+                del self._artifacts[aid]
+            for tid in [t.id for t in self._attempts.values() if t.conversation_id == conversation_id]:
+                del self._attempts[tid]
+            return True
 
-    def add_artifact(self, artifact: ChatArtifact) -> ChatArtifact:
+    def add_message(self, conversation_id, message):
+        with self._lock:
+            msgs = self._msgs.setdefault(conversation_id, [])
+            msgs.append(message)
+            conv = self._convs.get(conversation_id)
+            if conv is not None:
+                self._convs[conversation_id] = conv.model_copy(
+                    update={"updated_at": _now(), "message_count": len(msgs)})
+        return message
+
+    def messages(self, conversation_id):
+        return list(self._msgs.get(conversation_id, []))
+
+    def tail(self, conversation_id, *, limit):
+        msgs = self._msgs.get(conversation_id, [])
+        return list(msgs[-limit:]) if limit > 0 else [], len(msgs)
+
+    def messages_between(self, conversation_id, start, end):
+        return list(self._msgs.get(conversation_id, [])[max(0, start):max(0, end)])
+
+    def add_artifact(self, artifact):
         with self._lock:
             self._artifacts[artifact.id] = artifact
         return artifact
 
-    def get_artifact(self, artifact_id: str) -> ChatArtifact | None:
-        return self._artifacts.get(artifact_id)
+    def get_artifact(self, artifact_id, *, owner_id):
+        art = self._artifacts.get(artifact_id)
+        if art is None or self._owned(art.conversation_id, owner_id) is None:
+            return None
+        return art
 
-    def list_artifacts(self, conversation_id: str) -> list[ChatArtifact]:
-        found = [a for a in self._artifacts.values() if a.conversation_id == conversation_id]
-        return sorted(found, key=lambda a: a.created_at)
+    def list_artifacts(self, conversation_id):
+        return sorted((a for a in self._artifacts.values() if a.conversation_id == conversation_id),
+                      key=lambda a: a.created_at)
 
-    def delete_artifact(self, artifact_id: str) -> bool:
+    def delete_artifact(self, artifact_id, *, owner_id):
         with self._lock:
-            existed = self._artifacts.pop(artifact_id, None) is not None
+            if self.get_artifact(artifact_id, owner_id=owner_id) is None:
+                return False
+            del self._artifacts[artifact_id]
             for tid in [t.id for t in self._attempts.values() if t.artifact_id == artifact_id]:
-                self._attempts.pop(tid, None)
-        return existed
+                del self._attempts[tid]
+            return True
 
-    def save_attempt(self, attempt: ArtifactAttempt) -> ArtifactAttempt:
+    def save_attempt(self, attempt):
         with self._lock:
             self._attempts[attempt.id] = attempt
         return attempt
 
-    def get_attempt(self, attempt_id: str) -> ArtifactAttempt | None:
-        return self._attempts.get(attempt_id)
+    def get_attempt(self, attempt_id, *, owner_id):
+        att = self._attempts.get(attempt_id)
+        return att if att is not None and att.owner_id == owner_id else None
 
-    def list_attempts(self, artifact_id: str) -> list[ArtifactAttempt]:
-        found = [t for t in self._attempts.values() if t.artifact_id == artifact_id]
-        return sorted(found, key=lambda t: t.created_at, reverse=True)
+    def list_attempts(self, artifact_id):
+        return sorted((t for t in self._attempts.values() if t.artifact_id == artifact_id),
+                      key=lambda t: t.created_at, reverse=True)
 
-    def add_message(self, conversation_id: str, message: ChatMessage) -> ChatMessage:
-        with self._lock:
-            self._msgs.setdefault(conversation_id, []).append(message)
-            conv = self._convs.get(conversation_id)
-            if conv is not None:
-                self._convs[conversation_id] = conv.model_copy(update={"updated_at": _now()})
-        return message
-
-    def messages(self, conversation_id, *, limit=None) -> list[ChatMessage]:
-        msgs = self._msgs.get(conversation_id, [])
-        return list(msgs[-limit:]) if limit else list(msgs)
+    def attempts_by_artifact(self, conversation_id):
+        out: dict[str, list[ArtifactAttempt]] = defaultdict(list)
+        for t in sorted(self._attempts.values(), key=lambda t: t.created_at, reverse=True):
+            if t.conversation_id == conversation_id:
+                out[t.artifact_id].append(t)
+        return dict(out)
 
 
-def _now():
-    from datetime import datetime
-
-    return datetime.now(UTC)
-
-
-# ── SQL backends (sqlite + postgres share everything but connection + dialect) ──
-class _SqlChatStore(ChatStore):
-    """Shared SQL implementation. Stores queryable columns natively and the
-    nested/free-form parts (defaults, citations, meta) as JSON text — dialect-
-    agnostic, so the same row logic serves both sqlite and postgres. Subclasses
-    supply :meth:`_connect`, the placeholder token ``_ph``, and the id column DDL."""
-
-    _ph = "?"          # parameter placeholder (sqlite "?", postgres "%s")
-
-    @contextmanager
-    def _connect(self):  # pragma: no cover - overridden
-        raise NotImplementedError
-        yield
-
-    def _q(self, sql: str) -> str:
-        """Translate the placeholder token so subclasses write one SQL string."""
-        return sql.replace("?", self._ph) if self._ph != "?" else sql
-
-    def _init_schema(self) -> None:
-        with self._connect() as (conn, cur):
-            cur.execute(
-                "CREATE TABLE IF NOT EXISTS chat_conversations ("
-                " id TEXT PRIMARY KEY,"
-                " owner_id TEXT NOT NULL,"
-                " title TEXT NOT NULL,"
-                " defaults TEXT NOT NULL,"
-                " summary TEXT NOT NULL,"
-                " created_at TEXT NOT NULL,"
-                " updated_at TEXT NOT NULL)"
-            )
-            cur.execute(
-                "CREATE TABLE IF NOT EXISTS chat_messages ("
-                " id TEXT PRIMARY KEY,"
-                " conversation_id TEXT NOT NULL,"
-                " ord INTEGER NOT NULL,"
-                " role TEXT NOT NULL,"
-                " content TEXT NOT NULL,"
-                " citations TEXT NOT NULL,"
-                " created_at TEXT NOT NULL,"
-                " meta TEXT NOT NULL)"
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS ix_chat_messages_conv "
-                "ON chat_messages (conversation_id, ord)"
-            )
-            cur.execute(
-                "CREATE TABLE IF NOT EXISTS chat_artifacts ("
-                " id TEXT PRIMARY KEY,"
-                " conversation_id TEXT NOT NULL,"
-                " message_id TEXT,"
-                " kind TEXT NOT NULL,"
-                " title TEXT NOT NULL,"
-                " payload TEXT NOT NULL,"
-                " meta TEXT NOT NULL,"
-                " created_at TEXT NOT NULL)"
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS ix_chat_artifacts_conv "
-                "ON chat_artifacts (conversation_id, created_at)"
-            )
-            cur.execute(
-                "CREATE TABLE IF NOT EXISTS chat_attempts ("
-                " id TEXT PRIMARY KEY,"
-                " artifact_id TEXT NOT NULL,"
-                " conversation_id TEXT NOT NULL,"
-                " kind TEXT NOT NULL,"
-                " status TEXT NOT NULL,"
-                " score REAL NOT NULL,"
-                " total INTEGER NOT NULL,"
-                " state TEXT NOT NULL,"
-                " created_at TEXT NOT NULL,"
-                " updated_at TEXT NOT NULL)"
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS ix_chat_attempts_artifact "
-                "ON chat_attempts (artifact_id, created_at)"
-            )
-            conn.commit()
-
-    # ── (de)serialization ────────────────────────────────────────────────────
-    @staticmethod
-    def _conv_row(c: Conversation) -> tuple:
-        return (
-            c.id, c.owner_id, c.title,
-            c.defaults.model_dump_json(by_alias=True), c.summary,
-            c.created_at.isoformat(), c.updated_at.isoformat(),
-        )
-
-    @staticmethod
-    def _conv_from_row(r: Any) -> Conversation:
-        return Conversation(
-            id=r[0], owner_id=r[1], title=r[2],
-            defaults=ChatDefaults.model_validate_json(r[3]), summary=r[4],
-            created_at=r[5], updated_at=r[6],
-        )
-
-    @staticmethod
-    def _msg_from_row(r: Any) -> ChatMessage:
-        return ChatMessage(
-            id=r[0], role=r[1], content=r[2],
-            citations=json.loads(r[3]), created_at=r[4], meta=json.loads(r[5]),
-        )
-
-    # ── CRUD ─────────────────────────────────────────────────────────────────
-    def create(self, conversation: Conversation) -> Conversation:
-        with self._connect() as (conn, cur):
-            cur.execute(
-                self._q(
-                    "INSERT INTO chat_conversations "
-                    "(id, owner_id, title, defaults, summary, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)"
-                ),
-                self._conv_row(conversation),
-            )
-            conn.commit()
-        return conversation
-
-    def get(self, conversation_id: str) -> Conversation | None:
-        with self._connect() as (_conn, cur):
-            cur.execute(
-                self._q(
-                    "SELECT id, owner_id, title, defaults, summary, created_at, updated_at "
-                    "FROM chat_conversations WHERE id = ?"
-                ),
-                (conversation_id,),
-            )
-            row = cur.fetchone()
-        return self._conv_from_row(row) if row else None
-
-    def list(self, owner_id: str = "default") -> list[Conversation]:
-        with self._connect() as (_conn, cur):
-            cur.execute(
-                self._q(
-                    "SELECT id, owner_id, title, defaults, summary, created_at, updated_at "
-                    "FROM chat_conversations WHERE owner_id = ? ORDER BY updated_at DESC"
-                ),
-                (owner_id,),
-            )
-            rows = cur.fetchall()
-        return [self._conv_from_row(r) for r in rows]
-
-    def update(self, conversation_id, *, title=None, defaults=None, summary=None):
-        conv = self.get(conversation_id)
-        if conv is None:
-            return None
-        updated = conv.model_copy(update={
-            "title": conv.title if title is None else title,
-            "defaults": conv.defaults if defaults is None else defaults,
-            "summary": conv.summary if summary is None else summary,
-            "updated_at": _now(),
-        })
-        with self._connect() as (conn, cur):
-            cur.execute(
-                self._q(
-                    "UPDATE chat_conversations SET title=?, defaults=?, summary=?, updated_at=? "
-                    "WHERE id=?"
-                ),
-                (
-                    updated.title, updated.defaults.model_dump_json(by_alias=True),
-                    updated.summary, updated.updated_at.isoformat(), conversation_id,
-                ),
-            )
-            conn.commit()
-        return updated
-
-    def delete(self, conversation_id: str) -> bool:
-        with self._connect() as (conn, cur):
-            cur.execute(
-                self._q("SELECT 1 FROM chat_conversations WHERE id = ?"), (conversation_id,)
-            )
-            existed = cur.fetchone() is not None
-            cur.execute(
-                self._q("DELETE FROM chat_messages WHERE conversation_id = ?"), (conversation_id,)
-            )
-            cur.execute(
-                self._q("DELETE FROM chat_attempts WHERE conversation_id = ?"), (conversation_id,)
-            )
-            cur.execute(
-                self._q("DELETE FROM chat_artifacts WHERE conversation_id = ?"), (conversation_id,)
-            )
-            cur.execute(
-                self._q("DELETE FROM chat_conversations WHERE id = ?"), (conversation_id,)
-            )
-            conn.commit()
-        return existed
-
-    # ── artifacts + attempts ─────────────────────────────────────────────────
-    _ART_COLS = "id, conversation_id, message_id, kind, title, payload, meta, created_at"
-    _ATT_COLS = ("id, artifact_id, conversation_id, kind, status, score, total, state, "
-                 "created_at, updated_at")
-
-    @staticmethod
-    def _art_from_row(r: Any) -> ChatArtifact:
-        return ChatArtifact(
-            id=r[0], conversation_id=r[1], message_id=r[2], kind=r[3], title=r[4],
-            payload=json.loads(r[5]), meta=json.loads(r[6]), created_at=r[7],
-        )
-
-    @staticmethod
-    def _att_from_row(r: Any) -> ArtifactAttempt:
-        return ArtifactAttempt(
-            id=r[0], artifact_id=r[1], conversation_id=r[2], kind=r[3], status=r[4],
-            score=r[5], total=r[6], state=json.loads(r[7]), created_at=r[8], updated_at=r[9],
-        )
-
-    def add_artifact(self, artifact: ChatArtifact) -> ChatArtifact:
-        with self._connect() as (conn, cur):
-            cur.execute(
-                self._q(f"INSERT INTO chat_artifacts ({self._ART_COLS}) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"),
-                (artifact.id, artifact.conversation_id, artifact.message_id, artifact.kind,
-                 artifact.title, json.dumps(artifact.payload), json.dumps(artifact.meta),
-                 artifact.created_at.isoformat()),
-            )
-            conn.commit()
-        return artifact
-
-    def get_artifact(self, artifact_id: str) -> ChatArtifact | None:
-        with self._connect() as (_conn, cur):
-            cur.execute(self._q(f"SELECT {self._ART_COLS} FROM chat_artifacts WHERE id = ?"),
-                        (artifact_id,))
-            row = cur.fetchone()
-        return self._art_from_row(row) if row else None
-
-    def list_artifacts(self, conversation_id: str) -> list[ChatArtifact]:
-        with self._connect() as (_conn, cur):
-            cur.execute(
-                self._q(f"SELECT {self._ART_COLS} FROM chat_artifacts "
-                        "WHERE conversation_id = ? ORDER BY created_at ASC"),
-                (conversation_id,))
-            rows = cur.fetchall()
-        return [self._art_from_row(r) for r in rows]
-
-    def delete_artifact(self, artifact_id: str) -> bool:
-        with self._connect() as (conn, cur):
-            cur.execute(self._q("SELECT 1 FROM chat_artifacts WHERE id = ?"), (artifact_id,))
-            existed = cur.fetchone() is not None
-            cur.execute(self._q("DELETE FROM chat_attempts WHERE artifact_id = ?"), (artifact_id,))
-            cur.execute(self._q("DELETE FROM chat_artifacts WHERE id = ?"), (artifact_id,))
-            conn.commit()
-        return existed
-
-    def save_attempt(self, attempt: ArtifactAttempt) -> ArtifactAttempt:
-        row = (attempt.status, attempt.score, attempt.total, json.dumps(attempt.state),
-               attempt.updated_at.isoformat(), attempt.id)
-        with self._connect() as (conn, cur):
-            cur.execute(
-                self._q("UPDATE chat_attempts SET status=?, score=?, total=?, state=?, "
-                        "updated_at=? WHERE id=?"), row)
-            if cur.rowcount == 0:  # portable upsert (no dialect-specific ON CONFLICT)
-                cur.execute(
-                    self._q(f"INSERT INTO chat_attempts ({self._ATT_COLS}) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
-                    (attempt.id, attempt.artifact_id, attempt.conversation_id, attempt.kind,
-                     attempt.status, attempt.score, attempt.total, json.dumps(attempt.state),
-                     attempt.created_at.isoformat(), attempt.updated_at.isoformat()),
-                )
-            conn.commit()
-        return attempt
-
-    def get_attempt(self, attempt_id: str) -> ArtifactAttempt | None:
-        with self._connect() as (_conn, cur):
-            cur.execute(self._q(f"SELECT {self._ATT_COLS} FROM chat_attempts WHERE id = ?"),
-                        (attempt_id,))
-            row = cur.fetchone()
-        return self._att_from_row(row) if row else None
-
-    def list_attempts(self, artifact_id: str) -> list[ArtifactAttempt]:
-        with self._connect() as (_conn, cur):
-            cur.execute(
-                self._q(f"SELECT {self._ATT_COLS} FROM chat_attempts "
-                        "WHERE artifact_id = ? ORDER BY created_at DESC"),
-                (artifact_id,))
-            rows = cur.fetchall()
-        return [self._att_from_row(r) for r in rows]
-
-    def add_message(self, conversation_id: str, message: ChatMessage) -> ChatMessage:
-        with self._connect() as (conn, cur):
-            cur.execute(
-                self._q("SELECT COALESCE(MAX(ord), -1) + 1 FROM chat_messages "
-                        "WHERE conversation_id = ?"),
-                (conversation_id,),
-            )
-            ord_ = int(cur.fetchone()[0])
-            cur.execute(
-                self._q(
-                    "INSERT INTO chat_messages "
-                    "(id, conversation_id, ord, role, content, citations, created_at, meta) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-                ),
-                (
-                    message.id, conversation_id, ord_, message.role.value, message.content,
-                    json.dumps([c.model_dump() for c in message.citations]),
-                    message.created_at.isoformat(), json.dumps(message.meta),
-                ),
-            )
-            cur.execute(
-                self._q("UPDATE chat_conversations SET updated_at=? WHERE id=?"),
-                (_now().isoformat(), conversation_id),
-            )
-            conn.commit()
-        return message
-
-    def messages(self, conversation_id, *, limit=None) -> list[ChatMessage]:
-        with self._connect() as (_conn, cur):
-            if limit:
-                cur.execute(
-                    self._q(
-                        "SELECT id, role, content, citations, created_at, meta "
-                        "FROM chat_messages WHERE conversation_id = ? "
-                        "ORDER BY ord DESC LIMIT ?"
-                    ),
-                    (conversation_id, limit),
-                )
-                rows = list(reversed(cur.fetchall()))
-            else:
-                cur.execute(
-                    self._q(
-                        "SELECT id, role, content, citations, created_at, meta "
-                        "FROM chat_messages WHERE conversation_id = ? ORDER BY ord ASC"
-                    ),
-                    (conversation_id,),
-                )
-                rows = cur.fetchall()
-        return [self._msg_from_row(r) for r in rows]
+# ── postgres ─────────────────────────────────────────────────────────────────
+_CONV = "id, owner_id, title, defaults, summary, message_count, created_at, updated_at"
+_MSG = "id, role, content, citations, meta, created_at"
+_ART = "a.id, a.conversation_id, a.message_id, a.kind, a.title, a.payload, a.meta, a.created_at"
+_ATT = ("id, artifact_id, conversation_id, owner_id, kind, status, score, total, state, "
+        "created_at, updated_at")
 
 
-@register_chat_store("sqlite")
-class SqliteChatStore(_SqlChatStore):
-    """One SQLite file. Persistent, no service, no new dependency. Serialized
-    access (one connection guarded by a lock) keeps a threaded dev server safe."""
+def _conv(r: dict[str, Any]) -> Conversation:
+    return Conversation(
+        id=str(r["id"]), owner_id=str(r["owner_id"]), title=r["title"],
+        defaults=ChatDefaults.model_validate(r["defaults"]), summary=r["summary"],
+        message_count=r["message_count"], created_at=r["created_at"], updated_at=r["updated_at"])
 
-    def __init__(self, path: str | Path) -> None:
-        import sqlite3
 
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        # check_same_thread=False + a lock: fine for the app's modest write rate,
-        # and it keeps the store a single simple object.
-        self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
-        self._lock = threading.Lock()
-        self._init_schema()
+def _msg(r: dict[str, Any]) -> ChatMessage:
+    return ChatMessage(id=str(r["id"]), role=r["role"], content=r["content"],
+                       citations=r["citations"], meta=r["meta"], created_at=r["created_at"])
 
-    @classmethod
-    def from_config(cls, cfg: ChatStoreConfig) -> SqliteChatStore:
-        return cls(cfg.path or ".lessonforge/chat.db")
 
-    @contextmanager
-    def _connect(self):
-        with self._lock:
-            yield self._conn, self._conn.cursor()
+def _art(r: dict[str, Any]) -> ChatArtifact:
+    return ChatArtifact(id=str(r["id"]), conversation_id=str(r["conversation_id"]),
+                        message_id=id_str(r["message_id"]), kind=r["kind"], title=r["title"],
+                        payload=r["payload"], meta=r["meta"], created_at=r["created_at"])
+
+
+def _att(r: dict[str, Any]) -> ArtifactAttempt:
+    return ArtifactAttempt(
+        id=str(r["id"]), artifact_id=str(r["artifact_id"]),
+        conversation_id=str(r["conversation_id"]), owner_id=str(r["owner_id"]), kind=r["kind"],
+        status=r["status"], score=r["score"], total=r["total"], state=r["state"],
+        created_at=r["created_at"], updated_at=r["updated_at"])
 
 
 @register_chat_store("postgres")
-class PostgresChatStore(_SqlChatStore):
-    """The Docker-backed store via ``psycopg`` (v3). DSN from config ``url`` (an
-    env-interpolated ``${CHAT_DB_URL}``). A short-lived connection per operation
-    keeps it robust to the DB restarting under it."""
-
-    _ph = "%s"
-
-    def __init__(self, dsn: str) -> None:
-        if not dsn:
-            raise ValueError(
-                "postgres chat store needs a DSN — set chat.store.url (e.g. ${CHAT_DB_URL})."
-            )
-        self.dsn = dsn
-        self._init_schema()
+class PostgresChatStore(ChatStore):
+    def __init__(self, db: Database) -> None:
+        self.db = db
 
     @classmethod
-    def from_config(cls, cfg: ChatStoreConfig) -> PostgresChatStore:
-        return cls(cfg.url or "")
+    def from_config(cls, cfg: ChatStoreConfig, *, db: Database | None = None) -> PostgresChatStore:
+        if db is None:
+            raise ValueError("the postgres chat store needs database.url (DATABASE_URL)")
+        return cls(db)
 
-    @contextmanager
-    def _connect(self):
-        import psycopg
+    # ── conversations ────────────────────────────────────────────────────────
+    def create(self, conversation):
+        c = conversation
+        with self.db.tx() as cur:
+            cur.execute(
+                f"INSERT INTO chat_conversations (id, owner_id, title, defaults, summary, "
+                f"created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING {_CONV}",
+                (as_uuid(c.id), as_uuid(c.owner_id), c.title,
+                 jsonb(c.defaults.model_dump(mode="json", by_alias=True)), c.summary,
+                 c.created_at, c.updated_at))
+            return _conv(cur.fetchone())
 
-        conn = psycopg.connect(self.dsn)
-        try:
-            yield conn, conn.cursor()
-        finally:
-            conn.close()
+    def get(self, conversation_id, *, owner_id):
+        cid, oid = as_uuid(conversation_id), as_uuid(owner_id)
+        if cid is None or oid is None:
+            return None
+        with self.db.tx() as cur:
+            cur.execute(f"SELECT {_CONV} FROM chat_conversations WHERE id = %s AND owner_id = %s",
+                        (cid, oid))
+            row = cur.fetchone()
+        return _conv(row) if row else None
+
+    def list(self, owner_id, *, limit, cursor=None):
+        oid = as_uuid(owner_id)
+        if oid is None:
+            return Page()
+        sql = f"SELECT {_CONV} FROM chat_conversations WHERE owner_id = %s"
+        params: list[Any] = [oid]
+        if cursor is not None:
+            sql += " AND (updated_at, id) < (%s, %s)"
+            params += [cursor.ts, as_uuid(cursor.id)]
+        sql += " ORDER BY updated_at DESC, id DESC LIMIT %s"
+        params.append(limit + 1)
+        with self.db.tx() as cur:
+            cur.execute(sql, params)
+            rows = [_conv(r) for r in cur.fetchall()]
+        return page_of(rows, limit, _conv_key)
+
+    def update(self, conversation_id, *, owner_id, title=None, defaults=None, summary=None):
+        cid, oid = as_uuid(conversation_id), as_uuid(owner_id)
+        if cid is None or oid is None:
+            return None
+        with self.db.tx() as cur:
+            cur.execute(
+                f"""UPDATE chat_conversations SET
+                      title    = COALESCE(%s, title),
+                      defaults = COALESCE(%s, defaults),
+                      summary  = COALESCE(%s, summary),
+                      updated_at = now()
+                    WHERE id = %s AND owner_id = %s RETURNING {_CONV}""",
+                (title, jsonb(defaults.model_dump(mode="json", by_alias=True)) if defaults else None,
+                 summary, cid, oid))
+            row = cur.fetchone()
+        return _conv(row) if row else None
+
+    def delete(self, conversation_id, *, owner_id):
+        cid, oid = as_uuid(conversation_id), as_uuid(owner_id)
+        if cid is None or oid is None:
+            return False
+        with self.db.tx() as cur:   # messages, artifacts, attempts cascade
+            cur.execute("DELETE FROM chat_conversations WHERE id = %s AND owner_id = %s RETURNING 1",
+                        (cid, oid))
+            return cur.fetchone() is not None
+
+    # ── messages ─────────────────────────────────────────────────────────────
+    def add_message(self, conversation_id, message):
+        cid = as_uuid(conversation_id)
+        with self.db.tx() as cur:
+            cur.execute("UPDATE chat_conversations SET message_count = message_count + 1, "
+                        "updated_at = now() WHERE id = %s RETURNING message_count - 1 AS ord",
+                        (cid,))
+            row = cur.fetchone()
+            if row is None:
+                raise KeyError(f"unknown conversation {conversation_id!r}")
+            cur.execute(
+                "INSERT INTO chat_messages (id, conversation_id, ord, role, content, citations, "
+                "meta, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (as_uuid(message.id), cid, row["ord"], message.role.value, message.content,
+                 jsonb([c.model_dump(mode="json") for c in message.citations]),
+                 jsonb(message.meta), message.created_at))
+        return message
+
+    def messages(self, conversation_id):
+        with self.db.tx() as cur:
+            cur.execute(f"SELECT {_MSG} FROM chat_messages WHERE conversation_id = %s "
+                        "ORDER BY ord", (as_uuid(conversation_id),))
+            return [_msg(r) for r in cur.fetchall()]
+
+    def tail(self, conversation_id, *, limit):
+        cid = as_uuid(conversation_id)
+        with self.db.tx() as cur:
+            cur.execute("SELECT message_count FROM chat_conversations WHERE id = %s", (cid,))
+            head = cur.fetchone()
+            total = head["message_count"] if head else 0
+            if limit <= 0 or total == 0:
+                return [], total
+            cur.execute(f"SELECT {_MSG} FROM chat_messages WHERE conversation_id = %s "
+                        "AND ord >= %s ORDER BY ord", (cid, max(0, total - limit)))
+            return [_msg(r) for r in cur.fetchall()], total
+
+    def messages_between(self, conversation_id, start, end):
+        with self.db.tx() as cur:
+            cur.execute(f"SELECT {_MSG} FROM chat_messages WHERE conversation_id = %s "
+                        "AND ord >= %s AND ord < %s ORDER BY ord",
+                        (as_uuid(conversation_id), max(0, start), max(0, end)))
+            return [_msg(r) for r in cur.fetchall()]
+
+    # ── artifacts ────────────────────────────────────────────────────────────
+    def add_artifact(self, artifact):
+        a = artifact
+        with self.db.tx() as cur:
+            cur.execute(
+                "INSERT INTO chat_artifacts (id, conversation_id, message_id, kind, title, payload, "
+                "meta, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (as_uuid(a.id), as_uuid(a.conversation_id), as_uuid(a.message_id), a.kind, a.title,
+                 jsonb(a.payload), jsonb(a.meta), a.created_at))
+        return artifact
+
+    def get_artifact(self, artifact_id, *, owner_id):
+        aid, oid = as_uuid(artifact_id), as_uuid(owner_id)
+        if aid is None or oid is None:
+            return None
+        with self.db.tx() as cur:
+            cur.execute(f"SELECT {_ART} FROM chat_artifacts a JOIN chat_conversations c "
+                        "ON c.id = a.conversation_id WHERE a.id = %s AND c.owner_id = %s",
+                        (aid, oid))
+            row = cur.fetchone()
+        return _art(row) if row else None
+
+    def list_artifacts(self, conversation_id):
+        with self.db.tx() as cur:
+            cur.execute(f"SELECT {_ART} FROM chat_artifacts a WHERE a.conversation_id = %s "
+                        "ORDER BY a.created_at", (as_uuid(conversation_id),))
+            return [_art(r) for r in cur.fetchall()]
+
+    def delete_artifact(self, artifact_id, *, owner_id):
+        aid, oid = as_uuid(artifact_id), as_uuid(owner_id)
+        if aid is None or oid is None:
+            return False
+        with self.db.tx() as cur:   # attempts cascade
+            cur.execute("DELETE FROM chat_artifacts a USING chat_conversations c "
+                        "WHERE a.id = %s AND c.id = a.conversation_id AND c.owner_id = %s "
+                        "RETURNING 1", (aid, oid))
+            return cur.fetchone() is not None
+
+    # ── attempts ─────────────────────────────────────────────────────────────
+    def save_attempt(self, attempt):
+        t = attempt
+        with self.db.tx() as cur:
+            cur.execute(
+                f"""INSERT INTO chat_attempts ({_ATT})
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                      status = EXCLUDED.status, score = EXCLUDED.score, total = EXCLUDED.total,
+                      state = EXCLUDED.state, updated_at = EXCLUDED.updated_at""",
+                (as_uuid(t.id), as_uuid(t.artifact_id), as_uuid(t.conversation_id),
+                 as_uuid(t.owner_id), t.kind, t.status, t.score, t.total, jsonb(t.state),
+                 t.created_at, t.updated_at))
+        return attempt
+
+    def get_attempt(self, attempt_id, *, owner_id):
+        tid, oid = as_uuid(attempt_id), as_uuid(owner_id)
+        if tid is None or oid is None:
+            return None
+        with self.db.tx() as cur:
+            cur.execute(f"SELECT {_ATT} FROM chat_attempts WHERE id = %s AND owner_id = %s",
+                        (tid, oid))
+            row = cur.fetchone()
+        return _att(row) if row else None
+
+    def list_attempts(self, artifact_id):
+        with self.db.tx() as cur:
+            cur.execute(f"SELECT {_ATT} FROM chat_attempts WHERE artifact_id = %s "
+                        "ORDER BY created_at DESC", (as_uuid(artifact_id),))
+            return [_att(r) for r in cur.fetchall()]
+
+    def attempts_by_artifact(self, conversation_id):
+        out: dict[str, list[ArtifactAttempt]] = defaultdict(list)
+        with self.db.tx() as cur:
+            cur.execute(f"SELECT {_ATT} FROM chat_attempts WHERE conversation_id = %s "
+                        "ORDER BY created_at DESC", (as_uuid(conversation_id),))
+            for r in cur.fetchall():
+                att = _att(r)
+                out[att.artifact_id].append(att)
+        return dict(out)

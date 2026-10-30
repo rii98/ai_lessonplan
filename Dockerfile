@@ -18,9 +18,19 @@ COPY config ./config
 
 RUN pip install --upgrade pip && pip install -e .
 
+# Run as an unprivileged user; only the model cache needs to be writable.
+RUN useradd --create-home --uid 10001 lessonforge \
+    && mkdir -p /app/.cache/fastembed \
+    && chown -R lessonforge /app/.cache
+USER lessonforge
+
 EXPOSE 8000
 
 # FastEmbed downloads its ONNX model on first use; cache lives in /app/.cache
 ENV FASTEMBED_CACHE_PATH=/app/.cache/fastembed
 
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')"
+
+# Migrations are an explicit step (`lessonforge-db migrate`), never run on boot.
 CMD ["uvicorn", "lessonforge.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

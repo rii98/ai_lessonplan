@@ -50,6 +50,15 @@ class RouterState:
     last_skill: str | None = None              # the skill that produced the last turn
     artifacts_note: str = ""                   # "Quizzes made so far: …" for the classifier
     history: list[ChatMessage] = field(default_factory=list)
+    # the skills THIS caller may use (``SkillSpec.requires`` vs their permissions);
+    # ``None`` = all. A skill outside it is never offered — not merely blocked later.
+    allowed: frozenset[str] | None = None
+
+
+def _visible(specs: dict[str, SkillSpec], state: RouterState) -> dict[str, SkillSpec]:
+    if state.allowed is None:
+        return specs
+    return {n: sp for n, sp in specs.items() if n in state.allowed}
 
 
 class IntentRouter(ABC):
@@ -142,20 +151,22 @@ class RulesRouter(IntentRouter):
 
     def route(self, message: str, state: RouterState) -> RoutedIntent:
         try:
-            if (r := _awaiting_route(message, state, self.specs)) is not None:
+            specs = _visible(self.specs, state)
+            if (r := _awaiting_route(message, state, specs)) is not None:
                 return r
-            return self._best(message, state)
+            return self._best(message, state, specs)
         except Exception:
             return RoutedIntent()
 
-    def _best(self, message: str, state: RouterState) -> RoutedIntent:
-        scores = {n: sc for n, sc in _scores(message, state, self.specs).items()
-                  if sc >= self.cfg.min_confidence and not self.specs[n].vetoed(message)}
+    def _best(self, message: str, state: RouterState,
+              specs: dict[str, SkillSpec]) -> RoutedIntent:
+        scores = {n: sc for n, sc in _scores(message, state, specs).items()
+                  if sc >= self.cfg.min_confidence and not specs[n].vetoed(message)}
         if not scores:
             return RoutedIntent()
         name = max(scores, key=scores.get)
         src = "followup" if state.last_skill == name and not any(
-            t.matches(message) for t in self.specs[name].triggers) else "rules"
+            t.matches(message) for t in specs[name].triggers) else "rules"
         return RoutedIntent(name, scores[name], {}, src, "matched a strong trigger")
 
 
@@ -200,22 +211,26 @@ class HybridRouter(IntentRouter):
 
     def route(self, message: str, state: RouterState) -> RoutedIntent:
         try:
-            if (r := _awaiting_route(message, state, self.specs)) is not None:
+            specs = _visible(self.specs, state)
+            if not specs:
+                return RoutedIntent()          # nothing this caller may use: plain answer
+            if (r := _awaiting_route(message, state, specs)) is not None:
                 return r
-            scores = _scores(message, state, self.specs)
+            scores = _scores(message, state, specs)
             if self.cfg.gate == "lexical" and max(scores.values(), default=0.0) < self.GATE:
                 return RoutedIntent()          # ordinary question: no LLM call at all
-            routed = self._classify(message, state)
+            routed = self._classify(message, state, specs)
             if routed is None:                 # LLM down / unparseable → deterministic fallback
                 return self._rules.route(message, state)
             return routed
         except Exception:
             return RoutedIntent()
 
-    def _classify(self, message: str, state: RouterState) -> RoutedIntent | None:
+    def _classify(self, message: str, state: RouterState,
+                  specs: dict[str, SkillSpec]) -> RoutedIntent | None:
         try:
-            raw = self.llm.complete(self._prompt(message, state), system=_CLASSIFIER_SYSTEM,
-                                    temperature=0.0).text
+            raw = self.llm.complete(self._prompt(message, state, specs),
+                                    system=_CLASSIFIER_SYSTEM, temperature=0.0).text
             data = extract_json(raw)
         except Exception:
             return None
@@ -227,19 +242,20 @@ class HybridRouter(IntentRouter):
         except (TypeError, ValueError):
             conf = 0.0
         reason = str(data.get("reason", ""))[:200]
-        if name != QA and name not in self.specs:
+        if name != QA and name not in specs:
             return RoutedIntent(QA, 1.0, {}, "llm", f"unknown intent {name!r} ignored")
         if name == QA:
             return RoutedIntent(QA, conf or 1.0, {}, "llm", reason)
         if conf < self.cfg.min_confidence:
             return RoutedIntent(QA, conf, {}, "llm", f"low confidence for {name}: {reason}")
-        allowed = self.specs[name].slots
+        allowed = specs[name].slots
         slots = {k: v for k, v in (data.get("slots") or {}).items()
                  if k in allowed and v not in (None, "", [])}
         return RoutedIntent(name, conf, slots, "llm", reason)
 
-    def _prompt(self, message: str, state: RouterState) -> str:
-        parts = ["Skills:\n" + _catalogue(self.specs)]
+    def _prompt(self, message: str, state: RouterState,
+                specs: dict[str, SkillSpec] | None = None) -> str:
+        parts = ["Skills:\n" + _catalogue(self.specs if specs is None else specs)]
         recent = [m for m in state.history if m.role in (Role.user, Role.assistant)]
         recent = recent[-max(0, self.cfg.history_turns) * 2:]
         if recent:

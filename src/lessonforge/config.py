@@ -14,13 +14,13 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 
 if TYPE_CHECKING:
     from .export.base import ArtifactKind
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 _ENV_PATTERN = re.compile(r"\$\{(?P<name>[A-Z0-9_]+)(?::-(?P<default>[^}]*))?\}")
@@ -133,14 +133,11 @@ class RefineConfig(BaseModel):
 
 
 class ProfileConfig(BaseModel):
-    """Where teacher preferences (:class:`TeacherProfile`) are stored.
+    """Where teacher preferences (:class:`TeacherProfile`) are stored, one row per
+    principal. ``memory`` is dependency-free but non-persistent (tests);
+    ``postgres`` uses the shared :class:`DatabaseConfig` pool."""
 
-    ``memory`` is dependency-free but non-persistent (default); ``file`` writes
-    one JSON per teacher under ``path`` so preferences survive restarts. The
-    multi-tenant DB store is a future provider — a config swap, not a rewrite."""
-
-    provider: str = "memory"  # ← swap: memory | file
-    path: str | None = None  # directory for the file provider
+    provider: str = "memory"  # ← swap: memory | postgres
 
 
 class RetrievalConfig(BaseModel):
@@ -274,31 +271,20 @@ class ExportConfig(BaseModel):
 
 
 class ChatStoreConfig(BaseModel):
-    """Where the chatbot's conversations + messages are persisted.
+    """Where the chatbot's conversations, messages, artifacts and attempts are
+    persisted. ``memory`` is dependency-free but non-persistent (tests);
+    ``postgres`` uses the shared :class:`DatabaseConfig` pool — the DSN lives in
+    one place (``database.url``), never per store."""
 
-    ``memory`` is dependency-free but non-persistent (tests/dev); ``sqlite``
-    writes a single file (no service needed); ``postgres`` is the real, Docker-
-    backed store. The connection string is env-driven (``url``), never hard-coded
-    in YAML — a secret does not belong in config. Same pluggable-port pattern as
-    :class:`ProfileConfig`."""
-
-    provider: str = "memory"  # ← swap: memory | sqlite | postgres
-    url: str | None = None    # postgres DSN, e.g. ${CHAT_DB_URL}
-    path: str | None = None   # sqlite file (default: .lessonforge/chat.db)
+    provider: str = "memory"  # ← swap: memory | postgres
 
 
 class DocumentStoreConfig(BaseModel):
     """Where generated lessons/units and their version history are persisted.
+    Same pluggable-port pattern as :class:`ChatStoreConfig`: ``memory`` for tests,
+    ``postgres`` on the shared pool."""
 
-    Same pluggable-port pattern as :class:`ChatStoreConfig`: ``memory`` is
-    dependency-free but non-persistent (tests/dev); ``sqlite`` writes a single
-    file (no service); ``postgres`` is the Docker-backed store (DSN via ``url``,
-    env-driven). The memory layer that makes lessons revisitable, editable, and
-    undoable."""
-
-    provider: str = "memory"  # ← swap: memory | sqlite | postgres
-    url: str | None = None    # postgres DSN, e.g. ${DOCS_DB_URL}
-    path: str | None = None   # sqlite file (default: .lessonforge/documents.db)
+    provider: str = "memory"  # ← swap: memory | postgres
 
 
 class ChatRetrievalConfig(BaseModel):
@@ -439,6 +425,159 @@ class ChatConfig(BaseModel):
     quiz: ChatQuizConfig = Field(default_factory=ChatQuizConfig)
 
 
+# ── platform: persistence, identity, access, context, activity ───────────────
+# Integration with Edboox (docs/EDBOOX_INTEGRATION.md). Every block validates at
+# load time so a misconfiguration fails the boot, not the first request.
+
+
+class DatabaseConfig(BaseModel):
+    """The one Postgres connection pool every persistent store shares (D10).
+
+    ``provider`` selects the backend for the *platform* stores (principals,
+    grants, launch-replay guard, audit log, knowledge registry); ``memory`` keeps
+    unit tests infrastructure-free. ``url`` is the app's DML role;
+    ``migrate_url`` (optional) is the DDL role ``lessonforge-db migrate`` uses, so
+    production can run the API without CREATE/ALTER rights."""
+
+    provider: str = "memory"            # ← swap: memory | postgres
+    url: str = ""                       # ${DATABASE_URL}; env only (holds a secret)
+    migrate_url: str = ""               # ${DATABASE_MIGRATE_URL}; falls back to url
+    pool_min: int = Field(default=1, ge=0)
+    pool_max: int = Field(default=10, ge=1)
+    pool_timeout_s: float = Field(default=10.0, gt=0)  # wait for a free connection
+    statement_timeout_ms: int = Field(default=15000, ge=0)  # 0 = server default
+    # refuse to serve when the schema is behind the code (production never
+    # auto-migrates; run `lessonforge-db migrate` first).
+    require_current_schema: bool = True
+
+
+class ApiConfig(BaseModel):
+    """HTTP-surface settings. CORS is an explicit allowlist (never ``*`` with
+    credentials) so Edboox's web origin can call ``/api/v1`` from the browser."""
+
+    cors_origins: list[str] = Field(default_factory=list)
+
+
+class ClaimNames(BaseModel):
+    """Where each claim lives in a token from this issuer, so a partner whose
+    naming differs needs a config line, not code."""
+
+    role: str = "role"
+    tenant: str = "school_id"
+    name: str = "name"
+    grade: str = "grade"
+
+
+class IssuerConfig(BaseModel):
+    """One trusted token issuer (Edboox today; a second integrating app is one
+    more entry). Asymmetric keys come from ``jwks_url``; ``hs256_secret`` is the
+    documented fallback for an issuer that can only sign symmetrically."""
+
+    name: str                                   # our handle: 'edboox'
+    issuer: str                                 # must equal the token 'iss'
+    audience: str = "lessonforge"
+    jwks_url: str = ""
+    hs256_secret: str = ""                      # env only; enables HS256 for this issuer
+    algorithms: list[str] = Field(default_factory=lambda: ["RS256"])  # allowlist
+    claims: ClaimNames = Field(default_factory=ClaimNames)
+    role_map: dict[str, str] = Field(default_factory=dict)  # issuer role → our role
+
+    @model_validator(mode="after")
+    def _check(self) -> IssuerConfig:
+        algs = {a.upper() for a in self.algorithms}
+        if not algs:
+            raise ValueError(f"issuer {self.name!r}: algorithms must not be empty")
+        if "NONE" in algs:
+            raise ValueError(f"issuer {self.name!r}: alg 'none' is never allowed")
+        if "HS256" in algs and not self.hs256_secret:
+            raise ValueError(f"issuer {self.name!r}: HS256 needs hs256_secret (env)")
+        if algs - {"HS256"} and not self.jwks_url:
+            raise ValueError(f"issuer {self.name!r}: asymmetric algorithms need jwks_url")
+        return self
+
+
+class SessionConfig(BaseModel):
+    """The launch-session cookie our own UI rides on (D4)."""
+
+    cookie: str = "lf_session"
+    ttl_min: int = Field(default=480, ge=1)
+    secret: str = ""                    # ${LF_SESSION_SECRET}; required when auth is used
+    secure: bool = True                 # HTTPS-only cookie; false only for local http dev
+
+
+class AuthConfig(BaseModel):
+    """Edboox authenticates, LessonForge authorizes (D1)."""
+
+    issuers: list[IssuerConfig] = Field(default_factory=list)
+    leeway_s: int = Field(default=30, ge=0)
+    max_token_age_s: int = Field(default=900, ge=1)     # API (bearer) tokens
+    launch_max_age_s: int = Field(default=120, ge=1)    # one-time launch tokens
+    jwks_cache_s: int = Field(default=300, ge=0)
+    jwks_min_refetch_s: int = Field(default=30, ge=0)   # rate limit on unknown-kid refetch
+    principal_cache_s: int = Field(default=60, ge=0)    # how fast a revocation lands
+    login_url: str = ""
+    session: SessionConfig = Field(default_factory=SessionConfig)
+
+
+class RbacConfig(BaseModel):
+    """Role → permission map (D6). Permission names are validated against the
+    code's ``Perm`` enum when the policy is built — an unknown name fails boot."""
+
+    roles: dict[str, list[str]] = Field(default_factory=lambda: {
+        "student": ["chat"],
+        "teacher": ["chat", "author"],
+        "service": ["reports.read"],
+        "superadmin": ["*"],
+    })
+
+
+class KnowledgeConfig(BaseModel):
+    """Who reads/writes which knowledge spaces (§16). ``{tenant}`` expands to the
+    principal's SIGNED school id; ``*`` means every space."""
+
+    read: dict[str, list[str]] = Field(default_factory=lambda: {
+        "student": ["global", "school:{tenant}"],
+        "teacher": ["global", "school:{tenant}"],
+        "superadmin": ["*"],
+    })
+    write: dict[str, list[str]] = Field(default_factory=lambda: {"superadmin": ["*"]})
+
+
+class ContextConfig(BaseModel):
+    """Where richer user context (grade, section, assignments…) comes from (D8).
+    Personalisation only — authorization never reads it."""
+
+    provider: str = "claims"            # ← swap: claims | edboox_http
+    base_url: str = ""
+    api_key: str = ""                   # env only
+    ttl_h: float = Field(default=24.0, gt=0)
+    timeout_s: float = Field(default=3.0, gt=0)
+
+
+class ScopeRoleConfig(BaseModel):
+    mode: Literal["off", "default", "locked"] = "off"
+    # optional allowlist of collections this role may search (open question 4)
+    collections: list[str] | None = None
+
+
+class ScopeConfig(BaseModel):
+    """How user context becomes retrieval scope (§6 ScopePolicy)."""
+
+    bindings: dict[str, str] = Field(default_factory=lambda: {"student.grade": "grade"})
+    roles: dict[str, ScopeRoleConfig] = Field(default_factory=lambda: {
+        "student": ScopeRoleConfig(mode="default"),
+        "teacher": ScopeRoleConfig(mode="off"),
+    })
+
+
+class ActivityConfig(BaseModel):
+    """Content-free usage events Edboox pulls (§15)."""
+
+    provider: str = "memory"            # ← swap: postgres | memory | noop
+    retention_days: int = Field(default=400, ge=1)
+
+
+
 class Settings(BaseSettings):
     """Root settings object. Built by :func:`load_settings`."""
 
@@ -475,8 +614,18 @@ class Settings(BaseSettings):
     # an in-memory store so existing call sites/tests need no backend.
     documents: DocumentStoreConfig = Field(default_factory=DocumentStoreConfig)
     # The QA chatbot subsystem (streaming RAG over the collections). Optional —
-    # defaults give a working chatbot with sqlite persistence and no extra infra.
+    # defaults give a working chatbot with in-memory persistence (tests).
     chat: ChatConfig = Field(default_factory=ChatConfig)
+    # ── platform (Edboox integration) ────────────────────────────────────────
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    api: ApiConfig = Field(default_factory=ApiConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
+    rbac: RbacConfig = Field(default_factory=RbacConfig)
+    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
+    context: ContextConfig = Field(default_factory=ContextConfig)
+    scope: ScopeConfig = Field(default_factory=ScopeConfig)
+    activity: ActivityConfig = Field(default_factory=ActivityConfig)
+    vocabulary_path: str | None = None  # default: config/vocabulary.yaml next to config.yaml
 
     @classmethod
     def settings_customise_sources(

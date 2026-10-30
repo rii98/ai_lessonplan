@@ -9,8 +9,6 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from lessonforge.api.deps import get_container
-from lessonforge.api.main import create_app
 from lessonforge.config import Settings
 from lessonforge.container import Container
 from lessonforge.export import ExportService
@@ -19,7 +17,7 @@ from lessonforge.rag.grounding import GroundingRetriever
 from lessonforge.rag.retriever import Retriever
 from lessonforge.services.generation import LessonGenerator
 from lessonforge.services.intake import HeuristicIntake
-from tests.conftest import FakeEmbedder, FakeReranker, FakeVectorStore
+from tests.conftest import FakeEmbedder, FakeReranker, FakeVectorStore, api_client
 
 QUIZ = {"topic": "Sound", "curriculum_ref": {"board": "CDC", "grade": 8, "subject": "General"},
         "objectives": [{"id": "O1", "statement": "Explain that sound is a vibration", "bloom": "understand"}],
@@ -63,9 +61,7 @@ def client(base_settings_dict) -> TestClient:
                   vector_store=store, retriever=retr, grounding=grounding,
                   generator=LessonGenerator(llm=llm, grounding=grounding),
                   exporter=ExportService(settings.export), intake=HeuristicIntake())
-    app = create_app()
-    app.dependency_overrides[get_container] = lambda: c
-    return TestClient(app)
+    return api_client(c)
 
 
 def _sse(text):
@@ -82,12 +78,12 @@ def _sse(text):
 
 
 def _chat(client, cid, text):
-    return _sse(client.post(f"/chat/conversations/{cid}/message", json={"message": text}).text)
+    return _sse(client.post(f"/api/v1/chat/conversations/{cid}/message", json={"message": text}).text)
 
 
 @pytest.fixture
 def quiz(client):
-    cid = client.post("/chat/conversations", json={}).json()["id"]
+    cid = client.post("/api/v1/chat/conversations", json={}).json()["id"]
     events = _chat(client, cid, "quiz me on sound")
     art = next(d for e, d in events if e == "artifact")
     return cid, art["id"], events
@@ -108,7 +104,7 @@ def test_a_plain_question_in_the_same_chat_is_still_a_normal_answer(client, quiz
 
 def test_the_quiz_is_listed_with_the_conversation_for_revisiting(client, quiz):
     cid, aid, _ = quiz
-    body = client.get(f"/chat/conversations/{cid}").json()
+    body = client.get(f"/api/v1/chat/conversations/{cid}").json()
     assert [a["id"] for a in body["artifacts"]] == [aid]
     reply = next(m for m in body["messages"] if m["role"] == "assistant")
     assert reply["meta"]["artifact_ids"] == [aid]
@@ -116,7 +112,7 @@ def test_the_quiz_is_listed_with_the_conversation_for_revisiting(client, quiz):
 
 def test_opening_a_quiz_exposes_no_answers(client, quiz):
     _, aid, _ = quiz
-    body = client.get(f"/chat/artifacts/{aid}").json()
+    body = client.get(f"/api/v1/chat/artifacts/{aid}").json()
     blob = json.dumps(body["play"])
     assert "Vibrations make sound" not in blob and '"answer"' not in blob
     assert [q["widget"] for q in body["play"]["questions"]] == ["choice"] * 3
@@ -125,78 +121,78 @@ def test_opening_a_quiz_exposes_no_answers(client, quiz):
 
 def test_full_play_through_review_retry_and_revisit(client, quiz):
     cid, aid, _ = quiz
-    play = client.get(f"/chat/artifacts/{aid}").json()["play"]
+    play = client.get(f"/api/v1/chat/artifacts/{aid}").json()["play"]
     qids = [q["id"] for q in play["questions"]]
-    att = client.post(f"/chat/artifacts/{aid}/attempts").json()["attempt_id"]
+    att = client.post(f"/api/v1/chat/artifacts/{aid}/attempts").json()["attempt_id"]
 
-    ok = client.post(f"/chat/attempts/{att}/answer", json={"question_id": qids[0], "response": 1}).json()
+    ok = client.post(f"/api/v1/chat/attempts/{att}/answer", json={"question_id": qids[0], "response": 1}).json()
     assert ok["correct"] and ok["expected"] == "vibration" and ok["explanation"] == "Vibrations make sound."
-    bad = client.post(f"/chat/attempts/{att}/answer", json={"question_id": qids[1], "response": 1}).json()
+    bad = client.post(f"/api/v1/chat/attempts/{att}/answer", json={"question_id": qids[1], "response": 1}).json()
     assert bad["correct"] is False and bad["expected"] == "a medium"
     # idempotent: re-sending the right answer doesn't rewrite history
-    again = client.post(f"/chat/attempts/{att}/answer", json={"question_id": qids[1], "response": 0}).json()
+    again = client.post(f"/api/v1/chat/attempts/{att}/answer", json={"question_id": qids[1], "response": 0}).json()
     assert again["correct"] is False
 
-    review = client.post(f"/chat/attempts/{att}/finish").json()
+    review = client.post(f"/api/v1/chat/attempts/{att}/finish").json()
     assert review["attempt"]["status"] == "completed" and review["attempt"]["score"] == 1.0
     assert review["missed"] == qids[1:]
 
-    retry = client.post(f"/chat/attempts/{att}/retry-missed").json()
+    retry = client.post(f"/api/v1/chat/attempts/{att}/retry-missed").json()
     assert retry["question_count"] == 2 and retry["title"].startswith("Retry:")
-    assert len(client.get(f"/chat/conversations/{cid}").json()["artifacts"]) == 2   # multiple quizzes
+    assert len(client.get(f"/api/v1/chat/conversations/{cid}").json()["artifacts"]) == 2   # multiple quizzes
 
     # revisit later: the history lists the attempt, and its review is still there
-    detail = client.get(f"/chat/artifacts/{aid}").json()
+    detail = client.get(f"/api/v1/chat/artifacts/{aid}").json()
     assert [a["id"] for a in detail["attempts"]] == [att] and detail["summary"]["best"] == 1.0
-    assert client.get(f"/chat/attempts/{att}").json()["questions"][1]["expected"] == "a medium"
+    assert client.get(f"/api/v1/chat/attempts/{att}").json()["questions"][1]["expected"] == "a medium"
 
     # a second attempt is independent
-    att2 = client.post(f"/chat/artifacts/{aid}/attempts").json()["attempt_id"]
-    assert att2 != att and client.get(f"/chat/attempts/{att2}").json()["attempt"]["score"] == 0
+    att2 = client.post(f"/api/v1/chat/artifacts/{aid}/attempts").json()["attempt_id"]
+    assert att2 != att and client.get(f"/api/v1/chat/attempts/{att2}").json()["attempt"]["score"] == 0
 
 
 def test_nothing_missed_means_no_retry(client, quiz):
     _, aid, _ = quiz
-    play = client.get(f"/chat/artifacts/{aid}").json()["play"]
-    att = client.post(f"/chat/artifacts/{aid}/attempts").json()["attempt_id"]
-    client.post(f"/chat/attempts/{att}/answer", json={"question_id": play["questions"][0]["id"], "response": 1})
+    play = client.get(f"/api/v1/chat/artifacts/{aid}").json()["play"]
+    att = client.post(f"/api/v1/chat/artifacts/{aid}/attempts").json()["attempt_id"]
+    client.post(f"/api/v1/chat/attempts/{att}/answer", json={"question_id": play["questions"][0]["id"], "response": 1})
     # q1 right, the rest unanswered → finish counts them missed; but a perfect run has none
     for q, r in zip(play["questions"][1:], (0, 0), strict=True):
-        client.post(f"/chat/attempts/{att}/answer", json={"question_id": q["id"], "response": r})
-    client.post(f"/chat/attempts/{att}/finish")
-    assert client.post(f"/chat/attempts/{att}/retry-missed").status_code == 422
+        client.post(f"/api/v1/chat/attempts/{att}/answer", json={"question_id": q["id"], "response": r})
+    client.post(f"/api/v1/chat/attempts/{att}/finish")
+    assert client.post(f"/api/v1/chat/attempts/{att}/retry-missed").status_code == 422
 
 
 def test_export_the_quiz_for_printing(client, quiz):
     _, aid, _ = quiz
     for fmt, magic in (("docx", b"PK"), ("pptx", b"PK"), ("md", b"# Quiz")):
-        r = client.post(f"/chat/artifacts/{aid}/export?fmt={fmt}")
+        r = client.post(f"/api/v1/chat/artifacts/{aid}/export?fmt={fmt}")
         assert r.status_code == 200 and r.content.startswith(magic), fmt
-    assert client.post(f"/chat/artifacts/{aid}/export?fmt=xyz").status_code == 422
+    assert client.post(f"/api/v1/chat/artifacts/{aid}/export?fmt=xyz").status_code == 422
 
 
 def test_deleting_the_conversation_removes_its_quizzes(client, quiz):
     cid, aid, _ = quiz
-    att = client.post(f"/chat/artifacts/{aid}/attempts").json()["attempt_id"]
-    client.delete(f"/chat/conversations/{cid}")
-    assert client.get(f"/chat/artifacts/{aid}").status_code == 404
-    assert client.get(f"/chat/attempts/{att}").status_code == 404
+    att = client.post(f"/api/v1/chat/artifacts/{aid}/attempts").json()["attempt_id"]
+    client.delete(f"/api/v1/chat/conversations/{cid}")
+    assert client.get(f"/api/v1/chat/artifacts/{aid}").status_code == 404
+    assert client.get(f"/api/v1/chat/attempts/{att}").status_code == 404
 
 
 def test_deleting_one_quiz_keeps_the_conversation(client, quiz):
     cid, aid, _ = quiz
-    assert client.delete(f"/chat/artifacts/{aid}").json() == {"deleted": True}
-    assert client.get(f"/chat/conversations/{cid}").json()["artifacts"] == []
+    assert client.delete(f"/api/v1/chat/artifacts/{aid}").json() == {"deleted": True}
+    assert client.get(f"/api/v1/chat/conversations/{cid}").json()["artifacts"] == []
 
 
 def test_errors(client, quiz):
     _, aid, _ = quiz
-    assert client.get("/chat/artifacts/nope").status_code == 404
-    assert client.post("/chat/artifacts/nope/attempts").status_code == 404
-    assert client.post("/chat/attempts/nope/answer", json={"question_id": "x"}).status_code == 404
-    att = client.post(f"/chat/artifacts/{aid}/attempts").json()["attempt_id"]
-    assert client.post(f"/chat/attempts/{att}/answer", json={"response": 1}).status_code == 422
-    assert client.post(f"/chat/attempts/{att}/answer", json={"question_id": "zzz", "response": 1}).status_code == 422
+    assert client.get("/api/v1/chat/artifacts/nope").status_code == 404
+    assert client.post("/api/v1/chat/artifacts/nope/attempts").status_code == 404
+    assert client.post("/api/v1/chat/attempts/nope/answer", json={"question_id": "x"}).status_code == 404
+    att = client.post(f"/api/v1/chat/artifacts/{aid}/attempts").json()["attempt_id"]
+    assert client.post(f"/api/v1/chat/attempts/{att}/answer", json={"response": 1}).status_code == 422
+    assert client.post(f"/api/v1/chat/attempts/{att}/answer", json={"question_id": "zzz", "response": 1}).status_code == 422
 
 
 def test_chat_page_links_and_serves_the_canvas_assets(client):

@@ -9,16 +9,34 @@ of these interfaces plus a one-line ``@register_*`` decorator.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..knowledge.scope import AccessScope
+
+
+class UpstreamUnavailable(RuntimeError):
+    """A backend (LLM, vector store…) could not be reached after its retries. The
+    API maps it to HTTP 503 ``upstream.unavailable`` so clients know to retry."""
 
 
 # ── LLM ──────────────────────────────────────────────────────────────────────
+@dataclass(frozen=True, slots=True)
+class LLMUsage:
+    """Token accounting for one LLM call (when the backend reports it)."""
+
+    tokens_in: int = 0
+    tokens_out: int = 0
+    model: str | None = None
+
+
 @dataclass(slots=True)
 class LLMResult:
     text: str
     raw: dict[str, Any] = field(default_factory=dict)
+    usage: LLMUsage | None = None
 
 
 class LLMClient(ABC):
@@ -42,6 +60,7 @@ class LLMClient(ABC):
         *,
         system: str | None = None,
         temperature: float | None = None,
+        on_usage: Callable[[LLMUsage], None] | None = None,
     ) -> Iterator[str]:
         """Yield the completion as incremental text deltas (for streaming UIs).
 
@@ -49,8 +68,12 @@ class LLMClient(ABC):
         result once — so every existing adapter streams correctly (if not
         incrementally) with no change. A backend with a native token stream
         overrides this to yield real deltas. Structured/JSON generation stays on
-        :meth:`complete`; streaming is for free-form answer text."""
-        yield self.complete(prompt, system=system, temperature=temperature).text
+        :meth:`complete`; streaming is for free-form answer text. ``on_usage`` is
+        called once with the token counts when the backend reports them."""
+        result = self.complete(prompt, system=system, temperature=temperature)
+        if on_usage is not None and result.usage is not None:
+            on_usage(result.usage)
+        yield result.text
 
     @abstractmethod
     def health(self) -> bool:
@@ -146,6 +169,15 @@ class StoredRecord:
 
 
 class VectorStore(ABC):
+    """Vector storage with **mandatory knowledge-space isolation** (§16).
+
+    Every point belongs to exactly one knowledge space (reserved payload key
+    ``_space``, stamped by ingestion — :meth:`upsert` rejects a point without one).
+    Every read and delete takes a REQUIRED keyword-only ``scope``; the adapter ANDs
+    ``_space ∈ scope`` into the query *separately* from the caller's metadata
+    ``where``, so no caller-side fallback that drops ``where`` can widen access. A
+    call site that forgets ``scope`` fails with a ``TypeError`` immediately."""
+
     @abstractmethod
     def ensure_collection(self, name: str, dim: int, *, sparse: bool = False) -> None:
         """Create the collection if absent. ``sparse`` also provisions a sparse
@@ -162,6 +194,8 @@ class VectorStore(ABC):
         vector: list[float],
         top_k: int,
         where: dict[str, Any] | None = None,
+        *,
+        scope: AccessScope,
     ) -> list[ScoredRecord]:
         ...
 
@@ -179,15 +213,18 @@ class VectorStore(ABC):
         sparse_vector: SparseVector,
         top_k: int,
         where: dict[str, Any] | None = None,
+        *,
+        scope: AccessScope,
     ) -> list[ScoredRecord]:
         """Fuse a dense (semantic) and sparse (lexical) query. The base
         implementation ignores the sparse side and returns the dense results, so a
         caller can always ask for hybrid and get sensible output regardless of
         backend support."""
-        return self.search(name, dense_vector, top_k, where=where)
+        return self.search(name, dense_vector, top_k, where=where, scope=scope)
 
     def fetch(
-        self, name: str, where: dict[str, Any] | None = None, *, limit: int = 2000
+        self, name: str, where: dict[str, Any] | None = None, *, scope: AccessScope,
+        limit: int = 2000,
     ) -> list[StoredRecord]:
         """Fetch records matching an exact-match payload filter — no vector query.
 
@@ -199,7 +236,7 @@ class VectorStore(ABC):
         out: list[StoredRecord] = []
         offset: str | None = None
         while len(out) < limit:
-            page, offset = self.scroll(name, limit=512, offset=offset)
+            page, offset = self.scroll(name, limit=512, offset=offset, scope=scope)
             if not page:
                 break
             for r in page:
@@ -213,22 +250,33 @@ class VectorStore(ABC):
 
     # ── read-only browse / curation (admin surfaces, never the hot path) ──────
     @abstractmethod
-    def count(self, name: str) -> int:
-        """Number of points in ``name``; ``0`` if the collection does not exist."""
+    def count(self, name: str, *, scope: AccessScope) -> int:
+        """Points in ``name`` within ``scope``; ``0`` if the collection does not exist."""
 
     @abstractmethod
     def scroll(
-        self, name: str, *, limit: int, offset: str | None = None
+        self, name: str, *, limit: int, offset: str | None = None, scope: AccessScope
     ) -> tuple[list[StoredRecord], str | None]:
-        """Page through a collection. Returns ``(records, next_offset)``; pass
-        ``next_offset`` back to fetch the following page, ``None`` when exhausted.
-        ``offset`` is an opaque token (not a row number). Empty for a missing
+        """Page through a collection within ``scope``. Returns ``(records,
+        next_offset)``; pass ``next_offset`` back to fetch the following page,
+        ``None`` when exhausted. ``offset`` is an opaque token. Empty for a missing
         collection."""
 
     @abstractmethod
-    def delete(self, name: str, ids: list[str]) -> int:
-        """Delete points by their (source) id. Returns how many ids were
-        requested; a no-op for a missing collection."""
+    def delete(self, name: str, ids: list[str], *, scope: AccessScope) -> int:
+        """Delete points by their (source) id — only those inside ``scope``.
+        Returns how many ids were requested; a no-op for a missing collection."""
+
+    @abstractmethod
+    def delete_where(self, name: str, where: dict[str, Any], *, scope: AccessScope) -> None:
+        """Delete every point matching ``where`` inside ``scope`` (one document's
+        chunks by ``doc_id``; a whole archived space by ``_space``)."""
+
+    def backfill_space(self, name: str, space: str) -> int:
+        """Stamp ``_space = space`` on every point that has none (one-off upgrade of
+        a corpus ingested before knowledge spaces). Returns points touched, or
+        ``-1`` when the backend cannot count them."""
+        raise NotImplementedError
 
     @abstractmethod
     def health(self) -> bool:

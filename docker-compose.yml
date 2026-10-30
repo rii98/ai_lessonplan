@@ -1,14 +1,37 @@
 # LessonForge local stack.
 #
-#   docker compose up --build     # first time, or after a dependency change
-#   docker compose up             # thereafter — source is bind-mounted + --reload,
-#                                 # so code edits are live with NO rebuild
+#   docker compose --profile dev up --build   # full integration: + fake Edboox on :8200
+#   docker compose up --build                 # LessonForge only (point EDBOOX_* at the real one)
 #
-# The reranker + embedder run in-process (FastEmbed), so the only external
-# service is Qdrant. The LLM (Ollama) runs on the HOST — set it up with:
-#   ollama serve            # or the desktop app
-#   ollama signin           # for :cloud models
-# The api container reaches it via host.docker.internal.
+# Source is bind-mounted with --reload, so code edits are live with NO rebuild;
+# only a dependency change (pyproject.toml) needs --build.
+#
+# Startup order: postgres → migrate (one-shot `lessonforge-db migrate`) → api. The
+# API refuses to start while the schema is behind, and production never
+# auto-migrates — the migrate step is explicit, here and in a deploy pipeline.
+#
+# The LLM (Ollama) runs on the HOST:  ollama serve  (+ ollama signin for :cloud
+# models); the api container reaches it via host.docker.internal.
+#
+# Secrets below are DEV-ONLY defaults. In any shared environment set them in a .env
+# (or the orchestrator's secret store): LF_SESSION_SECRET, EDBOOX_API_KEY,
+# POSTGRES_PASSWORD.
+
+x-lf-env: &lf-env
+  LF_CONFIG: /app/config/config.yaml
+  LF_ENV: docker
+  QDRANT_URL: http://qdrant:6333
+  OLLAMA_BASE_URL: http://host.docker.internal:11434
+  DATABASE_URL: postgresql://lessonforge:${POSTGRES_PASSWORD:-lessonforge}@postgres:5432/lessonforge
+  # ── Edboox (defaults = the dev fake). For the real Edboox set these six. ──
+  EDBOOX_ISSUER: ${EDBOOX_ISSUER:-http://localhost:8200}
+  EDBOOX_JWKS_URL: ${EDBOOX_JWKS_URL:-http://fake-edboox:8200/.well-known/jwks.json}
+  EDBOOX_LOGIN_URL: ${EDBOOX_LOGIN_URL:-http://localhost:8200/login}
+  EDBOOX_WEB_ORIGIN: ${EDBOOX_WEB_ORIGIN:-http://localhost:8200}
+  EDBOOX_API_URL: ${EDBOOX_API_URL:-http://fake-edboox:8200}
+  EDBOOX_API_KEY: ${EDBOOX_API_KEY:-dev-edboox-api-key}
+  LF_SESSION_SECRET: ${LF_SESSION_SECRET:-dev-only-session-secret-change-me-0123456789abcdef}
+  LF_COOKIE_SECURE: ${LF_COOKIE_SECURE:-false}   # local dev is plain http
 
 services:
   qdrant:
@@ -24,59 +47,55 @@ services:
       timeout: 5s
       retries: 5
 
-  # Persistent store for the chatbot's conversations + messages. The lesson
-  # pipeline needs only Qdrant; the chat subsystem adds this. Swap the chat store
-  # back to sqlite/memory in config and this service is simply unused.
+  # The ONE persistent store (D10): documents, chats, profiles, principals, grants,
+  # audit log, knowledge registry, activity events. The fake Edboox gets its own
+  # database + role in the same server (dev only).
   postgres:
     image: postgres:16
     environment:
       POSTGRES_USER: lessonforge
-      POSTGRES_PASSWORD: lessonforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lessonforge}
       POSTGRES_DB: lessonforge
     ports:
-      - "5432:5432"
+      - "${LF_PG_HOST_PORT:-5432}:5432"   # host port overridable (another local PG may hold 5432)
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U lessonforge -d lessonforge"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  # One-shot: apply pending migrations, then exit 0. The api waits for it.
+  migrate:
+    build: .
+    environment: *lf-env
+    command: ["lessonforge-db", "migrate"]
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   api:
     build: .
     ports:
       - "8000:8000"
-    environment:
-      # These env vars override config/config.yaml (LF__SECTION__KEY).
-      LF_CONFIG: /app/config/config.yaml
-      QDRANT_URL: http://qdrant:6333
-      OLLAMA_BASE_URL: http://host.docker.internal:11434
-      LF_ENV: docker
-      # Use the Docker-backed Postgres for chat persistence.
-      LF__CHAT__STORE__PROVIDER: postgres
-      CHAT_DB_URL: postgresql://lessonforge:lessonforge@postgres:5432/lessonforge
-      # Generated lessons/units + version history live in the same Postgres, so
-      # they survive container recreation (a sqlite file in the container does not).
-      LF__DOCUMENTS__PROVIDER: postgres
-      DOCS_DB_URL: postgresql://lessonforge:lessonforge@postgres:5432/lessonforge
+    environment: *lf-env
     extra_hosts:
       - "host.docker.internal:host-gateway"   # reach host Ollama on Linux
     depends_on:
       qdrant:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - fastembed_cache:/app/.cache/fastembed
-      # Bind-mount source + config so host edits are live in the container.
-      # Combined with the editable install and --reload below, a code change
-      # never needs `docker compose up --build` — just save the file.
       - ./src:/app/src
       - ./config:/app/config
       - ./corpus:/app/corpus
-    # --reload restarts the server on any change under the mounted src (watchfiles
-    # ships with uvicorn[standard]).
     command:
       - uvicorn
       - lessonforge.api.main:app
@@ -88,7 +107,60 @@ services:
       - --reload-dir
       - /app/src
 
+  # ── dev profile: the fake Edboox and its seed ─────────────────────────────
+  edboox-db-init:
+    profiles: [dev]
+    image: postgres:16
+    environment:
+      ADMIN_URL: postgresql://lessonforge:${POSTGRES_PASSWORD:-lessonforge}@postgres:5432/lessonforge
+    entrypoint: ["sh", "/init/ensure-edboox-db.sh"]
+    volumes:
+      - ./dev/postgres:/init:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  fake-edboox:
+    profiles: [dev]
+    build: ./dev/fake_edboox
+    ports:
+      - "8200:8200"
+    environment:
+      EDBOOX_DATABASE_URL: postgresql://edboox:edboox@postgres:5432/edboox
+      EDBOOX_ISSUER: ${EDBOOX_ISSUER:-http://localhost:8200}
+      EDBOOX_API_KEY: ${EDBOOX_API_KEY:-dev-edboox-api-key}
+      LF_PUBLIC_URL: http://localhost:8000        # where the browser is sent on launch
+      LF_API_URL: http://api:8000                 # server-to-server (usage page)
+    volumes:
+      - edboox_data:/data                         # its RSA signing key survives restarts
+    depends_on:
+      edboox-db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/health')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # The owner account (Edboox teacher:1) becomes superadmin — through the CLI, the
+  # only door to that grant. Idempotent.
+  dev-seed:
+    profiles: [dev]
+    build: .
+    environment: *lf-env
+    command: ["lessonforge-admin", "grant", "--issuer", "edboox", "--subject", "teacher:1",
+              "--role", "superadmin"]
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
 volumes:
   qdrant_data:
   fastembed_cache:
   pg_data:
+  edboox_data:

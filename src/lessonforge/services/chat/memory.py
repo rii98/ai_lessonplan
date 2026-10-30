@@ -62,24 +62,26 @@ class ConversationMemory:
     def load(self, conversation: Conversation) -> MemoryView:
         """The window of recent messages + the stored rolling summary. Called
         before the current user turn is persisted, so it returns prior context."""
-        recent = self.store.messages(conversation.id, limit=self.window)
+        recent, _ = self.store.tail(conversation.id, limit=self.window)
         return MemoryView(recent=recent, summary=conversation.summary)
 
     def maybe_summarize(
-        self, conversation: Conversation, all_messages: list[ChatMessage], *, prev_len: int
+        self, conversation: Conversation, *, prev_len: int, total: int
     ) -> str | None:
         """Fold the messages that just left the window into the rolling summary.
 
-        ``prev_len`` is the transcript length *before* this turn's messages were
-        appended — it lets us compute exactly which messages newly scrolled out
-        (``[prev_boundary : new_boundary]``) and fold only those, so we never
-        re-summarize the whole history. Returns the new summary (already
-        persisted) or ``None`` if nothing changed."""
-        if not self.config.summarize or len(all_messages) <= self.trigger:
+        ``prev_len`` / ``total`` are the transcript length before and after this
+        turn. They pin exactly which messages newly scrolled out
+        (``[prev_boundary : new_boundary]``); only those are read and folded, so a
+        long conversation never re-reads or re-summarises its whole history.
+        Returns the new summary (already persisted) or ``None`` if nothing changed."""
+        if not self.config.summarize or total <= self.trigger:
             return None
         prev_boundary = max(0, prev_len - self.window) if prev_len > self.trigger else 0
-        new_boundary = len(all_messages) - self.window
-        departed = all_messages[prev_boundary:new_boundary]
+        new_boundary = total - self.window
+        if new_boundary <= prev_boundary:
+            return None
+        departed = self.store.messages_between(conversation.id, prev_boundary, new_boundary)
         if not departed:
             return None
         transcript = "\n".join(
@@ -97,5 +99,5 @@ class ConversationMemory:
             return None
         if not summary:
             return None
-        self.store.update(conversation.id, summary=summary)
+        self.store.update(conversation.id, owner_id=conversation.owner_id, summary=summary)
         return summary

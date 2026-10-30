@@ -21,7 +21,7 @@ from typing import Any
 
 from ...config import ChatRetrievalConfig
 from ...domain.chat import FilterMode
-from ...rag.documents import COLLECTION_KEY, SOURCE_KEY, TEXT_KEY, Collection
+from ...rag.documents import COLLECTION_KEY, SOURCE_KEY, SPACE_KEY, TEXT_KEY, Collection
 from ...rag.retriever import Retriever
 from .transform import TransformedQuery
 
@@ -53,13 +53,16 @@ class ChatRetriever:
         mode: FilterMode,
         filters: dict[str, Any] | None = None,
         collections: list[str] | None = None,
+        allow_fallback: bool = True,
     ) -> list[ScoredChunk]:
         cols = self._collections(collections)
         where = self._where(mode, filters)
         fused = self._gather(cols, transformed.queries, where)
         # Lenient fallback: a scoped query that finds nothing broadens to
-        # unfiltered rather than answering from an empty context.
-        if not fused and where:
+        # unfiltered rather than answering from an empty context — unless the
+        # caller's scope policy is ``locked``. Dropping ``where`` never drops the
+        # knowledge-space scope, which the vector store enforces on its own.
+        if not fused and where and allow_fallback:
             fused = self._gather(cols, transformed.queries, None)
         if not fused:
             return []
@@ -220,6 +223,10 @@ class ChatRetriever:
         metadata = {
             k: v for k, v in payload.items() if k not in _RESERVED and not k.startswith("_")
         }
+        # the knowledge space (reserved `_space`) is surfaced under a public name, so
+        # a citation can say "from your school's notes" and analytics can count it.
+        if payload.get(SPACE_KEY):
+            metadata["space"] = payload[SPACE_KEY]
         return ScoredChunk(
             text=hit.text,
             source=str(payload.get(SOURCE_KEY, "") or "?"),

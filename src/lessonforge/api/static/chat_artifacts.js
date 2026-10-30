@@ -99,7 +99,7 @@
       ["docx", "pptx", "md"].map((f) => h("option", { value: f }, "Download " + f)));
     const go = btn("⬇", "small", async () => {
       try {
-        const r = await fetch(`/chat/artifacts/${S.id}/export?fmt=${sel.value}`, { method: "POST" });
+        const r = await lfFetch(`/chat/artifacts/${S.id}/export?fmt=${sel.value}`, { method: "POST" });
         if (!r.ok) throw new Error("export failed");
         const blob = await r.blob();
         const m = /filename="?([^"]+)"?/.exec(r.headers.get("Content-Disposition") || "");

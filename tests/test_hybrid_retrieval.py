@@ -29,14 +29,14 @@ class HybridStore(FakeVectorStore):
         self.ensure_sparse.append(sparse)
         super().ensure_collection(name, dim, sparse=sparse)
 
-    def search(self, name, vector, top_k, where=None):
+    def search(self, name, vector, top_k, where=None, *, scope):
         self.dense_calls += 1
-        return super().search(name, vector, top_k, where=where)
+        return super().search(name, vector, top_k, where=where, scope=scope)
 
-    def hybrid_search(self, name, dense_vector, sparse_vector, top_k, where=None):
+    def hybrid_search(self, name, dense_vector, sparse_vector, top_k, where=None, *, scope):
         self.hybrid_calls += 1
         self.sparse_seen.append(sparse_vector)
-        return super().search(name, dense_vector, top_k, where=where)
+        return super().search(name, dense_vector, top_k, where=where, scope=scope)
 
 
 def _seed(store, embedder):

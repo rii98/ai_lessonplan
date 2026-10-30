@@ -20,6 +20,8 @@ from lessonforge.services.chat.store import MemoryChatStore
 from lessonforge.services.chat.synthesize import AnswerSynthesizer
 from lessonforge.services.chat.transform import PassthroughTransformer
 
+OWNER = "00000000-0000-4000-8000-000000000001"
+
 
 class StreamLLM(LLMClient):
     def __init__(self, tokens):
@@ -63,7 +65,7 @@ def pipeline(fake_embedder, fake_store, fake_reranker):
 
 def test_stream_emits_tokens_sources_done(pipeline):
     pipe, store = pipeline
-    conv = store.create(Conversation())
+    conv = store.create(Conversation(owner_id=OWNER))
     events = list(pipe.stream(conv, ChatMessageRequest(message="what is photosynthesis?")))
 
     types = [e.type for e in events]
@@ -80,7 +82,7 @@ def test_stream_emits_tokens_sources_done(pipeline):
 
 def test_turn_is_persisted_with_citations(pipeline):
     pipe, store = pipeline
-    conv = store.create(Conversation())
+    conv = store.create(Conversation(owner_id=OWNER))
     list(pipe.stream(conv, ChatMessageRequest(message="what is photosynthesis?")))
 
     msgs = store.messages(conv.id)
@@ -91,15 +93,15 @@ def test_turn_is_persisted_with_citations(pipeline):
 
 def test_first_message_titles_the_conversation(pipeline):
     pipe, store = pipeline
-    conv = store.create(Conversation())  # title defaults to "New chat"
+    conv = store.create(Conversation(owner_id=OWNER))  # title defaults to "New chat"
     done = list(pipe.stream(conv, ChatMessageRequest(message="Explain the water cycle")))[-1]
     assert done.data["title"] == "Explain the water cycle"
-    assert store.get(conv.id).title == "Explain the water cycle"
+    assert store.get(conv.id, owner_id=OWNER).title == "Explain the water cycle"
 
 
 def test_broad_mode_override_is_recorded(pipeline):
     pipe, store = pipeline
-    conv = store.create(Conversation())
+    conv = store.create(Conversation(owner_id=OWNER))
     list(pipe.stream(conv, ChatMessageRequest(message="q", mode=FilterMode.broad)))
     user_msg = store.messages(conv.id)[0]
     assert user_msg.meta["mode"] == "broad"

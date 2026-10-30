@@ -125,13 +125,28 @@ class Chunk:
         }
 
 
+# Reserved: the knowledge space a chunk belongs to (§16). Stamped by ingestion
+# only; mirrors ``lessonforge.knowledge.scope.SPACE_KEY``.
+SPACE_KEY = "_space"
+GLOBAL_SPACE = "global"
+
+
 def content_id(collection: Collection, text: str, metadata: dict[str, Any]) -> str:
     """Stable, content-derived chunk id → ingestion is idempotent (re-ingesting
-    the same content upserts the same point instead of duplicating it)."""
+    the same content upserts the same point instead of duplicating it).
+
+    The knowledge space is hashed in for every space except ``global``, so the
+    same text uploaded by two schools yields two independent points (School B can
+    never overwrite School A's chunks) while ``global`` ids stay exactly what they
+    were before spaces existed — re-ingesting the shared corpus stays idempotent."""
+    space = metadata.get(SPACE_KEY) or GLOBAL_SPACE
     h = hashlib.sha256()
     h.update(collection.value.encode())
     h.update(b"\x00")
     h.update(text.strip().encode())
     for k in sorted(metadata):
-        h.update(f"\x00{k}={metadata[k]}".encode())
+        if k != SPACE_KEY:
+            h.update(f"\x00{k}={metadata[k]}".encode())
+    if space != GLOBAL_SPACE:
+        h.update(f"\x00{SPACE_KEY}={space}".encode())
     return f"{collection.value}:{h.hexdigest()[:16]}"

@@ -25,6 +25,8 @@ from lessonforge.services.chat.store import MemoryChatStore
 from lessonforge.services.chat.synthesize import AnswerSynthesizer
 from lessonforge.services.chat.transform import PassthroughTransformer
 
+OWNER = "00000000-0000-4000-8000-000000000001"
+
 QUIZ = {"topic": "Sound", "curriculum_ref": {"board": "CDC", "grade": 8, "subject": "General"},
         "objectives": [{"id": "O1", "statement": "Explain that sound is a vibration", "bloom": "understand"}],
         "questions": [{"id": f"x{i}", "type": "mcq", "prompt": f"Q{i}?", "options": ["a", "b"],
@@ -63,7 +65,7 @@ def _build(fake_embedder, fake_store, fake_reranker, llm, *, router=None, gate="
         transformer=PassthroughTransformer(), retriever=ChatRetriever(retr, config.retrieval),
         context_builder=ContextBuilder(config.context), synthesizer=AnswerSynthesizer(llm, config.synthesis),
         config=config, router=router, skills=skills, artifacts=ArtifactService(store, RuleGrader()))
-    conv = store.create(Conversation(title="New chat"))
+    conv = store.create(Conversation(owner_id=OWNER, title="New chat"))
     return pipe, store, conv
 
 
@@ -94,10 +96,10 @@ def test_quiz_request_becomes_a_persisted_artifact(parts):
     assert "3-question quiz" in reply.content
     assert reply.meta["intent"]["skill"] == "quiz" and reply.meta["intent"]["source"] == "llm"
     assert reply.meta["artifact_ids"] == [art_ev["id"]]
-    stored = store.get_artifact(art_ev["id"])
+    stored = store.get_artifact(art_ev["id"], owner_id=OWNER)
     assert stored.message_id == reply.id and stored.conversation_id == conv.id    # linked to its turn
     assert next(e for e in events if e.type == "done").data["artifacts"] == [art_ev["id"]]
-    assert store.get(conv.id).title == "quiz me on sound"                          # still auto-titles
+    assert store.get(conv.id, owner_id=OWNER).title == "quiz me on sound"                          # still auto-titles
 
 
 def test_plain_question_flow_is_untouched(parts):

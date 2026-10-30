@@ -13,7 +13,9 @@ from . import providers  # noqa: F401  (import triggers adapter registration)
 from .config import Settings, SparseEmbeddingConfig, load_settings
 from .export import ExportService
 from .export.base import ArtifactKind
+from .platform import Platform
 from .providers.base import Embedder, LLMClient, Reranker, SparseEmbedder, VectorStore
+from .providers.metering import MeteredLLM
 from .providers.registry import (
     build_embedder,
     build_llm,
@@ -97,10 +99,15 @@ class Container:
     # fail in isolation without 500-ing the lesson/corpus surfaces.
     document_store: DocumentStore | None = None
     document_service: DocumentService | None = None
+    # Cross-cutting platform services (DB pool, auth, knowledge spaces, user
+    # context, activity, audit) — built from ``settings`` unless injected.
+    platform: Platform | None = None
 
     def __post_init__(self) -> None:
         # intake uses the cheap fast model; critique/revise use the reasoning model.
         self.llm_fast = self.llm_fast or self.llm
+        if self.platform is None:
+            self.platform = Platform(self.settings)
         if self.ingestor is None:
             self.ingestor = Ingestor(
                 embedder=self.embedder,
@@ -108,11 +115,13 @@ class Container:
                 chunker_policy=ChunkerPolicy.from_config(self.settings.chunking),
                 sparse_embedder=self.sparse_embedder,
                 hybrid=self.settings.retrieval.hybrid,
+                vocabulary=self.platform.vocabulary,
+                registry=self.platform.knowledge_registry,
             )
         if self.planner is None:
             self.planner = build_retrieval_planner(self.settings.planner, llm=self.llm_fast)
         if self.profile_store is None:
-            self.profile_store = build_profile_store(self.settings.profile)
+            self.profile_store = build_profile_store(self.settings.profile, db=self.platform.db)
         if self.intake is None:
             self.intake = build_intake(self.settings.intake, llm=self.llm_fast)
         if self.critic is None:
@@ -149,13 +158,19 @@ class Container:
         # would let a chat-store misconfiguration abort the whole container and 500
         # every endpoint (get_container is @lru_cache'd, so the failure would recur).
 
+    def warm(self) -> None:
+        """Build the lazily-wired subsystems up front (called once at startup, before
+        serving), so concurrent first requests never race to construct them."""
+        self.get_document_service()
+        self.get_chat_pipeline()
+
     # ── QA chatbot: lazily built so its backend can fail in isolation ────────────
     def get_chat_store(self) -> ChatStore:
         """The conversation store, built on first use and cached. Injectable via the
         ``chat_store`` field (tests/fakes); otherwise built from ``settings.chat.store``.
         Kept lazy so a store-backend failure surfaces only on ``/chat`` requests."""
         if self.chat_store is None:
-            self.chat_store = build_chat_store(self.settings.chat.store)
+            self.chat_store = build_chat_store(self.settings.chat.store, db=self.platform.db)
         return self.chat_store
 
     def get_artifact_service(self) -> ArtifactService:
@@ -165,7 +180,8 @@ class Container:
         if self.artifact_service is None:
             grader = (LLMGrader(self.llm_fast) if self.settings.chat.quiz.llm_grading
                       else RuleGrader())
-            self.artifact_service = ArtifactService(self.get_chat_store(), grader)
+            self.artifact_service = ArtifactService(self.get_chat_store(), grader,
+                                                    activity=self.platform.activity)
         return self.artifact_service
 
     def get_chat_pipeline(self) -> ChatPipeline:
@@ -191,6 +207,7 @@ class Container:
                 synthesizer=AnswerSynthesizer(self.llm, chat.synthesis),
                 config=chat,
                 router=router, skills=skills, artifacts=self.get_artifact_service(),
+                activity=self.platform.activity,
             )
         return self.chat_pipeline
 
@@ -199,7 +216,8 @@ class Container:
         """The document store, built on first use and cached. Injectable via the
         ``document_store`` field (tests/fakes); otherwise from ``settings.documents``."""
         if self.document_store is None:
-            self.document_store = build_document_store(self.settings.documents)
+            self.document_store = build_document_store(self.settings.documents,
+                                                       db=self.platform.db)
         return self.document_store
 
     def get_document_service(self) -> DocumentService:
@@ -239,10 +257,12 @@ class Container:
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> Container:
         settings = settings or load_settings()
-        llm = build_llm(settings.llm)
+        # every model call is metered into the current request (token cost per
+        # chat turn / lesson, reported in activity events).
+        llm = MeteredLLM(build_llm(settings.llm))
         # per-stage models: a cheap fast model for intake, the reasoning model for
         # everything else. Optional — falls back to ``llm`` when unconfigured.
-        llm_fast = build_llm(settings.llm_fast) if settings.llm_fast else llm
+        llm_fast = MeteredLLM(build_llm(settings.llm_fast)) if settings.llm_fast else llm
         embedder = build_embedder(settings.embedding)
         reranker = build_reranker(settings.reranker)
         vector_store = build_vector_store(settings.vector_store)

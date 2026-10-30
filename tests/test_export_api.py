@@ -11,15 +11,13 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 
-from lessonforge.api.deps import get_container
-from lessonforge.api.main import create_app
 from lessonforge.config import Settings
 from lessonforge.container import Container
 from lessonforge.export import ExportService
 from lessonforge.rag.grounding import GroundingRetriever
 from lessonforge.rag.retriever import Retriever
 from lessonforge.services.generation import LessonGenerator
-from tests.conftest import FakeEmbedder, FakeLLM, FakeReranker, FakeVectorStore
+from tests.conftest import FakeEmbedder, FakeLLM, FakeReranker, FakeVectorStore, api_client
 
 
 @pytest.fixture
@@ -35,13 +33,11 @@ def client(base_settings_dict) -> TestClient:
         generator=LessonGenerator(llm=llm, grounding=grounding),
         exporter=ExportService(settings.export),
     )
-    app = create_app()
-    app.dependency_overrides[get_container] = lambda: container
-    return TestClient(app)
+    return api_client(container)
 
 
 def test_manifest_endpoint(client):
-    resp = client.get("/export/manifest")
+    resp = client.get("/api/v1/export/manifest")
     assert resp.status_code == 200
     body = resp.json()
     assert body["artifacts"]["slides"]["default_format"] == "pptx"
@@ -49,7 +45,7 @@ def test_manifest_endpoint(client):
 
 
 def test_export_single_artifact_docx(client, export_ldd_dict):
-    resp = client.post("/lessons/export/lesson_plan", json=export_ldd_dict)
+    resp = client.post("/api/v1/lessons/export/lesson_plan", json=export_ldd_dict)
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-type"].startswith(
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -62,14 +58,14 @@ def test_export_single_artifact_docx(client, export_ldd_dict):
 
 
 def test_export_format_override(client, export_ldd_dict):
-    resp = client.post("/lessons/export/lesson_plan?fmt=md", json=export_ldd_dict)
+    resp = client.post("/api/v1/lessons/export/lesson_plan?fmt=md", json=export_ldd_dict)
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/markdown")
     assert "# Components of Environment" in resp.text
 
 
 def test_export_slides_pptx(client, export_ldd_dict):
-    resp = client.post("/lessons/export/slides", json=export_ldd_dict)
+    resp = client.post("/api/v1/lessons/export/slides", json=export_ldd_dict)
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith(
         "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -79,7 +75,7 @@ def test_export_slides_pptx(client, export_ldd_dict):
 
 
 def test_export_bundle_zip(client, export_ldd_dict):
-    resp = client.post("/lessons/export/bundle/zip", json=export_ldd_dict)
+    resp = client.post("/api/v1/lessons/export/bundle/zip", json=export_ldd_dict)
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/zip"
     names = zipfile.ZipFile(io.BytesIO(resp.content)).namelist()
@@ -87,18 +83,18 @@ def test_export_bundle_zip(client, export_ldd_dict):
 
 
 def test_unknown_kind_is_422(client, export_ldd_dict):
-    resp = client.post("/lessons/export/flashcards", json=export_ldd_dict)
+    resp = client.post("/api/v1/lessons/export/flashcards", json=export_ldd_dict)
     assert resp.status_code == 422  # not a valid ArtifactKind
 
 
 def test_unknown_format_is_a_client_error(client, export_ldd_dict):
     """An unsupported format must surface as an error, not a silent empty file."""
-    resp = client.post("/lessons/export/slides?fmt=pdf", json=export_ldd_dict)
+    resp = client.post("/api/v1/lessons/export/slides?fmt=pdf", json=export_ldd_dict)
     assert resp.status_code >= 400
 
 
 def test_export_rejects_structurally_invalid_ldd(client, export_ldd_dict):
     bad = dict(export_ldd_dict)
     bad["formative_checks"] = []  # objective no longer assessed → LDD invalid
-    resp = client.post("/lessons/export/lesson_plan", json=bad)
+    resp = client.post("/api/v1/lessons/export/lesson_plan", json=bad)
     assert resp.status_code == 422

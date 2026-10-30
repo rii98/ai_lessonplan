@@ -28,6 +28,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from ...activity import events as act
+from ...activity.store import ActivityRecorder
 from ...domain.artifacts import Quiz
 from ...domain.assessment import view
 from ...domain.chat import ArtifactAttempt, ChatArtifact
@@ -230,12 +232,18 @@ class LLMGrader(RuleGrader):
 class QuizSessions:
     """Attempts over quiz artifacts: start, answer, finish, review, retry-missed."""
 
-    def __init__(self, store: ChatStore, grader: AnswerGrader) -> None:
+    def __init__(self, store: ChatStore, grader: AnswerGrader,
+                 activity: ActivityRecorder | None = None) -> None:
         self.store, self.grader = store, grader
+        self.activity = activity
 
     # ── reading ──────────────────────────────────────────────────────────────
-    def summary(self, artifact: ChatArtifact) -> dict[str, Any]:
-        attempts = self.store.list_attempts(artifact.id)
+    def summary(self, artifact: ChatArtifact,
+                attempts: list[ArtifactAttempt] | None = None) -> dict[str, Any]:
+        """``attempts`` (newest first) may be pre-loaded by a caller summarising many
+        artifacts at once, so a conversation reload is one query, not one per quiz."""
+        if attempts is None:
+            attempts = self.store.list_attempts(artifact.id)
         done = [a for a in attempts if a.status == "completed"]
         n = len(self._quiz(artifact).questions)   # validates: a corrupt payload raises
         return {
@@ -253,11 +261,29 @@ class QuizSessions:
         return Quiz.model_validate(artifact.payload)
 
     # ── attempts ─────────────────────────────────────────────────────────────
-    def start(self, artifact: ChatArtifact) -> ArtifactAttempt:
+    def start(self, artifact: ChatArtifact, *, owner_id: str) -> ArtifactAttempt:
         n = len(self._quiz(artifact).questions)
-        return self.store.save_attempt(ArtifactAttempt(
-            artifact_id=artifact.id, conversation_id=artifact.conversation_id, kind=KIND,
-            total=n, state={"answers": {}}))
+        attempt = self.store.save_attempt(ArtifactAttempt(
+            artifact_id=artifact.id, conversation_id=artifact.conversation_id, owner_id=owner_id,
+            kind=KIND, total=n, state={"answers": {}}))
+        self._emit(act.build_event("quiz.attempt.started",
+                                  act.QuizAttemptStarted(quiz_id=artifact.id),
+                                  resource_type="quiz", resource_id=artifact.id))
+        return attempt
+
+    def _emit(self, event: act.ActivityEvent | None) -> None:
+        if self.activity is not None:
+            self.activity.record(event)
+
+    def _finished(self, artifact: ChatArtifact, attempt: ArtifactAttempt) -> None:
+        """Emit ``quiz.attempt.finished`` — called once, on the transition to done."""
+        total = attempt.total or 0
+        self._emit(act.build_event("quiz.attempt.finished", act.QuizAttemptFinished(
+            score=max(0.0, attempt.score), total=total,
+            percent=round(100 * attempt.score / total, 2) if total else 0.0,
+            duration_s=max(0, int((attempt.updated_at - attempt.created_at).total_seconds())),
+            retry=bool(artifact.meta.get("retry_of"))), resource_type="quiz",
+            resource_id=artifact.id))
 
     def answer(self, artifact: ChatArtifact, attempt: ArtifactAttempt, question_id: str,
                response: Any = None, self_mark: bool | None = None) -> dict[str, Any]:
@@ -269,6 +295,7 @@ class QuizSessions:
             raise KeyError(question_id)
         q = quiz.questions[idx]
         answers: dict[str, Any] = attempt.state.setdefault("answers", {})
+        was_done = attempt.status == "completed"
         rec = answers.get(question_id)
         if rec and not rec.get("pending"):
             return self._public(rec, attempt)
@@ -286,6 +313,8 @@ class QuizSessions:
             answers[question_id] = rec
         self._refresh(attempt, quiz)
         self.store.save_attempt(attempt)
+        if not was_done and attempt.status == "completed":
+            self._finished(artifact, attempt)
         return self._public(rec, attempt)
 
     @staticmethod
@@ -325,6 +354,7 @@ class QuizSessions:
             self._refresh(attempt, quiz)
             attempt.status = "completed"
             self.store.save_attempt(attempt)
+            self._finished(artifact, attempt)
         return attempt
 
     # ── review / history ─────────────────────────────────────────────────────

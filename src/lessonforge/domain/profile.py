@@ -42,9 +42,9 @@ class TeacherProfile(BaseModel):
     """A teacher's stored preferences. All fields optional so an empty profile is
     valid and simply contributes nothing."""
 
-    owner_id: str = "default"  # single-teacher v1; scopes the store for v1.5 multi-tenancy
-    teacher_name: str = ""
-    school: str = ""
+    owner_id: str = ""  # the principal id; set by the server, never trusted from a client
+    teacher_name: str = Field(default="", max_length=120)
+    school: str = Field(default="", max_length=200)
 
     # defaults — applied only to unset request fields
     default_grade: int | None = Field(default=None, ge=1, le=12)
@@ -54,8 +54,8 @@ class TeacherProfile(BaseModel):
     default_framework: Literal["5E", "gradual_release", "inquiry"] | None = None
 
     # personalization — flavour injected into every build
-    style_notes: str = ""  # e.g. "warm, storytelling, lots of pair work"
-    local_anchors: list[str] = Field(default_factory=list)  # e.g. ["Phewa lake", "millet farming"]
+    style_notes: str = Field(default="", max_length=2000)  # "warm, storytelling, pair work"
+    local_anchors: list[str] = Field(default_factory=list, max_length=50)  # ["Phewa lake", …]
 
     def apply_defaults(self, request: IntakeRequest) -> IntakeRequest:
         """Return a copy of ``request`` with any unset field filled from the

@@ -23,6 +23,7 @@ from ..config import (
 )
 
 if TYPE_CHECKING:
+    from ..db.pool import Database
     from ..providers.base import LLMClient
     from .chat.store import ChatStore
     from .critique import Critic
@@ -92,19 +93,21 @@ def build_critic(cfg: CritiqueConfig, *, llm: LLMClient) -> Critic:
     return _lookup(CRITIC_REGISTRY, cfg.provider, "critic").from_config(cfg, llm=llm)  # type: ignore[attr-defined]
 
 
-def build_profile_store(cfg: ProfileConfig) -> ProfileStore:
+# Persistent stores receive the ONE shared connection pool (``db``); memory stores
+# ignore it. ``db`` is None when nothing is configured to use Postgres.
+def build_profile_store(cfg: ProfileConfig, *, db: Database | None = None) -> ProfileStore:
     from . import profile as _  # noqa: F401  (import triggers store registration)
 
-    return _lookup(PROFILE_STORE_REGISTRY, cfg.provider, "profile store").from_config(cfg)  # type: ignore[attr-defined]
+    return _lookup(PROFILE_STORE_REGISTRY, cfg.provider, "profile store").from_config(cfg, db=db)  # type: ignore[attr-defined]
 
 
-def build_chat_store(cfg: ChatStoreConfig) -> ChatStore:
+def build_chat_store(cfg: ChatStoreConfig, *, db: Database | None = None) -> ChatStore:
     from .chat import store as _  # noqa: F401  (import triggers store registration)
 
-    return _lookup(CHAT_STORE_REGISTRY, cfg.provider, "chat store").from_config(cfg)  # type: ignore[attr-defined]
+    return _lookup(CHAT_STORE_REGISTRY, cfg.provider, "chat store").from_config(cfg, db=db)  # type: ignore[attr-defined]
 
 
-def build_document_store(cfg: DocumentStoreConfig) -> DocumentStore:
+def build_document_store(cfg: DocumentStoreConfig, *, db: Database | None = None) -> DocumentStore:
     from .documents import store as _  # noqa: F401  (import triggers store registration)
 
-    return _lookup(DOCUMENT_STORE_REGISTRY, cfg.provider, "document store").from_config(cfg)  # type: ignore[attr-defined]
+    return _lookup(DOCUMENT_STORE_REGISTRY, cfg.provider, "document store").from_config(cfg, db=db)  # type: ignore[attr-defined]

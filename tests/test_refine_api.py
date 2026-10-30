@@ -7,8 +7,6 @@ import re
 
 from fastapi.testclient import TestClient
 
-from lessonforge.api.deps import get_container
-from lessonforge.api.main import create_app
 from lessonforge.config import Settings
 from lessonforge.container import Container
 from lessonforge.export import ExportService
@@ -17,7 +15,7 @@ from lessonforge.rag.grounding import GroundingRetriever
 from lessonforge.rag.retriever import Retriever
 from lessonforge.services.generation import LessonGenerator
 from lessonforge.services.intake import HeuristicIntake
-from tests.conftest import FakeEmbedder, FakeLLM, FakeReranker, FakeVectorStore
+from tests.conftest import FakeEmbedder, FakeLLM, FakeReranker, FakeVectorStore, api_client
 
 _TARGET_RE = re.compile(r'Improve ONLY the "([^"]+)" section')
 
@@ -56,13 +54,11 @@ def _client(llm) -> TestClient:
         exporter=ExportService(settings.export),
         intake=HeuristicIntake(),
     )
-    app = create_app()
-    app.dependency_overrides[get_container] = lambda: container
-    return TestClient(app)
+    return api_client(container)
 
 
 def test_refine_targets_lists_sections_and_coupling():
-    resp = _client(FakeLLM()).get("/lessons/refine/targets")
+    resp = _client(FakeLLM()).get("/api/v1/lessons/refine/targets")
     assert resp.status_code == 200
     body = resp.json()
     assert body["whole_document"] == "*"
@@ -76,7 +72,7 @@ def test_refine_endpoint_proposes_a_candidate(valid_ldd_dict):
                 "kind": "scenario"}
     client = _client(SectionLLM({"engagement_hook": new_hook}))
     resp = client.post(
-        "/lessons/refine",
+        "/api/v1/lessons/refine",
         json={"ldd": valid_ldd_dict, "target": "engagement_hook",
               "instruction": "use the local river"},
     )
@@ -93,7 +89,7 @@ def test_refine_endpoint_rejects_with_reason(valid_ldd_dict):
                 "kind": "question"}
     client = _client(SectionLLM({"engagement_hook": bad_hook}))
     resp = client.post(
-        "/lessons/refine",
+        "/api/v1/lessons/refine",
         json={"ldd": valid_ldd_dict, "target": "engagement_hook", "instruction": "define"},
     )
     assert resp.status_code == 200  # a rejection is a normal result, not an error
@@ -105,7 +101,7 @@ def test_refine_endpoint_rejects_with_reason(valid_ldd_dict):
 
 def test_refine_endpoint_unknown_target_is_422(valid_ldd_dict):
     resp = _client(FakeLLM()).post(
-        "/lessons/refine",
+        "/api/v1/lessons/refine",
         json={"ldd": valid_ldd_dict, "target": "topic", "instruction": "x"},
     )
     assert resp.status_code == 422
@@ -113,7 +109,7 @@ def test_refine_endpoint_unknown_target_is_422(valid_ldd_dict):
 
 def test_refine_endpoint_requires_instruction(valid_ldd_dict):
     resp = _client(FakeLLM()).post(
-        "/lessons/refine",
+        "/api/v1/lessons/refine",
         json={"ldd": valid_ldd_dict, "target": "materials", "instruction": ""},
     )
     assert resp.status_code == 422  # pydantic min_length on instruction

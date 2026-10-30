@@ -25,6 +25,10 @@
   .tl-item.head::before { background: var(--brand); }
   .tl-item .when { color: var(--muted); font-size: 12px; }
   .tl-item .instr { color: var(--ink); }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; background: transparent; }
+  .seg button.on { background: var(--brand); color: #fff; }
+  .shared-pill { font-size: 11px; color: var(--brand); margin-left: 6px; }
 </style>
 </head>
 <body>
@@ -36,10 +40,14 @@
     <!-- ── list ────────────────────────────────────────────────────────── -->
     <div>
       <div class="row" style="justify-content:space-between;margin-bottom:10px">
-        <strong>Saved work</strong>
-        <button class="small ghost" id="reloadBtn">↻</button>
+        <div class="seg" role="tablist">
+          <button class="small on" id="tabMine" role="tab">My work</button>
+          <button class="small" id="tabSchool" role="tab">Shared in my school</button>
+        </div>
+        <button class="small ghost" id="reloadBtn" title="Reload">↻</button>
       </div>
       <div id="docList"><p class="sub">Loading…</p></div>
+      <button class="small ghost" id="moreBtn" style="display:none;width:100%">Load more</button>
     </div>
 
     <!-- ── detail ──────────────────────────────────────────────────────── -->
@@ -53,19 +61,30 @@
   </div>
 </div>
 
+<script src="/static/lf.js"></script>
 <script src="/static/app.js"></script>
 <script>
 "use strict";
 
 let docs = [];
 let selectedId = null;
+let scope = "mine";          // mine | school (plans colleagues shared with my school)
+let nextCursor = null;
 
-async function loadList() {
-  $("docList").textContent = "";
-  $("docList").append(h("p", { class: "sub" }, "Loading…"));
+async function loadList(append = false) {
+  if (!append) {
+    $("docList").textContent = "";
+    $("docList").append(h("p", { class: "sub" }, "Loading…"));
+  }
   try {
-    docs = await apiJSON("GET", "/documents");
+    const params = new URLSearchParams({ scope, limit: "25" });
+    if (append && nextCursor) params.set("cursor", nextCursor);
+    const page = await apiJSON("GET", `/documents?${params}`);
+    docs = append ? docs.concat(page.items) : page.items;
+    nextCursor = page.next_cursor;
+    $("moreBtn").style.display = nextCursor ? "" : "none";
     renderList();
+    if (append) return;
     // deep link: /library?doc=<id>
     const want = new URLSearchParams(location.search).get("doc");
     if (want && docs.some((d) => d.id === want)) selectDoc(want);
@@ -79,10 +98,16 @@ async function loadList() {
 function renderList() {
   const list = $("docList");
   list.textContent = "";
-  if (!docs.length) { list.append(h("p", { class: "sub" }, "Nothing saved yet.")); return; }
+  if (!docs.length) {
+    list.append(h("p", { class: "sub" }, scope === "mine" ? "Nothing saved yet."
+      : "No colleague has shared a plan with your school yet."));
+    return;
+  }
   for (const d of docs) {
     const row = h("div", { class: "doc-row" + (d.id === selectedId ? " active" : ""), onclick: () => selectDoc(d.id) },
-      h("div", { class: "t" }, d.title || "Untitled"),
+      h("div", { class: "t" }, d.title || "Untitled",
+        scope === "mine" && d.visibility === "school" ? h("span", { class: "shared-pill" }, "● shared") : null),
+      scope === "school" && d.owner_name ? h("div", { class: "m" }, "by " + d.owner_name) : null,
       h("div", { class: "m" },
         h("span", { class: "tag " + d.kind }, d.kind), " ",
         [d.grade ? "Grade " + d.grade : null, d.subject].filter(Boolean).join(" · "),
@@ -107,7 +132,7 @@ async function selectDoc(id) {
         : apiJSON("GET", `/documents/${id}`),
       apiJSON("GET", `/documents/${id}/versions`),
     ]);
-    renderDetail(doc, content, versions);
+    renderDetail(doc, content, versions.items);
   } catch (e) {
     body.textContent = "";
     body.append(h("p", { class: "status err" }, e.message));
@@ -140,19 +165,32 @@ function renderDetail(doc, content, versions) {
     framework: doc.kind === "unit" ? (gc.days[0] || {}).framework : gc.framework,
   });
 
-  // ── actions ──────────────────────────────────────────────────────────
+  // ── actions (owner: everything; colleague on a shared plan: read + copy) ──
   const actStatus = h("span", { class: "status" });
+  const mine = _lfMe ? doc.owner_id === _lfMe.id : scope === "mine";
+  const exportBtn = doc.kind === "unit"
+    ? h("button", { class: "small primary", onclick: () => exportUnit(doc.id, actStatus) }, "⬇ Export .zip")
+    : h("button", { class: "small primary", onclick: () => exportLesson(content.ldd, actStatus) }, "⬇ Export .zip");
   body.append(h("h3", { class: "section" }, "Actions"));
-  body.append(h("div", { class: "toolbar" },
-    doc.kind === "lesson"
-      ? h("a", { class: "small", href: `/?doc=${doc.id}`, style: "text-decoration:none;display:inline-flex;align-items:center" }, "✏️ Edit in editor")
-      : null,
-    h("button", { class: "small", onclick: () => move("undo", actStatus) }, "↶ Undo"),
-    h("button", { class: "small", onclick: () => move("redo", actStatus) }, "↷ Redo"),
-    doc.kind === "unit"
-      ? h("button", { class: "small primary", onclick: () => exportUnit(doc.id, actStatus) }, "⬇ Export .zip")
-      : h("button", { class: "small primary", onclick: () => exportLesson(content.ldd, actStatus) }, "⬇ Export .zip"),
-    h("button", { class: "small danger", onclick: () => delDoc(doc.id, actStatus) }, "🗑 Delete")));
+  if (mine) {
+    const shared = doc.visibility === "school";
+    body.append(h("div", { class: "toolbar" },
+      doc.kind === "lesson"
+        ? h("a", { class: "small", href: `/?doc=${doc.id}`, style: "text-decoration:none;display:inline-flex;align-items:center" }, "✏️ Edit in editor")
+        : null,
+      h("button", { class: "small", onclick: () => move("undo", actStatus) }, "↶ Undo"),
+      h("button", { class: "small", onclick: () => move("redo", actStatus) }, "↷ Redo"),
+      exportBtn,
+      doc.tenant_id
+        ? h("button", { class: "small", title: "Colleagues at your school can view and copy, never edit",
+            onclick: () => setShared(doc.id, !shared, actStatus) }, shared ? "🔒 Make private" : "🏫 Share with my school")
+        : null,
+      h("button", { class: "small danger", onclick: () => delDoc(doc.id, actStatus) }, "🗑 Delete")));
+  } else {
+    body.append(h("p", { class: "sub" }, `Shared by ${doc.owner_name || "a colleague"}. Make a copy to adapt it — the original stays theirs.`));
+    body.append(h("div", { class: "toolbar" }, exportBtn,
+      h("button", { class: "small primary", onclick: () => copyDoc(doc.id, actStatus) }, "📄 Copy to my work")));
+  }
   body.append(actStatus);
 
   // ── version timeline ─────────────────────────────────────────────────
@@ -207,6 +245,35 @@ async function move(dir, statusEl) {
   }
 }
 
+async function setShared(id, share, statusEl) {
+  setStatus(statusEl, share ? "Sharing…" : "Making private…", "busy");
+  try {
+    const updated = await apiJSON("PATCH", `/documents/${id}`, { visibility: share ? "school" : "private" });
+    const i = docs.findIndex((d) => d.id === id);
+    if (i >= 0) docs[i] = { ...docs[i], ...updated };
+    renderList();
+    await selectDoc(id);
+  } catch (e) { setStatus(statusEl, e.message, "err"); }
+}
+
+async function copyDoc(id, statusEl) {
+  setStatus(statusEl, "Copying…", "busy");
+  try {
+    const copied = await apiJSON("POST", `/documents/${id}/copy`, {});
+    switchScope("mine", copied.document.id);
+  } catch (e) { setStatus(statusEl, e.message, "err"); }
+}
+
+function switchScope(next, openId = null) {
+  scope = next;
+  $("tabMine").classList.toggle("on", scope === "mine");
+  $("tabSchool").classList.toggle("on", scope === "school");
+  selectedId = openId;
+  $("detailTitle").textContent = "Select a document";
+  $("detailBody").textContent = "";
+  loadList();
+}
+
 async function delDoc(id, statusEl) {
   if (!confirm("Delete this document and its entire history? This cannot be undone.")) return;
   setStatus(statusEl, "Deleting…", "busy");
@@ -247,8 +314,11 @@ async function exportLesson(ldd, statusEl) {
 
 // ── init ─────────────────────────────────────────────────────────────────────
 mountNav("library", "🗂️ Library", "Every lesson and unit you've saved — revisit, undo/redo, export, or delete.");
-$("reloadBtn").addEventListener("click", loadList);
-loadList();
+$("reloadBtn").addEventListener("click", () => loadList());
+$("moreBtn").addEventListener("click", () => loadList(true));
+$("tabMine").addEventListener("click", () => switchScope("mine"));
+$("tabSchool").addEventListener("click", () => switchScope("school"));
+lfMe().finally(() => loadList());
 </script>
 </body>
 </html>

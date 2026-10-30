@@ -120,8 +120,8 @@ critique:
 profile:
   # Where a teacher's stored preferences (defaults + voice + local anchors) live.
   # They fill unset request fields and flavour every generated lesson (US-1/US-5).
-  provider: memory                      # ← swap: memory (non-persistent) | file
-  # path: .lessonforge/profiles         # directory for provider: file
+  # One row per principal in Postgres (the shared pool in `database:` below).
+  provider: postgres                    # ← swap: memory (non-persistent) | postgres
 
 export:
   # Which output format each teaching artifact defaults to. The registry maps
@@ -144,18 +144,14 @@ export:
 documents:
   # The document/version memory layer: persists generated lessons/units and their
   # edit history so a teacher can revisit, edit, and undo. Same pluggable store as
-  # chat. memory = non-persistent (dev/tests); sqlite = one file; postgres = DSN.
-  provider: sqlite                      # ← swap: memory | sqlite | postgres
-  path: .lessonforge/documents.db       # for provider: sqlite
-  url: ${DOCS_DB_URL:-}                 # for provider: postgres (DSN via env)
+  # chat. memory = non-persistent (tests); postgres = the shared pool.
+  provider: postgres                    # ← swap: memory | postgres
 
 chat:
   # The QA chatbot — a streaming, persistent, advanced-RAG assistant over the
   # collections. Every stage below is tuneable; flip a flag to disable a technique.
   store:
-    provider: sqlite                    # ← swap: memory | sqlite | postgres
-    path: .lessonforge/chat.db          # for provider: sqlite
-    url: ${CHAT_DB_URL:-}               # for provider: postgres (DSN via env; docker sets it)
+    provider: postgres                  # ← swap: memory | postgres
   retrieval:
     collections: [reference, curriculum, pedagogical, exemplar, local_context]
     per_collection_top_n: 4             # candidates pulled from each collection, per query
@@ -187,3 +183,75 @@ chat:
   synthesis:
     temperature: 0.3
     require_citations: true             # instruct the model to cite [n] from the sources
+
+# ════════════════════════════════════════════════════════════════════════════════
+# Platform: persistence, identity, access, user context, activity.
+# Design: docs/EDBOOX_INTEGRATION.md. Secrets come from env ONLY.
+# ════════════════════════════════════════════════════════════════════════════════
+database:
+  # The ONE Postgres every persistent store shares (pooled). Schema is versioned:
+  # `lessonforge-db migrate` applies db/migrations/*.sql; the API refuses to start
+  # while the schema is behind.
+  provider: postgres                    # ← swap: postgres | memory (tests)
+  url: ${DATABASE_URL:-}                # app role (DML)
+  migrate_url: ${DATABASE_MIGRATE_URL:-}  # optional DDL role for migrations
+  pool_min: 1
+  pool_max: 10
+  statement_timeout_ms: 15000
+  require_current_schema: true
+
+api:
+  cors_origins: ["${EDBOOX_WEB_ORIGIN:-http://localhost:8200}"]
+
+auth:
+  issuers:                              # a second integrating app = one more entry
+    - name: edboox
+      issuer: ${EDBOOX_ISSUER:-http://localhost:8200}
+      jwks_url: ${EDBOOX_JWKS_URL:-http://localhost:8200/.well-known/jwks.json}
+      audience: lessonforge
+      algorithms: [RS256]               # allowlist; the token's own 'alg' is never trusted
+      claims: { role: role, tenant: school_id, name: name, grade: grade }
+      role_map: { student: student, teacher: teacher, service: service }
+  leeway_s: 30
+  max_token_age_s: 900                  # bearer tokens
+  launch_max_age_s: 120                 # one-time launch tokens
+  principal_cache_s: 60                 # revocations land within this
+  login_url: ${EDBOOX_LOGIN_URL:-http://localhost:8200/login}
+  session:
+    cookie: lf_session
+    ttl_min: 480
+    secret: ${LF_SESSION_SECRET:-}      # env only; auth refuses to start if empty
+    secure: ${LF_COOKIE_SECURE:-true}   # false only for plain-http local dev
+
+rbac:                                   # role → permissions (permission names live in code)
+  roles:
+    student:    [chat]
+    teacher:    [chat, author]
+    service:    [reports.read]
+    superadmin: ["*"]
+
+knowledge:                              # §16: who reads which shelves ({tenant} = signed school id)
+  read:
+    student:    [global, "school:{tenant}"]
+    teacher:    [global, "school:{tenant}"]
+    superadmin: ["*"]
+  write:
+    superadmin: ["*"]
+
+context:
+  provider: ${LF_CONTEXT_PROVIDER:-edboox_http}   # ← swap: claims | edboox_http
+  base_url: ${EDBOOX_API_URL:-http://localhost:8200}
+  api_key: ${EDBOOX_API_KEY:-}
+  ttl_h: 24
+  timeout_s: 3
+
+scope:                                  # how user context becomes retrieval scope
+  bindings: { student.grade: grade }
+  roles:
+    student: { mode: "default" }        # "default" | "locked" | "off" (quote: YAML reads bare off as false)
+    teacher: { mode: "off" }
+
+activity:
+  provider: postgres                    # ← swap: postgres | memory | noop
+  retention_days: 400
+

@@ -11,14 +11,10 @@ from lessonforge.domain.profile import TeacherProfile
 from lessonforge.services.generation import LessonGenerator
 from lessonforge.services.intake import HeuristicIntake
 from lessonforge.services.pipeline import LessonPipeline
-from lessonforge.services.profile import (
-    FileProfileStore,
-    MemoryProfileStore,
-    _safe_owner,
-)
+from lessonforge.services.profile import MemoryProfileStore, PostgresProfileStore
 from lessonforge.services.registry import build_critic, build_profile_store
 from lessonforge.services.revise import Reviser
-from tests.conftest import FakeLLM
+from tests.conftest import FakeLLM, make_principal, pg_principal
 
 
 # ── defaults: profile fills unset request fields, explicit fields win ─────────
@@ -52,46 +48,42 @@ def test_personalize_noop_when_nothing_to_add():
     assert TeacherProfile().personalize(brief) is brief
 
 
-# ── ProfileStore backends ─────────────────────────────────────────────────────
-def test_memory_store_roundtrip_and_empty_default():
-    store = MemoryProfileStore()
-    assert store.load().style_notes == ""  # never-saved → empty profile, not an error
-    store.save(TeacherProfile(style_notes="hi", default_grade=7))
-    assert store.load().style_notes == "hi"
-    assert store.load().default_grade == 7
+# ── ProfileStore backends (contract: memory AND postgres) ─────────────────────
+@pytest.fixture(params=["memory", "postgres"])
+def profile_env(request):
+    if request.param == "memory":
+        return MemoryProfileStore(), lambda: make_principal().id
+    db = request.getfixturevalue("pg")
+    return PostgresProfileStore(db), lambda: pg_principal(db).id
 
 
-def test_file_store_persists_across_instances(tmp_path):
-    FileProfileStore(tmp_path).save(TeacherProfile(teacher_name="Deepa", local_anchors=["khola"]))
-    reopened = FileProfileStore(tmp_path)  # a fresh instance reads from disk
-    loaded = reopened.load()
-    assert loaded.teacher_name == "Deepa"
-    assert loaded.local_anchors == ["khola"]
+def test_store_roundtrip_and_empty_default(profile_env):
+    store, owner = profile_env
+    me = owner()
+    assert store.load(me).style_notes == ""  # never-saved → empty profile, not an error
+    store.save(me, TeacherProfile(style_notes="hi", default_grade=7, local_anchors=["khola"]))
+    loaded = store.load(me)
+    assert (loaded.style_notes, loaded.default_grade, loaded.local_anchors) == ("hi", 7, ["khola"])
+    assert loaded.owner_id == me
 
 
-def test_file_store_owner_id_cannot_escape_directory(tmp_path):
-    store = FileProfileStore(tmp_path)
-    store.save(TeacherProfile(owner_id="../../etc/passwd", style_notes="x"))
-    # the traversal is sanitized to a flat filename inside the profiles dir
-    written = list(tmp_path.iterdir())
-    assert len(written) == 1
-    assert written[0].parent == tmp_path
+def test_owner_always_comes_from_the_caller_not_the_body(profile_env):
+    store, owner = profile_env
+    me, victim = owner(), owner()
+    store.save(me, TeacherProfile(owner_id=victim, style_notes="mine"))  # forged owner in body
+    assert store.load(victim).style_notes == ""
+    assert store.load(me).style_notes == "mine"
 
 
-@pytest.mark.parametrize("raw,expected", [("../evil", "evil"), ("a/b", "a_b"), ("", "default")])
-def test_safe_owner(raw, expected):
-    assert _safe_owner(raw) == expected
-
-
-def test_build_profile_store_from_config(tmp_path):
+def test_build_profile_store_from_config():
     assert isinstance(build_profile_store(ProfileConfig(provider="memory")), MemoryProfileStore)
-    fs = build_profile_store(ProfileConfig(provider="file", path=str(tmp_path)))
-    assert isinstance(fs, FileProfileStore)
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        build_profile_store(ProfileConfig(provider="postgres"))
 
 
 def test_build_profile_store_unknown_provider_fails_loudly():
     with pytest.raises(ValueError, match="Unknown profile store provider"):
-        build_profile_store(ProfileConfig(provider="nope"))
+        build_profile_store(ProfileConfig(provider="file"))
 
 
 # ── the prompt actually carries the personalization ───────────────────────────

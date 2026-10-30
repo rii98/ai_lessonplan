@@ -8,13 +8,13 @@ valid JSON; the caller still validates against the Pydantic model.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import httpx
 
 from ...config import LLMConfig
-from ..base import LLMClient, LLMResult
+from ..base import LLMClient, LLMResult, LLMUsage, UpstreamUnavailable
 from ..registry import register_llm
 
 
@@ -74,10 +74,11 @@ class OllamaLLM(LLMClient):
                     resp = client.post(f"{self.base_url}/api/generate", json=body)
                     resp.raise_for_status()
                     data = resp.json()
-                    return LLMResult(text=data.get("response", ""), raw=data)
+                    return LLMResult(text=data.get("response", ""), raw=data,
+                                     usage=self._usage(data))
             except (httpx.HTTPError, json.JSONDecodeError) as exc:  # pragma: no cover - network
                 last_exc = exc
-        raise RuntimeError(f"Ollama request failed after retries: {last_exc}") from last_exc
+        raise UpstreamUnavailable(f"Ollama request failed after retries: {last_exc}") from last_exc
 
     def stream(
         self,
@@ -85,6 +86,7 @@ class OllamaLLM(LLMClient):
         *,
         system: str | None = None,
         temperature: float | None = None,
+        on_usage: Callable[[LLMUsage], None] | None = None,
     ) -> Iterator[str]:
         """Stream free-form answer text as NDJSON deltas from Ollama's
         ``/api/generate`` (``stream: true``). Each line is a JSON object with a
@@ -118,9 +120,16 @@ class OllamaLLM(LLMClient):
                     if piece:
                         yield piece
                     if chunk.get("done"):
+                        if on_usage is not None:
+                            on_usage(self._usage(chunk))
                         break
         except httpx.HTTPError as exc:  # pragma: no cover - network
-            raise RuntimeError(f"Ollama stream failed: {exc}") from exc
+            raise UpstreamUnavailable(f"Ollama stream failed: {exc}") from exc
+
+    def _usage(self, data: dict[str, Any]) -> LLMUsage:
+        """Ollama reports ``prompt_eval_count`` / ``eval_count`` on the final chunk."""
+        return LLMUsage(tokens_in=int(data.get("prompt_eval_count") or 0),
+                        tokens_out=int(data.get("eval_count") or 0), model=self.model)
 
     def health(self) -> bool:
         try:

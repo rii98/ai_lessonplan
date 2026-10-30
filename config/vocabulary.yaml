@@ -1,0 +1,36 @@
+# The shared vocabulary (docs/EDBOOX_INTEGRATION.md §6, D9).
+#
+# One canonical spelling per subject, used by BOTH the Edboox mapper (user context)
+# and corpus ingestion, so a retrieval filter `subject = "Science"` matches what was
+# ingested. Matching is case- and whitespace-insensitive. Adding a subject or an
+# alias is an edit here — no code change. Ingestion rejects a subject not listed.
+
+subjects:
+  Science:            [science, sci, "science and technology", "science & technology",
+                       "विज्ञान", "विज्ञान तथा प्रविधि"]
+  Mathematics:        [mathematics, maths, math, "compulsory mathematics", "गणित"]
+  Optional Mathematics: ["optional mathematics", "optional maths", "opt. maths",
+                         "ऐच्छिक गणित"]
+  English:            [english, "अंग्रेजी", "अङ्ग्रेजी"]
+  Nepali:             [nepali, "नेपाली"]
+  Social Studies:     ["social studies", social, "social studies and human value education",
+                       "सामाजिक अध्ययन", "सामाजिक"]
+  Health:             [health, "health and physical education",
+                       "health, physical and creative arts", "स्वास्थ्य"]
+  Computer Science:   ["computer science", computer, "computer studies", "कम्प्युटर"]
+  Economics:          [economics, "अर्थशास्त्र"]
+  Accountancy:        [accountancy, accounts, "लेखा"]
+  Physics:            [physics, "भौतिक विज्ञान"]
+  Chemistry:          [chemistry, "रसायन विज्ञान"]
+  Biology:            [biology, "जीव विज्ञान"]
+  Occupation, Business and Technology Education:
+                      ["occupation, business and technology education", obte,
+                       "occupation business and technology", "पेशा, व्यवसाय र प्रविधि शिक्षा"]
+  Moral Education:    ["moral education", "नैतिक शिक्षा"]
+  General:            [general, "cross-curricular", "all subjects"]
+
+# Grades are integers 1–12. These patterns (case-insensitive, Devanagari digits
+# accepted) extract the number from whatever a partner sends.
+grade_patterns:
+  - '^(?:class|grade|year|कक्षा)?\s*[-:]?\s*(\d{1,2})$'
+  - '^(\d{1,2})(?:st|nd|rd|th)?\s*(?:class|grade)?$'

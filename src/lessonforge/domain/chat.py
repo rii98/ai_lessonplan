@@ -26,7 +26,7 @@ def _now() -> datetime:
 
 
 def _new_id() -> str:
-    return uuid.uuid4().hex
+    return str(uuid.uuid4())
 
 
 class Role(str, Enum):
@@ -121,6 +121,8 @@ class ArtifactAttempt(BaseModel):
     id: str = Field(default_factory=_new_id)
     artifact_id: str
     conversation_id: str
+    # who plays it — the conversation owner today; differs once teachers assign quizzes
+    owner_id: str = ""
     kind: str
     status: str = "in_progress"     # in_progress | completed
     score: float = 0.0
@@ -132,25 +134,27 @@ class ArtifactAttempt(BaseModel):
 
 class Conversation(BaseModel):
     id: str = Field(default_factory=_new_id)
-    owner_id: str = "default"
+    owner_id: str
     title: str = "New chat"
     defaults: ChatDefaults = Field(default_factory=ChatDefaults)
     summary: str = ""  # rolling long-context summary of older turns
+    message_count: int = 0
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 
 
 # ── API DTOs ──────────────────────────────────────────────────────────────────
 class CreateConversationRequest(BaseModel):
-    title: str | None = None
+    """The owner is always the authenticated caller — never a request field (D7)."""
+
+    title: str | None = Field(default=None, max_length=200)
     defaults: ChatDefaults = Field(default_factory=ChatDefaults)
-    owner_id: str = "default"
 
 
 class UpdateConversationRequest(BaseModel):
     """Partial update: any field left ``None`` is untouched."""
 
-    title: str | None = None
+    title: str | None = Field(default=None, max_length=200)
     defaults: ChatDefaults | None = None
 
 
@@ -158,6 +162,6 @@ class ChatMessageRequest(BaseModel):
     """A user turn. ``mode`` / ``filters`` override the conversation defaults for
     this one message only (the two-modes control); omit to use the defaults."""
 
-    message: str = Field(min_length=1)
+    message: str = Field(min_length=1, max_length=8000)
     mode: FilterMode | None = None
     filters: dict[str, Any] | None = None

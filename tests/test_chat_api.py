@@ -8,8 +8,6 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from lessonforge.api.deps import get_container
-from lessonforge.api.main import create_app
 from lessonforge.config import Settings
 from lessonforge.container import Container
 from lessonforge.export import ExportService
@@ -19,7 +17,7 @@ from lessonforge.rag.grounding import GroundingRetriever
 from lessonforge.rag.retriever import Retriever
 from lessonforge.services.generation import LessonGenerator
 from lessonforge.services.intake import HeuristicIntake
-from tests.conftest import FakeEmbedder, FakeLLM, FakeReranker, FakeVectorStore
+from tests.conftest import FakeEmbedder, FakeLLM, FakeReranker, FakeVectorStore, api_client
 
 
 @pytest.fixture
@@ -43,9 +41,7 @@ def client(base_settings_dict) -> TestClient:
         generator=LessonGenerator(llm=llm, grounding=grounding),
         exporter=ExportService(settings.export), intake=HeuristicIntake(),
     )
-    app = create_app()
-    app.dependency_overrides[get_container] = lambda: container
-    return TestClient(app)
+    return api_client(container)
 
 
 def _parse_sse(text):
@@ -64,35 +60,35 @@ def _parse_sse(text):
 
 
 def test_config_endpoint(client):
-    body = client.get("/chat/config").json()
+    body = client.get("/api/v1/chat/config").json()
     assert body["collections"] == ["curriculum"]
     assert "grade" in body["filter_fields"]
     assert body["default_mode"] == "scoped"
 
 
 def test_conversation_crud(client):
-    created = client.post("/chat/conversations", json={
+    created = client.post("/api/v1/chat/conversations", json={
         "title": "My chat", "defaults": {"mode": "scoped", "grade": 6, "class": "6A"},
     }).json()
     cid = created["id"]
     assert created["defaults"]["class"] == "6A"
 
-    assert any(c["id"] == cid for c in client.get("/chat/conversations").json())
+    assert any(c["id"] == cid for c in client.get("/api/v1/chat/conversations").json()["items"])
 
-    got = client.get(f"/chat/conversations/{cid}").json()
+    got = client.get(f"/api/v1/chat/conversations/{cid}").json()
     assert got["conversation"]["title"] == "My chat"
     assert got["messages"] == []
 
-    renamed = client.patch(f"/chat/conversations/{cid}", json={"title": "Renamed"}).json()
+    renamed = client.patch(f"/api/v1/chat/conversations/{cid}", json={"title": "Renamed"}).json()
     assert renamed["title"] == "Renamed"
 
-    assert client.delete(f"/chat/conversations/{cid}").json() == {"deleted": True}
-    assert client.get(f"/chat/conversations/{cid}").status_code == 404
+    assert client.delete(f"/api/v1/chat/conversations/{cid}").json() == {"deleted": True}
+    assert client.get(f"/api/v1/chat/conversations/{cid}").status_code == 404
 
 
 def test_message_streams_sse_and_persists(client):
-    cid = client.post("/chat/conversations", json={}).json()["id"]
-    resp = client.post(f"/chat/conversations/{cid}/message",
+    cid = client.post("/api/v1/chat/conversations", json={}).json()["id"]
+    resp = client.post(f"/api/v1/chat/conversations/{cid}/message",
                        json={"message": "what is photosynthesis?", "mode": "broad"})
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
@@ -103,12 +99,12 @@ def test_message_streams_sse_and_persists(client):
     assert types[-1] == "done"
 
     # the turn was persisted
-    msgs = client.get(f"/chat/conversations/{cid}").json()["messages"]
+    msgs = client.get(f"/api/v1/chat/conversations/{cid}").json()["messages"]
     assert [m["role"] for m in msgs] == ["user", "assistant"]
 
 
 def test_message_on_missing_conversation_is_404(client):
-    assert client.post("/chat/conversations/nope/message",
+    assert client.post("/api/v1/chat/conversations/nope/message",
                        json={"message": "hi"}).status_code == 404
 
 

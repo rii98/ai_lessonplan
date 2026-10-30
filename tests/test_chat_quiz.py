@@ -17,6 +17,8 @@ from lessonforge.services.chat.skills import RoutedIntent, SkillContext, SkillDe
 from lessonforge.services.chat.skills.quiz import QuizSkill, build_spec, coerce_slots
 from lessonforge.services.chat.store import MemoryChatStore
 
+OWNER = "00000000-0000-4000-8000-000000000001"
+
 QT = QuestionType
 
 
@@ -84,7 +86,7 @@ def _quiz_json(n=3):
 
 
 def _ctx(skill, slots, **conv):
-    return SkillContext(conversation=Conversation(**conv), message="quiz me",
+    return SkillContext(conversation=Conversation(**{"owner_id": OWNER, **conv}), message="quiz me",
                         routed=RoutedIntent("quiz", 0.9, slots, "llm"), history=[], deps=skill.deps)
 
 
@@ -254,7 +256,7 @@ def sess():
 
 def test_answering_scores_and_is_idempotent(sess):
     svc, art, _ = sess
-    att = svc.start(art)
+    att = svc.start(art, owner_id=OWNER)
     r = svc.answer(art, att, "Q1", 1)
     assert r["correct"] and r["score"] == 1 and r["expected"] == "y" and r["explanation"] == "because"
     assert r["progress"] == {"answered": 1, "total": 7, "score": 1.0, "status": "in_progress"}
@@ -266,7 +268,7 @@ def test_answering_scores_and_is_idempotent(sess):
 
 def test_self_check_flow_holds_the_question_until_self_marked(sess):
     svc, art, _ = sess
-    att = svc.start(art)
+    att = svc.start(art, owner_id=OWNER)
     first = svc.answer(art, att, "Q7", "my answer")
     assert first["self_check"] and first["pending"] and first["progress"]["answered"] == 0
     held = svc.answer(art, att, "Q7", "my answer")
@@ -277,7 +279,7 @@ def test_self_check_flow_holds_the_question_until_self_marked(sess):
 
 def test_attempt_completes_when_everything_is_answered_and_review_reveals_it(sess):
     svc, art, store = sess
-    att = svc.start(art)
+    att = svc.start(art, owner_id=OWNER)
     from lessonforge.domain.assessment import view
     qs = {q.id: q for q in ALL_TYPES}
     svc.answer(art, att, "Q1", 1)
@@ -288,7 +290,7 @@ def test_attempt_completes_when_everything_is_answered_and_review_reveals_it(ses
     svc.answer(art, att, "Q6", "30")
     last = svc.answer(art, att, "Q7", "x", self_mark=False)
     assert last["progress"]["status"] == "completed" and last["progress"]["score"] == 5.0
-    rev = svc.review(art, store.get_attempt(att.id))
+    rev = svc.review(art, store.get_attempt(att.id, owner_id=OWNER))
     assert rev["attempt"]["percent"] == 71 and rev["missed"] == ["Q2", "Q7"]
     assert rev["by_type"]["mcq"] == {"score": 1.0, "of": 1}
     assert rev["questions"][1]["expected"] == "False" and rev["questions"][1]["correct"] is False
@@ -296,19 +298,19 @@ def test_attempt_completes_when_everything_is_answered_and_review_reveals_it(ses
 
 def test_review_hides_unanswered_questions(sess):
     svc, art, store = sess
-    att = svc.start(art)
+    att = svc.start(art, owner_id=OWNER)
     svc.answer(art, att, "Q1", 1)
-    rev = svc.review(art, store.get_attempt(att.id))
+    rev = svc.review(art, store.get_attempt(att.id, owner_id=OWNER))
     assert rev["questions"][0]["answered"] and not rev["questions"][1]["answered"]
     assert "expected" not in rev["questions"][1]
 
 
 def test_finish_early_counts_the_rest_as_missed(sess):
     svc, art, store = sess
-    att = svc.start(art)
+    att = svc.start(art, owner_id=OWNER)
     svc.answer(art, att, "Q1", 1)
     svc.finish(art, att)
-    rev = svc.review(art, store.get_attempt(att.id))
+    rev = svc.review(art, store.get_attempt(att.id, owner_id=OWNER))
     assert rev["attempt"]["status"] == "completed" and rev["attempt"]["score"] == 1.0
     assert len(rev["missed"]) == 6 and rev["questions"][1]["expected"] == "False"
     svc.finish(art, att)   # idempotent
@@ -316,9 +318,9 @@ def test_finish_early_counts_the_rest_as_missed(sess):
 
 def test_attempts_are_listed_and_summarised(sess):
     svc, art, _ = sess
-    a1 = svc.start(art)
+    a1 = svc.start(art, owner_id=OWNER)
     svc.finish(art, a1)
-    a2 = svc.start(art)
+    a2 = svc.start(art, owner_id=OWNER)
     s = svc.summary(art)
     assert s["attempts"] == 2 and s["best"] == 0.0 and s["in_progress"] == a2.id and s["question_count"] == 7
     listing = svc.list_attempts(art)
@@ -327,16 +329,16 @@ def test_attempts_are_listed_and_summarised(sess):
 
 def test_retry_missed_builds_a_new_quiz_from_only_the_wrong_ones(sess):
     svc, art, store = sess
-    att = svc.start(art)
+    att = svc.start(art, owner_id=OWNER)
     svc.answer(art, att, "Q1", 1)           # right
     svc.answer(art, att, "Q2", "True")      # wrong
     svc.answer(art, att, "Q3", "echo")      # wrong
-    new = svc.retry_missed(art, store.get_attempt(att.id))
+    new = svc.retry_missed(art, store.get_attempt(att.id, owner_id=OWNER))
     assert new.title == "Retry: T quiz" and new.meta["retry_of"] == art.id
     assert [q["id"] for q in new.payload["questions"]] == ["Q1", "Q2"]
     assert [q["type"] for q in new.payload["questions"]] == ["true_false", "fill_blank"]
-    assert store.get_artifact(new.id) is not None
-    clean = svc.start(art)
+    assert any(a.id == new.id for a in store.list_artifacts(new.conversation_id))
+    clean = svc.start(art, owner_id=OWNER)
     with pytest.raises(ValueError, match="nothing was missed"):
         svc.retry_missed(art, clean)
 

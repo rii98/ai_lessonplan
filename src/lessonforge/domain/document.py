@@ -34,7 +34,7 @@ def _now() -> datetime:
 
 
 def _new_id() -> str:
-    return uuid.uuid4().hex
+    return str(uuid.uuid4())
 
 
 class DocumentKind(str, Enum):
@@ -52,6 +52,15 @@ class VersionOrigin(str, Enum):
     generate = "generate"   # the first, AI-generated baseline
     refine = "refine"       # an accepted AI refine (carries instruction + diff)
     manual = "manual"       # a teacher's direct edit
+    copy = "copy"           # the first version of a copy of a colleague's shared plan
+
+
+class Visibility(str, Enum):
+    """Who besides the owner may read a document (§17). Sharing is read + copy
+    only; every write stays owner-only."""
+
+    private = "private"
+    school = "school"
 
 
 class DocumentVersion(BaseModel):
@@ -73,13 +82,35 @@ class DocumentVersion(BaseModel):
     created_at: datetime = Field(default_factory=_now)
 
 
+class DocumentVersionInfo(BaseModel):
+    """A version without its snapshot — what the history list returns (snapshots
+    are whole lessons/units; listing never needs them)."""
+
+    id: str
+    document_id: str
+    parent_id: str | None = None
+    origin: VersionOrigin
+    instruction: str = ""
+    diff: dict[str, Any] = Field(default_factory=dict)
+    grounding_sources: list[str] = Field(default_factory=list)
+    scores: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+    @classmethod
+    def of(cls, v: DocumentVersion) -> DocumentVersionInfo:
+        return cls(**v.model_dump(exclude={"snapshot"}))
+
+
 class StoredDocument(BaseModel):
     """The document header: identity, ownership, and a pointer to the current
     version. The content lives in the versions; this row is what ``list`` returns
     and what the head pointer moves over on undo."""
 
     id: str = Field(default_factory=_new_id)
-    owner_id: str = "default"
+    owner_id: str
+    # the creator's SIGNED school id, stamped at creation and never changed; a
+    # school-shared document is readable by teachers whose token carries it.
+    tenant_id: str | None = None
     kind: DocumentKind = DocumentKind.lesson
     title: str = "Untitled"
     # light, queryable framing so a teacher can find work later without loading
@@ -87,5 +118,9 @@ class StoredDocument(BaseModel):
     grade: int | None = None
     subject: str | None = None
     head_version_id: str | None = None  # None until the first version is added
+    visibility: Visibility = Visibility.private
+    shared_at: datetime | None = None
+    copied_from: str | None = None       # provenance of a copy ("based on …")
+    owner_name: str | None = None        # display only; filled on shared listings
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)

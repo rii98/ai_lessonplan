@@ -6,10 +6,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from fastapi.testclient import TestClient
 
-from lessonforge.api.deps import get_container
-from lessonforge.api.main import create_app
 from lessonforge.config import Settings
 from lessonforge.container import Container
 from lessonforge.domain.assessment import AssessmentSpec, TypeSpec
@@ -24,7 +21,7 @@ from lessonforge.services.artifact_generation import build_generator
 from lessonforge.services.assessment_scope import scope_from_lesson, scope_from_unit
 from lessonforge.services.documents.store import MemoryDocumentStore
 from lessonforge.services.generation import LessonGenerator
-from tests.conftest import FakeEmbedder, FakeReranker, FakeVectorStore
+from tests.conftest import SUPERADMIN, FakeEmbedder, FakeReranker, FakeVectorStore, api_client
 
 _SPEC = AssessmentSpec(types=[TypeSpec(type="short_answer", count=3)])
 
@@ -137,9 +134,7 @@ def client_and_container(export_ldd_dict):
     c = Container(settings=st, llm=llm, embedder=emb, reranker=rr, vector_store=store,
                   retriever=retr, grounding=g, generator=LessonGenerator(llm=llm, grounding=g),
                   exporter=ExportService(st.export), document_store=MemoryDocumentStore())
-    app = create_app()
-    app.dependency_overrides[get_container] = lambda: c
-    return TestClient(app), c
+    return api_client(c), c
 
 
 _SPEC_JSON = {"types": [{"type": "short_answer", "count": 3}]}
@@ -147,31 +142,31 @@ _SPEC_JSON = {"types": [{"type": "short_answer", "count": 3}]}
 
 def test_from_lesson_endpoint(client_and_container, export_ldd_dict):
     client, _ = client_and_container
-    r = client.post("/artifacts/quiz/from-lesson", json={"ldd": export_ldd_dict, "spec": _SPEC_JSON})
+    r = client.post("/api/v1/artifacts/quiz/from-lesson", json={"ldd": export_ldd_dict, "spec": _SPEC_JSON})
     assert r.status_code == 200, r.text
     body = r.json()
     assert [o["id"] for o in body["objectives"]] == ["O1", "O2"]
     assert body["curriculum_ref"]["grade"] == 6 and body["spec"]["types"][0]["count"] == 3
-    assert client.post("/artifacts/quiz/export?fmt=pptx", json=body).status_code == 200
+    assert client.post("/api/v1/artifacts/quiz/export?fmt=pptx", json=body).status_code == 200
 
 
 def test_from_lesson_rejects_slides_and_bad_input(client_and_container, export_ldd_dict):
     client, _ = client_and_container
-    assert client.post("/artifacts/slides/from-lesson",
+    assert client.post("/api/v1/artifacts/slides/from-lesson",
                        json={"ldd": export_ldd_dict, "spec": _SPEC_JSON}).status_code == 422
-    assert client.post("/artifacts/quiz/from-lesson",
+    assert client.post("/api/v1/artifacts/quiz/from-lesson",
                        json={"ldd": {"topic": "x"}, "spec": _SPEC_JSON}).status_code == 422
 
 
 def test_from_unit_endpoint_all_days_and_selected(client_and_container, export_ldd_dict):
     client, c = client_and_container
-    doc, _ = c.get_document_service().save_unit(_unit(export_ldd_dict))
-    r = client.post(f"/units/{doc.id}/assessment/quiz", json={"spec": _SPEC_JSON})
+    doc, _ = c.get_document_service().save_unit(_unit(export_ldd_dict), owner=SUPERADMIN)
+    r = client.post(f"/api/v1/units/{doc.id}/assessment/quiz", json={"spec": _SPEC_JSON})
     assert r.status_code == 200, r.text
     assert len(r.json()["objectives"]) == 6          # 3 days × 2 objectives
-    r2 = client.post(f"/units/{doc.id}/assessment/worksheet",
+    r2 = client.post(f"/api/v1/units/{doc.id}/assessment/worksheet",
                      json={"spec": _SPEC_JSON, "days": [2]})
     assert r2.status_code == 200 and [o["id"] for o in r2.json()["objectives"]] == ["D2-O1", "D2-O2"]
-    assert client.post(f"/units/{doc.id}/assessment/quiz",
+    assert client.post(f"/api/v1/units/{doc.id}/assessment/quiz",
                        json={"spec": _SPEC_JSON, "days": [9]}).status_code == 422
-    assert client.post("/units/nope/assessment/quiz", json={"spec": _SPEC_JSON}).status_code == 404
+    assert client.post("/api/v1/units/nope/assessment/quiz", json={"spec": _SPEC_JSON}).status_code == 404

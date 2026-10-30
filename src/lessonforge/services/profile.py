@@ -1,98 +1,83 @@
-"""ProfileStore — where a :class:`TeacherProfile` is persisted.
+"""ProfileStore — where a :class:`TeacherProfile` is persisted, one per principal.
 
-A storage port behind the same registry pattern as everything else: swap
-``profile.provider`` in config and the store changes with no code edit.
-
-- ``memory`` — in-process dict. The default: zero infra, perfect for tests and a
-  single-process dev run. Profiles reset on restart.
-- ``file`` — one JSON file per owner under a directory, so a teacher's
-  preferences survive restarts without standing up a database. The real
-  multi-tenant DB store lands in M5; this port is the seam that keeps that a
-  config swap.
-
-Both look profiles up by ``owner_id`` (``"default"`` in the single-teacher v1),
-and a miss returns a fresh empty profile rather than raising — a teacher who has
-never saved preferences still gets a usable, do-nothing profile.
+A storage port behind the registry pattern: ``profile.provider`` picks ``memory``
+(tests) or ``postgres`` (``teacher_profiles``, on the shared pool). A miss returns
+a fresh empty profile rather than raising — a teacher who has never saved
+preferences still gets a usable, do-nothing profile. The owner always comes from
+the authenticated principal, never from the profile body.
 """
 
 from __future__ import annotations
 
-import re
+import threading
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 from ..config import ProfileConfig
+from ..db.pool import Database, as_uuid, jsonb
 from ..domain.profile import TeacherProfile
 from .registry import register_profile_store
 
-# owner_id becomes a filename in the file store — keep it to a safe charset so it
-# can never escape the profiles directory (path traversal) or collide with the OS.
-_SAFE_OWNER = re.compile(r"[^A-Za-z0-9._-]")
-
-
-def _safe_owner(owner_id: str) -> str:
-    cleaned = _SAFE_OWNER.sub("_", owner_id).strip("._") or "default"
-    return cleaned
-
 
 class ProfileStore(ABC):
-    """Loads and saves teacher preferences, keyed by owner."""
+    @abstractmethod
+    def load(self, owner_id: str) -> TeacherProfile:
+        """The stored profile, or a fresh empty one if none is saved."""
 
     @abstractmethod
-    def load(self, owner_id: str = "default") -> TeacherProfile:
-        """Return the stored profile, or a fresh empty one if none is saved."""
-
-    @abstractmethod
-    def save(self, profile: TeacherProfile) -> TeacherProfile:
-        """Persist ``profile`` and return it."""
+    def save(self, owner_id: str, profile: TeacherProfile) -> TeacherProfile:
+        """Persist ``profile`` for ``owner_id`` (which overrides the body's owner)."""
 
     @classmethod
-    def from_config(cls, cfg: ProfileConfig) -> ProfileStore:  # pragma: no cover
+    def from_config(cls, cfg: ProfileConfig, *, db: Database | None = None) -> ProfileStore:  # pragma: no cover
         raise NotImplementedError
 
 
 @register_profile_store("memory")
 class MemoryProfileStore(ProfileStore):
-    """In-process store. Fast, dependency-free, non-persistent."""
-
     def __init__(self) -> None:
         self._by_owner: dict[str, TeacherProfile] = {}
+        self._lock = threading.Lock()
 
     @classmethod
-    def from_config(cls, cfg: ProfileConfig) -> MemoryProfileStore:
+    def from_config(cls, cfg: ProfileConfig, *, db: Database | None = None) -> MemoryProfileStore:
         return cls()
 
-    def load(self, owner_id: str = "default") -> TeacherProfile:
+    def load(self, owner_id: str) -> TeacherProfile:
         return self._by_owner.get(owner_id) or TeacherProfile(owner_id=owner_id)
 
-    def save(self, profile: TeacherProfile) -> TeacherProfile:
-        self._by_owner[profile.owner_id] = profile
-        return profile
+    def save(self, owner_id: str, profile: TeacherProfile) -> TeacherProfile:
+        stored = profile.model_copy(update={"owner_id": owner_id})
+        with self._lock:
+            self._by_owner[owner_id] = stored
+        return stored
 
 
-@register_profile_store("file")
-class FileProfileStore(ProfileStore):
-    """One ``<owner_id>.json`` file per teacher under ``path``."""
-
-    def __init__(self, path: str | Path) -> None:
-        self.dir = Path(path)
-        self.dir.mkdir(parents=True, exist_ok=True)
+@register_profile_store("postgres")
+class PostgresProfileStore(ProfileStore):
+    def __init__(self, db: Database) -> None:
+        self.db = db
 
     @classmethod
-    def from_config(cls, cfg: ProfileConfig) -> FileProfileStore:
-        return cls(cfg.path or ".lessonforge/profiles")
+    def from_config(cls, cfg: ProfileConfig, *, db: Database | None = None) -> PostgresProfileStore:
+        if db is None:
+            raise ValueError("the postgres profile store needs database.url (DATABASE_URL)")
+        return cls(db)
 
-    def _file(self, owner_id: str) -> Path:
-        return self.dir / f"{_safe_owner(owner_id)}.json"
-
-    def load(self, owner_id: str = "default") -> TeacherProfile:
-        f = self._file(owner_id)
-        if f.exists():
-            return TeacherProfile.model_validate_json(f.read_text(encoding="utf-8"))
+    def load(self, owner_id: str) -> TeacherProfile:
+        pid = as_uuid(owner_id)
+        if pid is not None:
+            with self.db.tx() as cur:
+                cur.execute("SELECT data FROM teacher_profiles WHERE principal_id = %s", (pid,))
+                row = cur.fetchone()
+            if row is not None:
+                return TeacherProfile.model_validate({**row["data"], "owner_id": owner_id})
         return TeacherProfile(owner_id=owner_id)
 
-    def save(self, profile: TeacherProfile) -> TeacherProfile:
-        self._file(profile.owner_id).write_text(
-            profile.model_dump_json(indent=2), encoding="utf-8"
-        )
-        return profile
+    def save(self, owner_id: str, profile: TeacherProfile) -> TeacherProfile:
+        stored = profile.model_copy(update={"owner_id": owner_id})
+        with self.db.tx() as cur:
+            cur.execute(
+                "INSERT INTO teacher_profiles (principal_id, data) VALUES (%s, %s) "
+                "ON CONFLICT (principal_id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()",
+                (as_uuid(owner_id), jsonb(stored.model_dump(mode="json", exclude={"owner_id"}))))
+        return stored

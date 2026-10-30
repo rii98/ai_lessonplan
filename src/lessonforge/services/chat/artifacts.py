@@ -10,16 +10,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...domain.chat import ChatArtifact
+from ...activity.store import ActivityRecorder
+from ...domain.chat import ArtifactAttempt, ChatArtifact
 from .quiz_play import KIND as QUIZ
 from .quiz_play import AnswerGrader, QuizSessions
 from .store import ChatStore
 
 
 class ArtifactService:
-    def __init__(self, store: ChatStore, grader: AnswerGrader) -> None:
+    def __init__(self, store: ChatStore, grader: AnswerGrader,
+                 activity: ActivityRecorder | None = None) -> None:
         self.store = store
-        self._kinds: dict[str, QuizSessions] = {QUIZ: QuizSessions(store, grader)}
+        self._kinds: dict[str, QuizSessions] = {QUIZ: QuizSessions(store, grader, activity)}
 
     def for_kind(self, kind: str) -> QuizSessions:
         try:
@@ -27,15 +29,23 @@ class ArtifactService:
         except KeyError:
             raise ValueError(f"unsupported artifact kind {kind!r}") from None
 
-    def summary(self, artifact: ChatArtifact) -> dict[str, Any]:
-        return self.for_kind(artifact.kind).summary(artifact)
+    def summary(self, artifact: ChatArtifact,
+                attempts: list[ArtifactAttempt] | None = None) -> dict[str, Any]:
+        return self.for_kind(artifact.kind).summary(artifact, attempts)
 
     def summaries(self, conversation_id: str) -> list[dict[str, Any]]:
-        out = [self._safe_summary(a) for a in self.store.list_artifacts(conversation_id)]
+        """Every artifact of a conversation with its attempt summary — two queries in
+        total (artifacts, then all their attempts at once), whatever the count."""
+        artifacts = self.store.list_artifacts(conversation_id)
+        if not artifacts:
+            return []
+        attempts = self.store.attempts_by_artifact(conversation_id)
+        out = [self._safe_summary(a, attempts.get(a.id, [])) for a in artifacts]
         return [s for s in out if s is not None]
 
-    def _safe_summary(self, artifact: ChatArtifact) -> dict[str, Any] | None:
+    def _safe_summary(self, artifact: ChatArtifact,
+                      attempts: list[ArtifactAttempt]) -> dict[str, Any] | None:
         try:
-            return self.summary(artifact)
+            return self.summary(artifact, attempts)
         except Exception:   # a corrupt/legacy artifact must not break reloading the chat
             return None

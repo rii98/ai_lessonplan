@@ -11,7 +11,7 @@ async function api(method, url, body) {
     opt.headers["Content-Type"] = "application/json";
     opt.body = JSON.stringify(body);
   }
-  return fetch(url, opt);
+  return lfFetch(url, opt);
 }
 
 /* JSON helper: throws with the server's detail on a non-2xx. */
@@ -20,8 +20,7 @@ async function apiJSON(method, url, body) {
   let data = null;
   try { data = await res.json(); } catch { /* empty body */ }
   if (!res.ok) {
-    const detail = data && (data.detail || data.message);
-    throw new Error(typeof detail === "string" ? detail : `${res.status} ${res.statusText}`);
+    throw new Error(lfErr(data, `${res.status} ${res.statusText}`));
   }
   return data;
 }

@@ -48,14 +48,21 @@ llm → heuristic`) is a one-line change, never a code edit.
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 
-docker compose up -d qdrant          # vector store
+docker compose up -d qdrant postgres       # vector store + the one Postgres
 # Ollama runs on the host (ollama serve / desktop app)
 
-python -m lessonforge.rag.ingest --seed   # load the grounding corpus into Qdrant
+export DATABASE_URL=postgresql://lessonforge:lessonforge@localhost:5432/lessonforge
+export LF_SESSION_SECRET=$(python -c "import secrets; print(secrets.token_hex(32))")
+export LF_COOKIE_SECURE=false              # plain-http local dev only
+lessonforge-db migrate                     # versioned schema (the API refuses a stale one)
+python -m lessonforge.rag.ingest --seed    # load the shared grounding corpus
 
 uvicorn lessonforge.api.main:app --reload
-# → http://localhost:8000/docs
+# → http://localhost:8000/docs   (API under /api/v1; sign in through Edboox, below)
 ```
+
+Everything is reached through Edboox (LessonForge keeps no passwords): for local
+work run the whole integration with the fake Edboox — see **Edboox integration**.
 
 Generate a lesson:
 
@@ -269,8 +276,8 @@ uvicorn lessonforge.api.main:app --reload
 - **Memory** — a verbatim recent-turn window plus a rolling LLM summary of older
   turns keeps long conversations coherent without resending the transcript.
 - **Persistence** behind a pluggable `ChatStore` port — `memory` (tests) ·
-  `sqlite` (local default, one file) · `postgres` (Docker) — a one-line
-  `chat.store.provider` swap. The DSN is env-driven (`CHAT_DB_URL`), never in YAML.
+  `postgres` (the shared pool, `DATABASE_URL`) — owner-scoped: a conversation,
+  artifact or attempt is only ever read through its owner.
 
 The whole subsystem is wired in the `Container` from the shared retriever + LLMs,
 each stage a single-responsibility class behind a narrow interface (SOLID) — a new
@@ -279,13 +286,43 @@ query-transform or store backend is a new class plus a registry decorator.
 ## Full stack in Docker
 
 ```bash
-docker compose up --build     # qdrant + postgres + api; api reaches host Ollama
+docker compose --profile dev up --build   # + the fake Edboox on :8200 (full integration)
+docker compose up --build                 # LessonForge only; point EDBOOX_* at the real one
 ```
 
-Postgres backs the chatbot's persistence in Docker (the api service sets
-`LF__CHAT__STORE__PROVIDER=postgres` + `CHAT_DB_URL`); the lesson pipeline itself
-needs only Qdrant. Swap the chat store back to sqlite/memory in config and the
-`postgres` service is simply unused.
+Startup order is postgres → `migrate` (one-shot `lessonforge-db migrate`) → api.
+Postgres is the only persistent store: documents and their history, chats,
+profiles, principals and grants, the audit log, the knowledge registry and
+activity events.
+
+## Edboox integration
+
+Edboox authenticates, LessonForge authorizes. Design and decisions:
+[`docs/EDBOOX_INTEGRATION.md`](docs/EDBOOX_INTEGRATION.md) (plain-language tour:
+[`docs/EDBOOX_OVERVIEW.md`](docs/EDBOOX_OVERVIEW.md)).
+
+- **Sign-in** — Edboox auto-POSTs a 60 s single-use RS256 token to `/auth/launch`
+  (verified against Edboox's JWKS); we set an httpOnly session cookie. Edboox's own
+  UI can instead call `/api/v1` with a 15-minute `Authorization: Bearer` token.
+- **Roles → permissions** in config (`rbac.roles`): students chat; teachers chat
+  and author; the Edboox `service` token reads reports; **superadmin** is a local,
+  audited CLI grant (`lessonforge-admin grant --subject teacher:1`) Edboox can never assert.
+- **Knowledge spaces** — every chunk is on the shared `global` shelf or a
+  `school:<id>` shelf; every vector-store read carries a mandatory scope from the
+  signed school claim.
+- **User context** — grade, section, assignments… pulled from Edboox, mapped
+  through `config/vocabulary.yaml`, cached; it personalises (scope, defaults) and
+  never authorizes.
+- **Sharing** — plans are private; a teacher may share one with their school (read
+  + copy, never edit).
+- **Activity** — content-free events Edboox pulls from `/api/v1/events` and
+  `/api/v1/reports/*` ([`docs/ACTIVITY_EVENTS.md`](docs/ACTIVITY_EVENTS.md)).
+- **Contract** — `/api/v1` is versioned; `docs/openapi.v1.json` is checked in and
+  CI fails on any breaking change. Chat streaming: [`docs/CHAT_EVENTS.md`](docs/CHAT_EVENTS.md).
+
+Switching to the real Edboox is configuration only: `EDBOOX_ISSUER`,
+`EDBOOX_JWKS_URL`, `EDBOOX_LOGIN_URL`, `EDBOOX_WEB_ORIGIN`, `EDBOOX_API_URL`,
+`EDBOOX_API_KEY` (+ `LF_SESSION_SECRET`).
 
 The reranker and embedder run in-process (FastEmbed, no server). The only
 external services are Qdrant and Ollama.
@@ -312,8 +349,16 @@ An unknown provider fails **loudly at startup** with the list of available ones.
 
 ```bash
 pytest                       # unit tests — no external services, no model downloads
+TEST_DATABASE_URL=postgresql://lessonforge:lessonforge@localhost:5432/lessonforge pytest
+                             # + every store/migration test against real Postgres too
 RUN_INTEGRATION=1 pytest     # + live contract tests (needs Qdrant + Ollama)
 ```
+
+- **Security suites** — the role matrix (every `/api/v1` route × role × {bearer,
+  cookie}, generated from the live OpenAPI table), corpus isolation (School B
+  reaches School A's private chunk through no retrieval path or prompt), IDOR and
+  sharing, token verification (wrong aud/iss, expired, too old, `alg` confusion,
+  unknown `kid` with rate-limited refetch, replayed launch `jti`).
 
 - **Unit** — config precedence, registry swapping, LDD guardrails, retriever,
   generation, intake, critique, revise loop, pipeline, eval harness, teacher

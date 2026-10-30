@@ -389,7 +389,7 @@ class GroundingRetriever:
         if chapter is not None:
             where[CHAPTER_KEY] = chapter
         try:
-            records = self.retriever.vector_store.fetch(collection, where)
+            records = self.retriever.fetch(collection, where)
         except Exception:
             return []
         records.sort(key=lambda r: r.payload.get(CHUNK_INDEX_KEY, 0))

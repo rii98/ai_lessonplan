@@ -1,16 +1,18 @@
-"""ChatStore contract tests — run against every non-networked provider.
-
-memory + sqlite must behave identically (the loose-coupling contract); postgres
-shares the same ``_SqlChatStore`` code path as sqlite, exercised under the
-``integration`` marker elsewhere.
-"""
+"""ChatStore contract: every test runs against the memory AND the Postgres store
+(Postgres when TEST_DATABASE_URL is set), so the two cannot drift."""
 
 from __future__ import annotations
+
+import threading
+import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from lessonforge.config import ChatStoreConfig
 from lessonforge.domain.chat import (
+    ArtifactAttempt,
+    ChatArtifact,
     ChatDefaults,
     ChatMessage,
     Citation,
@@ -18,141 +20,170 @@ from lessonforge.domain.chat import (
     FilterMode,
     Role,
 )
-from lessonforge.services.chat.store import MemoryChatStore, SqliteChatStore
+from lessonforge.pagination import Keyset
+from lessonforge.services.chat.store import MemoryChatStore, PostgresChatStore
+from lessonforge.services.registry import build_chat_store
+from tests.conftest import make_principal, pg_principal
 
 
-@pytest.fixture(params=["memory", "sqlite"])
-def store(request, tmp_path):
+@pytest.fixture(params=["memory", "postgres"])
+def env(request):
+    """(store, new_owner_id) for each backend."""
     if request.param == "memory":
-        return MemoryChatStore()
-    return SqliteChatStore(tmp_path / "chat.db")
+        return MemoryChatStore(), lambda: make_principal().id
+    db = request.getfixturevalue("pg")
+    return PostgresChatStore(db), lambda: pg_principal(db).id
 
 
-def test_create_get_and_list(store):
-    a = store.create(Conversation(owner_id="t1", title="A"))
-    store.create(Conversation(owner_id="t1", title="B"))
-    store.create(Conversation(owner_id="other", title="C"))
-
-    assert store.get(a.id).title == "A"
-    assert store.get("nope") is None
-    titles = {c.title for c in store.list("t1")}
-    assert titles == {"A", "B"}  # other owner excluded
+def _conv(owner: str, **kw) -> Conversation:
+    return Conversation(owner_id=owner, **kw)
 
 
-def test_messages_preserve_order_and_limit(store):
-    conv = store.create(Conversation())
+def test_create_get_list_and_owner_isolation(env):
+    store, owner = env
+    a, b = owner(), owner()
+    c1 = store.create(_conv(a, title="one", defaults=ChatDefaults(grade=6, subject="Science")))
+    store.create(_conv(b, title="theirs"))
+    got = store.get(c1.id, owner_id=a)
+    assert got is not None and got.title == "one" and got.defaults.grade == 6
+    assert store.get(c1.id, owner_id=b) is None            # another owner: not found
+    assert store.get("not-a-uuid", owner_id=a) is None     # malformed id: not found, not 500
+    assert [c.title for c in store.list(a, limit=10).items] == ["one"]
+
+
+def test_list_is_keyset_paginated_newest_first(env):
+    store, owner = env
+    a = owner()
+    base = datetime(2026, 1, 1, tzinfo=UTC)
     for i in range(5):
-        role = Role.user if i % 2 == 0 else Role.assistant
-        store.add_message(conv.id, ChatMessage(role=role, content=f"m{i}"))
-
-    all_msgs = store.messages(conv.id)
-    assert [m.content for m in all_msgs] == ["m0", "m1", "m2", "m3", "m4"]
-
-    # limit keeps the most recent, still oldest-first
-    assert [m.content for m in store.messages(conv.id, limit=2)] == ["m3", "m4"]
-
-
-def test_citations_round_trip(store):
-    conv = store.create(Conversation())
-    cite = Citation(n=1, source="Book p.3", collection="reference", text="chunk text",
-                    score=0.9, metadata={"grade": 6})
-    store.add_message(conv.id, ChatMessage(role=Role.assistant, content="ans", citations=[cite]))
-
-    back = store.messages(conv.id)[0]
-    assert back.citations[0].source == "Book p.3"
-    assert back.citations[0].metadata == {"grade": 6}
+        store.create(_conv(a, title=f"c{i}", created_at=base, updated_at=base + timedelta(minutes=i)))
+    p1 = store.list(a, limit=2)
+    assert [c.title for c in p1.items] == ["c4", "c3"] and p1.next_cursor
+    p2 = store.list(a, limit=2, cursor=Keyset.decode(p1.next_cursor))
+    p3 = store.list(a, limit=2, cursor=Keyset.decode(p2.next_cursor))
+    assert [c.title for c in p2.items] == ["c2", "c1"]
+    assert [c.title for c in p3.items] == ["c0"] and p3.next_cursor is None
 
 
-def test_update_patches_only_given_fields(store):
-    defaults = ChatDefaults(mode=FilterMode.scoped, grade=6, subject="Science")
-    conv = store.create(Conversation(title="orig", defaults=defaults, summary="s0"))
-
-    store.update(conv.id, title="renamed")
-    got = store.get(conv.id)
-    assert got.title == "renamed"
-    assert got.defaults.grade == 6  # untouched
-    assert got.summary == "s0"
-
-    store.update(conv.id, summary="rolled up")
-    assert store.get(conv.id).summary == "rolled up"
-    assert store.get(conv.id).title == "renamed"
-
-    assert store.update("missing", title="x") is None
+def test_messages_order_tail_and_ranges(env):
+    store, owner = env
+    conv = store.create(_conv(owner()))
+    for i in range(5):
+        store.add_message(conv.id, ChatMessage(role=Role.user if i % 2 == 0 else Role.assistant,
+                                               content=f"m{i}"))
+    assert [m.content for m in store.messages(conv.id)] == [f"m{i}" for i in range(5)]
+    tail, total = store.tail(conv.id, limit=2)
+    assert [m.content for m in tail] == ["m3", "m4"] and total == 5
+    assert [m.content for m in store.messages_between(conv.id, 1, 3)] == ["m1", "m2"]
+    assert store.get(conv.id, owner_id=conv.owner_id).message_count == 5
 
 
-def test_defaults_alias_class_round_trips(store):
-    conv = store.create(Conversation(defaults=ChatDefaults.model_validate({"class": "6A"})))
-    assert store.get(conv.id).defaults.class_ == "6A"
+def test_concurrent_appends_never_collide(env):
+    """ord is allocated by an atomic counter: concurrent writers can't duplicate it."""
+    store, owner = env
+    conv = store.create(_conv(owner()))
+    errors: list[Exception] = []
+
+    def write(n: int) -> None:
+        try:
+            for i in range(5):
+                store.add_message(conv.id, ChatMessage(role=Role.user, content=f"{n}-{i}"))
+        except Exception as exc:  # pragma: no cover - the failure we guard against
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write, args=(n,)) for n in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    assert len(store.messages(conv.id)) == 20
+    assert store.tail(conv.id, limit=1)[1] == 20
 
 
-def test_delete_removes_conversation_and_messages(store):
-    conv = store.create(Conversation())
+def test_citations_and_meta_round_trip(env):
+    store, owner = env
+    conv = store.create(_conv(owner()))
+    store.add_message(conv.id, ChatMessage(
+        role=Role.assistant, content="x", meta={"mode": "scoped"},
+        citations=[Citation(n=1, source="Book", collection="reference", text="t", score=0.5,
+                            metadata={"chapter": "Ch 1"})]))
+    m = store.messages(conv.id)[0]
+    assert m.citations[0].metadata == {"chapter": "Ch 1"} and m.meta == {"mode": "scoped"}
+
+
+def test_update_is_owner_scoped_and_partial(env):
+    store, owner = env
+    a, b = owner(), owner()
+    conv = store.create(_conv(a, title="old"))
+    assert store.update(conv.id, owner_id=b, title="hijack") is None
+    up = store.update(conv.id, owner_id=a, summary="sum")
+    assert up.title == "old" and up.summary == "sum"
+    up = store.update(conv.id, owner_id=a,
+                      defaults=ChatDefaults(mode=FilterMode.broad, class_="8A"))
+    assert up.defaults.mode is FilterMode.broad and up.defaults.class_ == "8A"
+    assert store.get(conv.id, owner_id=a).defaults.class_ == "8A"   # alias round-trips
+
+
+def test_delete_is_owner_scoped_and_cascades(env):
+    store, owner = env
+    a, b = owner(), owner()
+    conv = store.create(_conv(a))
     store.add_message(conv.id, ChatMessage(role=Role.user, content="hi"))
-    assert store.delete(conv.id) is True
-    assert store.get(conv.id) is None
-    assert store.messages(conv.id) == []
-    assert store.delete(conv.id) is False  # already gone
+    art = store.add_artifact(ChatArtifact(conversation_id=conv.id, kind="quiz", title="q"))
+    store.save_attempt(ArtifactAttempt(artifact_id=art.id, conversation_id=conv.id, owner_id=a,
+                                       kind="quiz"))
+    assert store.delete(conv.id, owner_id=b) is False
+    assert store.delete(conv.id, owner_id=a) is True
+    assert store.messages(conv.id) == [] and store.list_artifacts(conv.id) == []
+    assert store.attempts_by_artifact(conv.id) == {}
 
 
-def test_sqlite_persists_across_instances(tmp_path):
-    path = tmp_path / "chat.db"
-    s1 = SqliteChatStore(path)
-    conv = s1.create(Conversation(title="persisted"))
-    s1.add_message(conv.id, ChatMessage(role=Role.user, content="remember me"))
-
-    s2 = SqliteChatStore(path)  # fresh connection, same file
-    assert s2.get(conv.id).title == "persisted"
-    assert s2.messages(conv.id)[0].content == "remember me"
-
-
-def test_from_config_builds_expected_type(tmp_path):
-    mem = MemoryChatStore.from_config(ChatStoreConfig(provider="memory"))
-    assert isinstance(mem, MemoryChatStore)
-    sql = SqliteChatStore.from_config(ChatStoreConfig(provider="sqlite", path=str(tmp_path / "c.db")))
-    assert isinstance(sql, SqliteChatStore)
+def test_artifacts_are_reachable_only_through_their_owner(env):
+    store, owner = env
+    a, b = owner(), owner()
+    conv = store.create(_conv(a))
+    first = store.add_artifact(ChatArtifact(conversation_id=conv.id, kind="quiz", title="1",
+                                            payload={"k": 1}))
+    store.add_artifact(ChatArtifact(conversation_id=conv.id, kind="quiz", title="2"))
+    assert [x.title for x in store.list_artifacts(conv.id)] == ["1", "2"]
+    assert store.get_artifact(first.id, owner_id=a).payload == {"k": 1}
+    assert store.get_artifact(first.id, owner_id=b) is None
+    assert store.delete_artifact(first.id, owner_id=b) is False
+    assert store.delete_artifact(first.id, owner_id=a) is True
 
 
-# ── artifacts + attempts (a quiz a turn produced, and its play-throughs) ──────
-def _artifact(conv_id, title="Quiz"):
-    from lessonforge.domain.chat import ChatArtifact
-    return ChatArtifact(conversation_id=conv_id, kind="quiz", title=title,
-                        payload={"questions": [1, 2]}, meta={"slots": {"topic": "x"}})
+def test_attempts_upsert_owner_scope_and_batch_read(env):
+    store, owner = env
+    a, b = owner(), owner()
+    conv = store.create(_conv(a))
+    q1 = store.add_artifact(ChatArtifact(conversation_id=conv.id, kind="quiz", title="1"))
+    q2 = store.add_artifact(ChatArtifact(conversation_id=conv.id, kind="quiz", title="2"))
+    t0 = datetime.now(UTC)
+    old = store.save_attempt(ArtifactAttempt(artifact_id=q1.id, conversation_id=conv.id,
+                                             owner_id=a, kind="quiz", created_at=t0))
+    new = store.save_attempt(ArtifactAttempt(artifact_id=q1.id, conversation_id=conv.id,
+                                             owner_id=a, kind="quiz",
+                                             created_at=t0 + timedelta(seconds=1)))
+    store.save_attempt(ArtifactAttempt(artifact_id=q2.id, conversation_id=conv.id, owner_id=a,
+                                       kind="quiz"))
+    old.status, old.score = "completed", 3.0
+    store.save_attempt(old)                                  # upsert, not a new row
+    assert [t.id for t in store.list_attempts(q1.id)] == [new.id, old.id]
+    assert store.get_attempt(old.id, owner_id=a).score == 3.0
+    assert store.get_attempt(old.id, owner_id=b) is None
+    grouped = store.attempts_by_artifact(conv.id)
+    assert set(grouped) == {q1.id, q2.id} and len(grouped[q1.id]) == 2
 
 
-def test_artifacts_round_trip_and_list_oldest_first(store):
-    c = store.create(Conversation(title="A"))
-    a1 = store.add_artifact(_artifact(c.id, "first"))
-    a2 = store.add_artifact(_artifact(c.id, "second"))
-    store.add_artifact(_artifact("someone-else"))
-    got = store.get_artifact(a1.id)
-    assert got.title == "first" and got.payload == {"questions": [1, 2]} and got.meta["slots"]["topic"] == "x"
-    assert [a.id for a in store.list_artifacts(c.id)] == [a1.id, a2.id]
-    assert store.get_artifact("nope") is None
+def test_from_config_builds_expected_backend():
+    assert isinstance(build_chat_store(ChatStoreConfig(provider="memory")), MemoryChatStore)
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        build_chat_store(ChatStoreConfig(provider="postgres"))
+    with pytest.raises(ValueError, match="Unknown chat store"):
+        build_chat_store(ChatStoreConfig(provider="sqlite"))
 
 
-def test_attempts_upsert_and_list_newest_first(store):
-    from lessonforge.domain.chat import ArtifactAttempt
-    c = store.create(Conversation(title="A"))
-    art = store.add_artifact(_artifact(c.id))
-    a = ArtifactAttempt(artifact_id=art.id, conversation_id=c.id, kind="quiz", total=2)
-    store.save_attempt(a)
-    a.state = {"answers": {"Q1": {"score": 1.0}}}
-    a.score, a.status = 1.0, "completed"
-    store.save_attempt(a)                                   # upsert, not a duplicate
-    b = store.save_attempt(ArtifactAttempt(artifact_id=art.id, conversation_id=c.id, kind="quiz", total=2))
-    got = store.get_attempt(a.id)
-    assert (got.score, got.status, got.state["answers"]["Q1"]["score"]) == (1.0, "completed", 1.0)
-    assert [x.id for x in store.list_attempts(art.id)] == [b.id, a.id]
-    assert store.get_attempt("nope") is None
-
-
-def test_deleting_an_artifact_or_a_conversation_cascades(store):
-    from lessonforge.domain.chat import ArtifactAttempt
-    c = store.create(Conversation(title="A"))
-    a1, a2 = store.add_artifact(_artifact(c.id)), store.add_artifact(_artifact(c.id))
-    t1 = store.save_attempt(ArtifactAttempt(artifact_id=a1.id, conversation_id=c.id, kind="quiz"))
-    t2 = store.save_attempt(ArtifactAttempt(artifact_id=a2.id, conversation_id=c.id, kind="quiz"))
-    assert store.delete_artifact(a1.id) and not store.delete_artifact(a1.id)
-    assert store.get_attempt(t1.id) is None and store.get_attempt(t2.id) is not None
-    store.delete(c.id)
-    assert store.list_artifacts(c.id) == [] and store.get_attempt(t2.id) is None
+def test_ids_are_canonical_uuids():
+    cid = Conversation(owner_id="x").id
+    assert str(uuid.UUID(cid)) == cid

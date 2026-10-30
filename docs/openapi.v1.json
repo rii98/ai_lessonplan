@@ -1,0 +1,6273 @@
+{
+  "components": {
+    "schemas": {
+      "ArtifactGenerateRequest": {
+        "description": "A targeted-artifact request: the usual brief plus, for a quiz/worksheet, the\nauthor's question blueprint (types \u00d7 counts \u00d7 difficulty \u00d7 instructions).",
+        "properties": {
+          "duration_min": {
+            "anyOf": [
+              {
+                "enum": [
+                  30,
+                  45,
+                  60
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Min"
+          },
+          "existing_plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Plan"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "enum": [
+                  "5E",
+                  "gradual_release",
+                  "inquiry"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "grade": {
+            "anyOf": [
+              {
+                "maximum": 12.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              6
+            ],
+            "title": "Grade"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "enum": [
+                  "en",
+                  "ne",
+                  "en-ne"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "spec": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AssessmentSpec"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "Science"
+            ],
+            "title": "Subject"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "Components of Environment: Biotic and Abiotic"
+            ],
+            "title": "Topic"
+          }
+        },
+        "title": "ArtifactGenerateRequest",
+        "type": "object"
+      },
+      "ArtifactKind": {
+        "description": "The teaching artifacts compiled from one LDD.",
+        "enum": [
+          "lesson_plan",
+          "slides",
+          "worksheet",
+          "quiz"
+        ],
+        "title": "ArtifactKind",
+        "type": "string"
+      },
+      "AssessmentSpec": {
+        "description": "What the author wants: a list of per-type rows plus a retrieval scope.",
+        "properties": {
+          "explanations": {
+            "default": false,
+            "title": "Explanations",
+            "type": "boolean"
+          },
+          "scope": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "focused",
+              "section",
+              "chapter"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "types": {
+            "items": {
+              "$ref": "#/components/schemas/TypeSpec"
+            },
+            "minItems": 1,
+            "title": "Types",
+            "type": "array"
+          }
+        },
+        "required": [
+          "types"
+        ],
+        "title": "AssessmentSpec",
+        "type": "object"
+      },
+      "BloomLevel": {
+        "enum": [
+          "remember",
+          "understand",
+          "apply",
+          "analyze",
+          "evaluate",
+          "create"
+        ],
+        "title": "BloomLevel",
+        "type": "string"
+      },
+      "ChatDefaults": {
+        "description": "A conversation's default retrieval scope. The named fields are the common\ntags; ``tags`` carries any other metadata key the corpus uses, so a curator\ncan filter on fields we didn't anticipate \u2014 without a code change.",
+        "properties": {
+          "class": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Class"
+          },
+          "collections": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Collections"
+          },
+          "grade": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/FilterMode",
+            "default": "scoped"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "tags": {
+            "additionalProperties": true,
+            "title": "Tags",
+            "type": "object"
+          }
+        },
+        "title": "ChatDefaults",
+        "type": "object"
+      },
+      "ChatMessageRequest": {
+        "description": "A user turn. ``mode`` / ``filters`` override the conversation defaults for\nthis one message only (the two-modes control); omit to use the defaults.",
+        "properties": {
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters"
+          },
+          "message": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FilterMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "ChatMessageRequest",
+        "type": "object"
+      },
+      "CoherenceIssue": {
+        "description": "One cross-day problem found by the coherence pass.",
+        "properties": {
+          "day": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Day"
+          },
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "CoherenceIssue",
+        "type": "object"
+      },
+      "CoherenceReport": {
+        "description": "The deterministic arc-quality assessment of a unit (see the coherence pass).",
+        "properties": {
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/CoherenceIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "title": "CoherenceReport",
+        "type": "object"
+      },
+      "Collection": {
+        "description": "The v1 grounding collections (see SRD \u00a7 06). Each is an independent\nlogical corpus in the vector store; retrieval queries them by name.",
+        "enum": [
+          "curriculum",
+          "pedagogical",
+          "exemplar",
+          "local_context",
+          "reference"
+        ],
+        "title": "Collection",
+        "type": "string"
+      },
+      "Conversation": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "defaults": {
+            "$ref": "#/components/schemas/ChatDefaults"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "message_count": {
+            "default": 0,
+            "title": "Message Count",
+            "type": "integer"
+          },
+          "owner_id": {
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "summary": {
+            "default": "",
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "default": "New chat",
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "owner_id"
+        ],
+        "title": "Conversation",
+        "type": "object"
+      },
+      "CopiedDocument": {
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/StoredDocument"
+          },
+          "version_id": {
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "version_id"
+        ],
+        "title": "CopiedDocument",
+        "type": "object"
+      },
+      "CopyRequest": {
+        "properties": {
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "CopyRequest",
+        "type": "object"
+      },
+      "CorpusDeleteRequest": {
+        "properties": {
+          "ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "ids"
+        ],
+        "title": "CorpusDeleteRequest",
+        "type": "object"
+      },
+      "CorpusIngestRequest": {
+        "description": "Add/update grounding records in a collection. Each record is a JSONL-style\nobject (``text`` required; ``grade``/``subject``/``standard``/``language``/\n``topic``/``source`` optional). Idempotent: re-submitting the same text\nupdates the existing point instead of duplicating it.",
+        "properties": {
+          "collection": {
+            "$ref": "#/components/schemas/Collection"
+          },
+          "records": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 5000,
+            "minItems": 1,
+            "title": "Records",
+            "type": "array"
+          },
+          "space": {
+            "default": "global",
+            "description": "knowledge space: 'global' or 'school:<id>'",
+            "maxLength": 80,
+            "title": "Space",
+            "type": "string"
+          }
+        },
+        "required": [
+          "collection",
+          "records"
+        ],
+        "title": "CorpusIngestRequest",
+        "type": "object"
+      },
+      "CoverageReport": {
+        "description": "How completely a unit plan covers its chapter's syllabus.\n\n``topics`` is the chapter's full, in-order table of contents, enumerated from\nthe reference book's heading hierarchy (the grounding *outline*), so it is the\nreal curriculum, not the model's guess; ``gaps`` are the topics the plan\nappears to skip. Advisory \u2014 surfaced to the teacher so nothing is silently\ndropped, never enforced (matching generated topics against headings is\nlenient by design).",
+        "properties": {
+          "gaps": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Gaps",
+            "type": "array"
+          },
+          "source": {
+            "default": "",
+            "title": "Source",
+            "type": "string"
+          },
+          "topics": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Topics",
+            "type": "array"
+          }
+        },
+        "title": "CoverageReport",
+        "type": "object"
+      },
+      "CreateConversationRequest": {
+        "description": "The owner is always the authenticated caller \u2014 never a request field (D7).",
+        "properties": {
+          "defaults": {
+            "$ref": "#/components/schemas/ChatDefaults"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "CreateConversationRequest",
+        "type": "object"
+      },
+      "Critique": {
+        "description": "A scored assessment of one LDD: per-dimension scores, a weighted overall,\nand (optionally) targeted rewrite guidance per weak section.",
+        "properties": {
+          "notes": {
+            "default": "",
+            "title": "Notes",
+            "type": "string"
+          },
+          "overall": {
+            "default": 0.0,
+            "title": "Overall",
+            "type": "number"
+          },
+          "scores": {
+            "$ref": "#/components/schemas/RubricScores"
+          },
+          "suggestions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Suggestions",
+            "type": "object"
+          }
+        },
+        "required": [
+          "scores"
+        ],
+        "title": "Critique",
+        "type": "object"
+      },
+      "CurriculumRef": {
+        "properties": {
+          "board": {
+            "default": "CDC",
+            "enum": [
+              "CDC",
+              "NEB"
+            ],
+            "title": "Board",
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "grade",
+          "subject"
+        ],
+        "title": "CurriculumRef",
+        "type": "object"
+      },
+      "DayPlan": {
+        "description": "One day's slot in the unit spine \u2014 enough to expand it, not the full lesson.",
+        "properties": {
+          "builds_on": {
+            "default": "",
+            "title": "Builds On",
+            "type": "string"
+          },
+          "day": {
+            "minimum": 1.0,
+            "title": "Day",
+            "type": "integer"
+          },
+          "objective_seeds": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Objective Seeds",
+            "type": "array"
+          },
+          "sets_up": {
+            "default": "",
+            "title": "Sets Up",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "day",
+          "topic"
+        ],
+        "title": "DayPlan",
+        "type": "object"
+      },
+      "Differentiation": {
+        "properties": {
+          "advanced": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Advanced",
+            "type": "array"
+          },
+          "on_level": {
+            "items": {
+              "type": "string"
+            },
+            "title": "On Level",
+            "type": "array"
+          },
+          "struggling": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Struggling",
+            "type": "array"
+          }
+        },
+        "title": "Differentiation",
+        "type": "object"
+      },
+      "Difficulty": {
+        "enum": [
+          "easy",
+          "medium",
+          "hard"
+        ],
+        "title": "Difficulty",
+        "type": "string"
+      },
+      "DocumentIngestRequest": {
+        "description": "Ingest ONE whole document (a book chapter, an exemplar lesson) as raw text,\nsplit by a structure-aware chunker. Unlike the JSONL path (one record \u2192 one\nchunk), the chunker slices the document and \u2014 for ``markdown`` \u2014 preserves the\nheader hierarchy as ``heading_path`` metadata on every chunk.\n\n``chunker`` overrides the per-format default; ``params`` tune it\n(``max_chars``, ``min_chars``, ``split_levels``, ``prepend_breadcrumb``,\n``include_heading``). Optional ``---`` YAML front-matter in ``text`` is merged\ninto ``metadata`` (explicit ``metadata`` wins).",
+        "properties": {
+          "chunker": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunker"
+          },
+          "collection": {
+            "$ref": "#/components/schemas/Collection"
+          },
+          "format": {
+            "default": "markdown",
+            "title": "Format",
+            "type": "string"
+          },
+          "metadata": {
+            "additionalProperties": true,
+            "title": "Metadata",
+            "type": "object"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "space": {
+            "default": "global",
+            "description": "knowledge space: 'global' or 'school:<id>'",
+            "maxLength": 80,
+            "title": "Space",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 5000000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "collection",
+          "text"
+        ],
+        "title": "DocumentIngestRequest",
+        "type": "object"
+      },
+      "DocumentKind": {
+        "description": "What a stored document holds. ``lesson`` snapshots an LDD; ``unit`` (Phase 4)\nsnapshots a multi-day unit. The store is agnostic \u2014 the kind is metadata for\nlisting and for choosing how to rehydrate the snapshot.",
+        "enum": [
+          "lesson",
+          "unit"
+        ],
+        "title": "DocumentKind",
+        "type": "string"
+      },
+      "DocumentRefineRequest": {
+        "description": "Refine the current head of a stored lesson. When ``commit`` is true and the\nrefine succeeds, the accepted candidate is appended as a new ``refine`` version\n(with its instruction + diff recorded); otherwise it is only proposed.",
+        "properties": {
+          "commit": {
+            "default": false,
+            "title": "Commit",
+            "type": "boolean"
+          },
+          "instruction": {
+            "examples": [
+              "make the hook about the local river"
+            ],
+            "minLength": 1,
+            "title": "Instruction",
+            "type": "string"
+          },
+          "target": {
+            "examples": [
+              "engagement_hook"
+            ],
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target",
+          "instruction"
+        ],
+        "title": "DocumentRefineRequest",
+        "type": "object"
+      },
+      "DocumentRefineResponse": {
+        "description": "A refine outcome on a stored document; ``version_id`` is set only when the\nrefine was committed as a new version.",
+        "properties": {
+          "result": {
+            "$ref": "#/components/schemas/RefineResult"
+          },
+          "version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version Id"
+          }
+        },
+        "required": [
+          "result"
+        ],
+        "title": "DocumentRefineResponse",
+        "type": "object"
+      },
+      "DocumentVersionInfo": {
+        "description": "A version without its snapshot \u2014 what the history list returns (snapshots\nare whole lessons/units; listing never needs them).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "diff": {
+            "additionalProperties": true,
+            "title": "Diff",
+            "type": "object"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "grounding_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Grounding Sources",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "instruction": {
+            "default": "",
+            "title": "Instruction",
+            "type": "string"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/VersionOrigin"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "scores": {
+            "additionalProperties": true,
+            "title": "Scores",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "document_id",
+          "origin",
+          "created_at"
+        ],
+        "title": "DocumentVersionInfo",
+        "type": "object"
+      },
+      "DocumentView": {
+        "description": "A stored document plus the LDD content at the requested version.",
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/StoredDocument"
+          },
+          "ldd": {
+            "$ref": "#/components/schemas/LessonDesignDocument"
+          }
+        },
+        "required": [
+          "document",
+          "ldd"
+        ],
+        "title": "DocumentView",
+        "type": "object"
+      },
+      "FilterMode": {
+        "description": "The two retrieval modes. ``scoped`` applies the conversation's default tag\nfilters (grade/subject/class/\u2026); ``broad`` ignores them and searches the\nwhole corpus. A message may override the conversation default with either.",
+        "enum": [
+          "scoped",
+          "broad"
+        ],
+        "title": "FilterMode",
+        "type": "string"
+      },
+      "GenerateRequest": {
+        "description": "A generation request. ``topic`` may be omitted when ``existing_plan`` is\nsupplied \u2014 intake extracts it from the pasted plan (US-3).",
+        "properties": {
+          "duration_min": {
+            "anyOf": [
+              {
+                "enum": [
+                  30,
+                  45,
+                  60
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Min"
+          },
+          "existing_plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Plan"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "enum": [
+                  "5E",
+                  "gradual_release",
+                  "inquiry"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "grade": {
+            "anyOf": [
+              {
+                "maximum": 12.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              6
+            ],
+            "title": "Grade"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "enum": [
+                  "en",
+                  "ne",
+                  "en-ne"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "Science"
+            ],
+            "title": "Subject"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "Components of Environment: Biotic and Abiotic"
+            ],
+            "title": "Topic"
+          }
+        },
+        "title": "GenerateRequest",
+        "type": "object"
+      },
+      "GenerateUnitRequest": {
+        "description": "Plan-and-expand a multi-day unit AND persist it. Adds a title to the unit\nrequest (the owner is always the caller). When ``plan`` is supplied (a\nteacher-edited spine from ``/units/plan``) the planner is skipped and that exact\narc is expanded, so edits to the spine actually drive generation.",
+        "properties": {
+          "duration_min": {
+            "default": 45,
+            "title": "Duration Min",
+            "type": "integer"
+          },
+          "framework": {
+            "default": "5E",
+            "title": "Framework",
+            "type": "string"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "language": {
+            "default": "en-ne",
+            "title": "Language",
+            "type": "string"
+          },
+          "num_days": {
+            "default": 5,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Num Days",
+            "type": "integer"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UnitPlan"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "grade",
+          "subject"
+        ],
+        "title": "GenerateUnitRequest",
+        "type": "object"
+      },
+      "GroundingPreviewRequest": {
+        "description": "Inspect what grounding a topic retrieves \u2014 the same deterministic retrieval\ngeneration uses \u2014 so the UI can show WHICH chunks (and their heading hierarchy)\na lesson is grounded in, without re-running the LLM or quoting the text.",
+        "properties": {
+          "framework": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "grade": {
+            "anyOf": [
+              {
+                "maximum": 12.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "topic": {
+            "examples": [
+              "Electricity and Magnetism"
+            ],
+            "minLength": 1,
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic"
+        ],
+        "title": "GroundingPreviewRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "Homework": {
+        "properties": {
+          "instructions": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Instructions",
+            "type": "array"
+          },
+          "objective_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Objective Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "instructions"
+        ],
+        "title": "Homework",
+        "type": "object"
+      },
+      "Hook": {
+        "description": "Engagement move. Must be a scenario/question, never a definition.",
+        "properties": {
+          "kind": {
+            "default": "question",
+            "enum": [
+              "scenario",
+              "question",
+              "prediction",
+              "demonstration"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "Hook",
+        "type": "object"
+      },
+      "LessonAssessmentRequest": {
+        "description": "Build a quiz/worksheet FROM a lesson. ``ldd`` is the lesson as the teacher has\nit now (possibly edited and unsaved) \u2014 its objectives become the assessment's.",
+        "properties": {
+          "ldd": {
+            "$ref": "#/components/schemas/LessonDesignDocument"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/AssessmentSpec"
+          }
+        },
+        "required": [
+          "ldd",
+          "spec"
+        ],
+        "title": "LessonAssessmentRequest",
+        "type": "object"
+      },
+      "LessonDesignDocument": {
+        "properties": {
+          "curriculum_ref": {
+            "$ref": "#/components/schemas/CurriculumRef"
+          },
+          "differentiation": {
+            "$ref": "#/components/schemas/Differentiation"
+          },
+          "duration_min": {
+            "enum": [
+              30,
+              45,
+              60
+            ],
+            "title": "Duration Min",
+            "type": "integer"
+          },
+          "engagement_hook": {
+            "$ref": "#/components/schemas/Hook"
+          },
+          "formative_checks": {
+            "items": {
+              "$ref": "#/components/schemas/Question"
+            },
+            "title": "Formative Checks",
+            "type": "array"
+          },
+          "framework": {
+            "default": "5E",
+            "enum": [
+              "5E",
+              "gradual_release",
+              "inquiry"
+            ],
+            "title": "Framework",
+            "type": "string"
+          },
+          "homework": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Homework"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "language": {
+            "default": "en-ne",
+            "enum": [
+              "en",
+              "ne",
+              "en-ne"
+            ],
+            "title": "Language",
+            "type": "string"
+          },
+          "local_context": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Local Context",
+            "type": "array"
+          },
+          "materials": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Materials",
+            "type": "array"
+          },
+          "misconceptions": {
+            "items": {
+              "$ref": "#/components/schemas/Misconception"
+            },
+            "title": "Misconceptions",
+            "type": "array"
+          },
+          "objectives": {
+            "items": {
+              "$ref": "#/components/schemas/Objective"
+            },
+            "minItems": 1,
+            "title": "Objectives",
+            "type": "array"
+          },
+          "phases": {
+            "items": {
+              "$ref": "#/components/schemas/Phase"
+            },
+            "minItems": 1,
+            "title": "Phases",
+            "type": "array"
+          },
+          "prior_knowledge": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Prior Knowledge",
+            "type": "array"
+          },
+          "quality": {
+            "$ref": "#/components/schemas/QualityReport"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "curriculum_ref",
+          "duration_min",
+          "objectives",
+          "engagement_hook",
+          "phases"
+        ],
+        "title": "LessonDesignDocument",
+        "type": "object"
+      },
+      "MatchPair": {
+        "properties": {
+          "left": {
+            "title": "Left",
+            "type": "string"
+          },
+          "right": {
+            "title": "Right",
+            "type": "string"
+          }
+        },
+        "required": [
+          "left",
+          "right"
+        ],
+        "title": "MatchPair",
+        "type": "object"
+      },
+      "Misconception": {
+        "properties": {
+          "correction": {
+            "title": "Correction",
+            "type": "string"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "statement",
+          "correction"
+        ],
+        "title": "Misconception",
+        "type": "object"
+      },
+      "NormalizedBrief": {
+        "description": "Output of the intake stage; input to enrichment.",
+        "properties": {
+          "duration_min": {
+            "default": 45,
+            "enum": [
+              30,
+              45,
+              60
+            ],
+            "title": "Duration Min",
+            "type": "integer"
+          },
+          "existing_plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Plan"
+          },
+          "framework": {
+            "default": "5E",
+            "enum": [
+              "5E",
+              "gradual_release",
+              "inquiry"
+            ],
+            "title": "Framework",
+            "type": "string"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "language": {
+            "default": "en-ne",
+            "enum": [
+              "en",
+              "ne",
+              "en-ne"
+            ],
+            "title": "Language",
+            "type": "string"
+          },
+          "local_anchors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Local Anchors",
+            "type": "array"
+          },
+          "style_notes": {
+            "default": "",
+            "title": "Style Notes",
+            "type": "string"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          },
+          "unit_context": {
+            "default": "",
+            "title": "Unit Context",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "grade",
+          "subject"
+        ],
+        "title": "NormalizedBrief",
+        "type": "object"
+      },
+      "Objective": {
+        "properties": {
+          "bloom": {
+            "$ref": "#/components/schemas/BloomLevel"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "statement",
+          "bloom"
+        ],
+        "title": "Objective",
+        "type": "object"
+      },
+      "PageOut_Conversation_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/Conversation"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "PageOut[Conversation]",
+        "type": "object"
+      },
+      "PageOut_DocumentVersionInfo_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentVersionInfo"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "PageOut[DocumentVersionInfo]",
+        "type": "object"
+      },
+      "PageOut_StoredDocument_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/StoredDocument"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "PageOut[StoredDocument]",
+        "type": "object"
+      },
+      "Phase": {
+        "properties": {
+          "minutes": {
+            "exclusiveMinimum": 0.0,
+            "title": "Minutes",
+            "type": "integer"
+          },
+          "name_en": {
+            "title": "Name En",
+            "type": "string"
+          },
+          "name_ne": {
+            "default": "",
+            "title": "Name Ne",
+            "type": "string"
+          },
+          "objective_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Objective Ids",
+            "type": "array"
+          },
+          "student_activities": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Student Activities",
+            "type": "array"
+          },
+          "teacher_activities": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Teacher Activities",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name_en",
+          "teacher_activities",
+          "student_activities",
+          "minutes"
+        ],
+        "title": "Phase",
+        "type": "object"
+      },
+      "PlanResponse": {
+        "description": "The unit spine plus its syllabus-coverage report, so the preview can show\nwhether the arc covers every chapter topic before the teacher expands it.",
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/CoverageReport"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/UnitPlan"
+          }
+        },
+        "required": [
+          "plan",
+          "coverage"
+        ],
+        "title": "PlanResponse",
+        "type": "object"
+      },
+      "QualityReport": {
+        "properties": {
+          "adjustments": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Adjustments",
+            "type": "array"
+          },
+          "alignment": {
+            "default": 0.0,
+            "title": "Alignment",
+            "type": "number"
+          },
+          "engagement": {
+            "default": 0.0,
+            "title": "Engagement",
+            "type": "number"
+          },
+          "grounding_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Grounding Sources",
+            "type": "array"
+          },
+          "local_relevance": {
+            "default": 0.0,
+            "title": "Local Relevance",
+            "type": "number"
+          },
+          "misconception_coverage": {
+            "default": 0.0,
+            "title": "Misconception Coverage",
+            "type": "number"
+          },
+          "notes": {
+            "default": "",
+            "title": "Notes",
+            "type": "string"
+          },
+          "specificity": {
+            "default": 0.0,
+            "title": "Specificity",
+            "type": "number"
+          }
+        },
+        "title": "QualityReport",
+        "type": "object"
+      },
+      "Question": {
+        "properties": {
+          "answer": {
+            "default": "",
+            "title": "Answer",
+            "type": "string"
+          },
+          "difficulty": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Difficulty"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "explanation": {
+            "default": "",
+            "title": "Explanation",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "key_points": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Key Points",
+            "type": "array"
+          },
+          "marks": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marks"
+          },
+          "objective_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Objective Ids",
+            "type": "array"
+          },
+          "options": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Options"
+          },
+          "pairs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/MatchPair"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pairs"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/QuestionType"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "prompt",
+          "objective_ids"
+        ],
+        "title": "Question",
+        "type": "object"
+      },
+      "QuestionType": {
+        "enum": [
+          "mcq",
+          "true_false",
+          "short_answer",
+          "fill_blank",
+          "matching",
+          "long_answer",
+          "numerical",
+          "ordering"
+        ],
+        "title": "QuestionType",
+        "type": "string"
+      },
+      "RefineLessonRequest": {
+        "description": "Reprompt one section of a lesson. ``ldd`` is the current (possibly already\nhand-edited) lesson; ``target`` names the section to improve (or ``\"*\"`` for\nthe whole lesson); ``instruction`` is the teacher's free-text intent.",
+        "properties": {
+          "instruction": {
+            "examples": [
+              "make the hook about the local river"
+            ],
+            "minLength": 1,
+            "title": "Instruction",
+            "type": "string"
+          },
+          "ldd": {
+            "$ref": "#/components/schemas/LessonDesignDocument"
+          },
+          "target": {
+            "examples": [
+              "engagement_hook"
+            ],
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ldd",
+          "target",
+          "instruction"
+        ],
+        "title": "RefineLessonRequest",
+        "type": "object"
+      },
+      "RefineResult": {
+        "description": "The outcome of one reprompt \u2014 a *proposal*, not a mutation.\n\nOn success ``ok`` is true, ``candidate`` holds the improved (re-validated) LDD,\n``diff`` maps each changed section to its before/after, and ``score_after``\nlets the UI show the quality delta. On failure ``ok`` is false, ``candidate``\nis ``None``, and ``errors`` explains why (a malformed section, or a coupling\nthe change would break that the bounded cascade could not repair).",
+        "properties": {
+          "applied": {
+            "default": false,
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "candidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LessonDesignDocument"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cascaded": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Cascaded",
+            "type": "array"
+          },
+          "diff": {
+            "additionalProperties": true,
+            "title": "Diff",
+            "type": "object"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "instruction": {
+            "title": "Instruction",
+            "type": "string"
+          },
+          "notes": {
+            "default": "",
+            "title": "Notes",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "score_after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RubricScores"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "score_before": {
+            "$ref": "#/components/schemas/RubricScores"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "target",
+          "instruction"
+        ],
+        "title": "RefineResult",
+        "type": "object"
+      },
+      "RubricScores": {
+        "description": "One score per rubric dimension, each in ``[0, 1]``.",
+        "properties": {
+          "alignment": {
+            "default": 0.0,
+            "title": "Alignment",
+            "type": "number"
+          },
+          "engagement": {
+            "default": 0.0,
+            "title": "Engagement",
+            "type": "number"
+          },
+          "local_relevance": {
+            "default": 0.0,
+            "title": "Local Relevance",
+            "type": "number"
+          },
+          "misconception_coverage": {
+            "default": 0.0,
+            "title": "Misconception Coverage",
+            "type": "number"
+          },
+          "specificity": {
+            "default": 0.0,
+            "title": "Specificity",
+            "type": "number"
+          }
+        },
+        "title": "RubricScores",
+        "type": "object"
+      },
+      "SaveLessonRequest": {
+        "description": "Generate a lesson AND persist it as a new document with its first version.\nAdds a title to the generation request; the owner is always the caller.",
+        "properties": {
+          "duration_min": {
+            "anyOf": [
+              {
+                "enum": [
+                  30,
+                  45,
+                  60
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Min"
+          },
+          "existing_plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Existing Plan"
+          },
+          "framework": {
+            "anyOf": [
+              {
+                "enum": [
+                  "5E",
+                  "gradual_release",
+                  "inquiry"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Framework"
+          },
+          "grade": {
+            "anyOf": [
+              {
+                "maximum": 12.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              6
+            ],
+            "title": "Grade"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "enum": [
+                  "en",
+                  "ne",
+                  "en-ne"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "Science"
+            ],
+            "title": "Subject"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "examples": [
+              "Components of Environment: Biotic and Abiotic"
+            ],
+            "title": "Topic"
+          }
+        },
+        "title": "SaveLessonRequest",
+        "type": "object"
+      },
+      "SavedLesson": {
+        "description": "The result of persisting a generated lesson.",
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/StoredDocument"
+          },
+          "ldd": {
+            "$ref": "#/components/schemas/LessonDesignDocument"
+          },
+          "version_id": {
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "version_id",
+          "ldd"
+        ],
+        "title": "SavedLesson",
+        "type": "object"
+      },
+      "SavedUnit": {
+        "description": "The result of persisting a generated (or regenerated) unit.",
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/StoredDocument"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/UnitDesignDocument"
+          },
+          "version_id": {
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "version_id",
+          "unit"
+        ],
+        "title": "SavedUnit",
+        "type": "object"
+      },
+      "StoredDocument": {
+        "description": "The document header: identity, ownership, and a pointer to the current\nversion. The content lives in the versions; this row is what ``list`` returns\nand what the head pointer moves over on undo.",
+        "properties": {
+          "copied_from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Copied From"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "grade": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grade"
+          },
+          "head_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Head Version Id"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/DocumentKind",
+            "default": "lesson"
+          },
+          "owner_id": {
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "owner_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Name"
+          },
+          "shared_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shared At"
+          },
+          "subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subject"
+          },
+          "tenant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tenant Id"
+          },
+          "title": {
+            "default": "Untitled",
+            "title": "Title",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "visibility": {
+            "$ref": "#/components/schemas/Visibility",
+            "default": "private"
+          }
+        },
+        "required": [
+          "owner_id"
+        ],
+        "title": "StoredDocument",
+        "type": "object"
+      },
+      "TeacherProfile": {
+        "description": "A teacher's stored preferences. All fields optional so an empty profile is\nvalid and simply contributes nothing.",
+        "properties": {
+          "default_duration_min": {
+            "anyOf": [
+              {
+                "enum": [
+                  30,
+                  45,
+                  60
+                ],
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Duration Min"
+          },
+          "default_framework": {
+            "anyOf": [
+              {
+                "enum": [
+                  "5E",
+                  "gradual_release",
+                  "inquiry"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Framework"
+          },
+          "default_grade": {
+            "anyOf": [
+              {
+                "maximum": 12.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Grade"
+          },
+          "default_language": {
+            "anyOf": [
+              {
+                "enum": [
+                  "en",
+                  "ne",
+                  "en-ne"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Language"
+          },
+          "default_subject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Subject"
+          },
+          "local_anchors": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Local Anchors",
+            "type": "array"
+          },
+          "owner_id": {
+            "default": "",
+            "title": "Owner Id",
+            "type": "string"
+          },
+          "school": {
+            "default": "",
+            "maxLength": 200,
+            "title": "School",
+            "type": "string"
+          },
+          "style_notes": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Style Notes",
+            "type": "string"
+          },
+          "teacher_name": {
+            "default": "",
+            "maxLength": 120,
+            "title": "Teacher Name",
+            "type": "string"
+          }
+        },
+        "title": "TeacherProfile",
+        "type": "object"
+      },
+      "TypeSpec": {
+        "description": "One row of the blueprint: ``count`` questions of ``type`` at ``difficulty``.",
+        "properties": {
+          "count": {
+            "maximum": 25.0,
+            "minimum": 1.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "difficulty": {
+            "default": "mixed",
+            "enum": [
+              "easy",
+              "medium",
+              "hard",
+              "mixed"
+            ],
+            "title": "Difficulty",
+            "type": "string"
+          },
+          "instruction": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Instruction",
+            "type": "string"
+          },
+          "marks_each": {
+            "anyOf": [
+              {
+                "maximum": 50.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Marks Each"
+          },
+          "type": {
+            "$ref": "#/components/schemas/QuestionType"
+          }
+        },
+        "required": [
+          "type",
+          "count"
+        ],
+        "title": "TypeSpec",
+        "type": "object"
+      },
+      "UnitAssessmentRequest": {
+        "description": "Build a quiz/worksheet FROM a saved unit: ``days`` (1-based; omit for every\nday) picks which days' objectives it covers.",
+        "properties": {
+          "days": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "integer"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Days"
+          },
+          "spec": {
+            "$ref": "#/components/schemas/AssessmentSpec"
+          }
+        },
+        "required": [
+          "spec"
+        ],
+        "title": "UnitAssessmentRequest",
+        "type": "object"
+      },
+      "UnitDesignDocument": {
+        "description": "A whole unit: its framing, the spine it was expanded from, and the per-day\nlessons. Cross-day invariants only \u2014 each day's own guardrails live on the LDD.",
+        "properties": {
+          "big_idea": {
+            "default": "",
+            "title": "Big Idea",
+            "type": "string"
+          },
+          "coherence": {
+            "$ref": "#/components/schemas/CoherenceReport"
+          },
+          "curriculum_ref": {
+            "$ref": "#/components/schemas/CurriculumRef"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/LessonDesignDocument"
+            },
+            "minItems": 1,
+            "title": "Days",
+            "type": "array"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/UnitPlan"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit_outcomes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unit Outcomes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "title",
+          "curriculum_ref",
+          "plan",
+          "days"
+        ],
+        "title": "UnitDesignDocument",
+        "type": "object"
+      },
+      "UnitPlan": {
+        "description": "The teacher-reviewable spine produced before any expensive expansion. Small\nenough to regenerate cheaply and to eyeball for arc quality.",
+        "properties": {
+          "big_idea": {
+            "default": "",
+            "title": "Big Idea",
+            "type": "string"
+          },
+          "curriculum_ref": {
+            "$ref": "#/components/schemas/CurriculumRef"
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/DayPlan"
+            },
+            "minItems": 1,
+            "title": "Days",
+            "type": "array"
+          },
+          "thread": {
+            "default": "",
+            "title": "Thread",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "unit_outcomes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unit Outcomes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "title",
+          "curriculum_ref",
+          "days"
+        ],
+        "title": "UnitPlan",
+        "type": "object"
+      },
+      "UnitRequest": {
+        "description": "Raw input to the unit pipeline: a chapter/topic to spread across N days.",
+        "properties": {
+          "duration_min": {
+            "default": 45,
+            "title": "Duration Min",
+            "type": "integer"
+          },
+          "framework": {
+            "default": "5E",
+            "title": "Framework",
+            "type": "string"
+          },
+          "grade": {
+            "title": "Grade",
+            "type": "integer"
+          },
+          "language": {
+            "default": "en-ne",
+            "title": "Language",
+            "type": "string"
+          },
+          "num_days": {
+            "default": 5,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Num Days",
+            "type": "integer"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "topic": {
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic",
+          "grade",
+          "subject"
+        ],
+        "title": "UnitRequest",
+        "type": "object"
+      },
+      "UnitView": {
+        "description": "A stored unit plus its content at the requested version.",
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/StoredDocument"
+          },
+          "unit": {
+            "$ref": "#/components/schemas/UnitDesignDocument"
+          }
+        },
+        "required": [
+          "document",
+          "unit"
+        ],
+        "title": "UnitView",
+        "type": "object"
+      },
+      "UpdateConversationRequest": {
+        "description": "Partial update: any field left ``None`` is untouched.",
+        "properties": {
+          "defaults": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChatDefaults"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "UpdateConversationRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "ValidationResult": {
+        "description": "Result of validating an edited LDD before export. Returned with HTTP 200\neven when invalid, so the editor UI can render field-level errors inline\nrather than treating a normal editing state as a request failure.",
+        "properties": {
+          "errors": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid"
+        ],
+        "title": "ValidationResult",
+        "type": "object"
+      },
+      "VersionOrigin": {
+        "description": "What produced a version \u2014 the audit trail's verb.",
+        "enum": [
+          "generate",
+          "refine",
+          "manual",
+          "copy"
+        ],
+        "title": "VersionOrigin",
+        "type": "string"
+      },
+      "Visibility": {
+        "description": "Who besides the owner may read a document (\u00a717). Sharing is read + copy\nonly; every write stays owner-only.",
+        "enum": [
+          "private",
+          "school"
+        ],
+        "title": "Visibility",
+        "type": "string"
+      },
+      "VisibilityRequest": {
+        "description": "Share a plan with the caller's school (read + copy only) or make it private.",
+        "properties": {
+          "visibility": {
+            "$ref": "#/components/schemas/Visibility"
+          }
+        },
+        "required": [
+          "visibility"
+        ],
+        "title": "VisibilityRequest",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "summary": "AI that thinks like an experienced teacher.",
+    "title": "LessonForge \u2014 AI Lesson Plan Creator",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/artifacts/manifest": {
+      "get": {
+        "description": "Which artifacts can be generated standalone, and in which export formats.",
+        "operationId": "artifacts_manifest_api_v1_artifacts_manifest_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Artifacts Manifest Api V1 Artifacts Manifest Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Artifacts Manifest",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/api/v1/artifacts/question-types": {
+      "get": {
+        "description": "The question-type catalogue the quiz/worksheet builder renders from.",
+        "operationId": "question_types_api_v1_artifacts_question_types_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Question Types Api V1 Artifacts Question Types Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Question Types",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/api/v1/artifacts/retrieval-plan": {
+      "post": {
+        "description": "How a blueprint will be grounded \u2014 free; no LLM.",
+        "operationId": "retrieval_plan_api_v1_artifacts_retrieval_plan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssessmentSpec"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Retrieval Plan Api V1 Artifacts Retrieval Plan Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retrieval Plan",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/api/v1/artifacts/{kind}/export": {
+      "post": {
+        "description": "Render a standalone artifact IR (possibly hand-edited) into a file.",
+        "operationId": "export_generated_artifact_api_v1_artifacts__kind__export_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactKind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fmt",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 16,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Fmt"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Generated Artifact",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/api/v1/artifacts/{kind}/from-lesson": {
+      "post": {
+        "description": "A quiz/worksheet for ONE lesson, reusing its objectives.",
+        "operationId": "assessment_from_lesson_api_v1_artifacts__kind__from_lesson_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactKind"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonAssessmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Assessment From Lesson",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/api/v1/artifacts/{kind}/generate": {
+      "post": {
+        "description": "Generate a single artifact straight from a brief; returns the editable IR.",
+        "operationId": "generate_artifact_api_v1_artifacts__kind__generate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactKind"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Artifact",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/api/v1/artifacts/{kind}/refine": {
+      "post": {
+        "description": "Reprompt one part of an artifact (or \"*\") and PROPOSE an improved IR.",
+        "operationId": "refine_artifact_api_v1_artifacts__kind__refine_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactKind"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refine Artifact",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/api/v1/artifacts/{kind}/refine/targets": {
+      "get": {
+        "description": "The reprompt-able parts of an artifact and their edit blast radius.",
+        "operationId": "artifact_refine_targets_api_v1_artifacts__kind__refine_targets_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactKind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Artifact Refine Targets Api V1 Artifacts  Kind  Refine Targets Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Artifact Refine Targets",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/api/v1/chat/artifacts/{artifact_id}": {
+      "delete": {
+        "operationId": "delete_chat_artifact_api_v1_chat_artifacts__artifact_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Delete Chat Artifact Api V1 Chat Artifacts  Artifact Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Chat Artifact",
+        "tags": [
+          "chat"
+        ]
+      },
+      "get": {
+        "description": "The artifact as the PLAYER sees it \u2014 questions and choices, never answers.",
+        "operationId": "get_chat_artifact_api_v1_chat_artifacts__artifact_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Chat Artifact",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/artifacts/{artifact_id}/attempts": {
+      "post": {
+        "description": "Begin a new play-through (a quiz can be retaken any number of times).",
+        "operationId": "start_attempt_api_v1_chat_artifacts__artifact_id__attempts_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Attempt",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/artifacts/{artifact_id}/export": {
+      "post": {
+        "description": "Download the quiz as a printable file.",
+        "operationId": "export_chat_quiz_api_v1_chat_artifacts__artifact_id__export_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "artifact_id",
+            "required": true,
+            "schema": {
+              "title": "Artifact Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "fmt",
+            "required": false,
+            "schema": {
+              "default": "docx",
+              "maxLength": 16,
+              "title": "Fmt",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Chat Quiz",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/attempts/{attempt_id}": {
+      "get": {
+        "operationId": "get_attempt_review_api_v1_chat_attempts__attempt_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Attempt Review",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/attempts/{attempt_id}/answer": {
+      "post": {
+        "description": "Grade one answer on the server and reveal the right answer + explanation.",
+        "operationId": "answer_question_api_v1_chat_attempts__attempt_id__answer_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Answer Question",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/attempts/{attempt_id}/finish": {
+      "post": {
+        "description": "End the attempt now (unanswered = missed) and return the full review.",
+        "operationId": "finish_attempt_api_v1_chat_attempts__attempt_id__finish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Finish Attempt",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/attempts/{attempt_id}/retry-missed": {
+      "post": {
+        "description": "A new quiz of just the questions this attempt got wrong (no LLM).",
+        "operationId": "retry_missed_api_v1_chat_attempts__attempt_id__retry_missed_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "attempt_id",
+            "required": true,
+            "schema": {
+              "title": "Attempt Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Missed",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/config": {
+      "get": {
+        "description": "What the chat UI needs to render its controls, including the caller's scope\nmode and the defaults their context pre-fills.",
+        "operationId": "chat_config_api_v1_chat_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Chat Config Api V1 Chat Config Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Chat Config",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/conversations": {
+      "get": {
+        "description": "The caller's conversations, most recently updated first.",
+        "operationId": "list_conversations_api_v1_chat_conversations_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut_Conversation_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Conversations",
+        "tags": [
+          "chat"
+        ]
+      },
+      "post": {
+        "description": "Start a conversation. Its default retrieval scope is pre-filled (or locked)\nfrom the caller's context by ScopePolicy.",
+        "operationId": "create_conversation_api_v1_chat_conversations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConversationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Conversation",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/conversations/{conversation_id}": {
+      "delete": {
+        "operationId": "delete_conversation_api_v1_chat_conversations__conversation_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Delete Conversation Api V1 Chat Conversations  Conversation Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Conversation",
+        "tags": [
+          "chat"
+        ]
+      },
+      "get": {
+        "description": "A conversation with its full history and the artifacts its turns produced\n(attempt summaries loaded in one query).",
+        "operationId": "get_conversation_api_v1_chat_conversations__conversation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Get Conversation Api V1 Chat Conversations  Conversation Id  Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Conversation",
+        "tags": [
+          "chat"
+        ]
+      },
+      "patch": {
+        "description": "Rename and/or change the default scope (still constrained by ScopePolicy).",
+        "operationId": "update_conversation_api_v1_chat_conversations__conversation_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConversationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Conversation"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Conversation",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/conversations/{conversation_id}/message": {
+      "post": {
+        "description": "Ask a question and stream the answer as Server-Sent Events (see\ndocs/CHAT_EVENTS.md). ``mode``/``filters`` override the conversation's default\nscope for this message \u2014 unless the caller's scope is ``locked``.",
+        "operationId": "send_message_api_v1_chat_conversations__conversation_id__message_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Send Message",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/corpus/chunkers": {
+      "get": {
+        "description": "The chunkers available for document ingest and the per-format defaults.",
+        "operationId": "corpus_chunkers_api_v1_corpus_chunkers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Corpus Chunkers Api V1 Corpus Chunkers Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Corpus Chunkers",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/api/v1/corpus/collections/{name}/delete": {
+      "post": {
+        "description": "Delete records by id \u2014 only those in spaces the caller may write.",
+        "operationId": "corpus_delete_api_v1_corpus_collections__name__delete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Collection"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorpusDeleteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Corpus Delete Api V1 Corpus Collections  Name  Delete Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Corpus Delete",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/api/v1/corpus/collections/{name}/records": {
+      "get": {
+        "description": "Page through one collection's records (read-only browse).",
+        "operationId": "corpus_records_api_v1_corpus_collections__name__records_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Collection"
+            }
+          },
+          {
+            "in": "query",
+            "name": "space",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Space"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "opaque next-page token",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 256,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "opaque next-page token",
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Corpus Records Api V1 Corpus Collections  Name  Records Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Corpus Records",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/api/v1/corpus/ingest": {
+      "post": {
+        "description": "Add or update grounding records in a space. Idempotent per space.",
+        "operationId": "corpus_ingest_api_v1_corpus_ingest_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CorpusIngestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Corpus Ingest Api V1 Corpus Ingest Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Corpus Ingest",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/api/v1/corpus/ingest/document": {
+      "post": {
+        "description": "Ingest one whole document with a structure-aware chunker into a space.",
+        "operationId": "corpus_ingest_document_api_v1_corpus_ingest_document_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentIngestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Corpus Ingest Document Api V1 Corpus Ingest Document Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Corpus Ingest Document",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/api/v1/corpus/overview": {
+      "get": {
+        "description": "Every collection with its description and live count (within ``space``, or\neverything the caller can read).",
+        "operationId": "corpus_overview_api_v1_corpus_overview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "space",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Space"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Corpus Overview Api V1 Corpus Overview Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Corpus Overview",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/api/v1/corpus/preview": {
+      "post": {
+        "description": "Dry-run: split a document and return the chunks WITHOUT storing anything.",
+        "operationId": "corpus_preview_api_v1_corpus_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentIngestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Corpus Preview Api V1 Corpus Preview Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Corpus Preview",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/api/v1/corpus/sources": {
+      "get": {
+        "description": "Ingested documents (the corpus record book), newest first.",
+        "operationId": "corpus_sources_api_v1_corpus_sources_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "space",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Space"
+            }
+          },
+          {
+            "in": "query",
+            "name": "collection",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Collection"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Collection"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "maximum": 100000,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Corpus Sources Api V1 Corpus Sources Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Corpus Sources",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/api/v1/corpus/sources/{collection}/{doc_id}": {
+      "delete": {
+        "description": "Remove one ingested document: its chunks and its record-book row.",
+        "operationId": "corpus_delete_source_api_v1_corpus_sources__collection___doc_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Collection"
+            }
+          },
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "title": "Doc Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "space",
+            "required": false,
+            "schema": {
+              "default": "global",
+              "maxLength": 80,
+              "title": "Space",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Corpus Delete Source Api V1 Corpus Sources  Collection   Doc Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Corpus Delete Source",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/api/v1/corpus/spaces": {
+      "get": {
+        "description": "The knowledge spaces the caller can read, and which they can write.",
+        "operationId": "corpus_spaces_api_v1_corpus_spaces_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Corpus Spaces Api V1 Corpus Spaces Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Corpus Spaces",
+        "tags": [
+          "corpus"
+        ]
+      }
+    },
+    "/api/v1/documents": {
+      "get": {
+        "description": "``mine``: the caller's documents, most recently updated first. ``school``:\nplans colleagues shared with the caller's school, newest share first.",
+        "operationId": "list_documents_api_v1_documents_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "default": "mine",
+              "enum": [
+                "mine",
+                "school"
+              ],
+              "title": "Scope",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/DocumentKind"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "grade",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 12,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Grade"
+            }
+          },
+          {
+            "in": "query",
+            "name": "subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 120,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subject"
+            }
+          },
+          {
+            "description": "title contains (school scope)",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 120,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "title contains (school scope)",
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut_StoredDocument_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Documents",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/documents/lessons": {
+      "post": {
+        "description": "Generate a lesson through the full pipeline and persist it as a new document\nwith its first (``generate``) version.",
+        "operationId": "create_lesson_document_api_v1_documents_lessons_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveLessonRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedLesson"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Lesson Document",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}": {
+      "delete": {
+        "description": "Delete a document and its entire history (owner only). Colleagues' copies live on.",
+        "operationId": "delete_document_api_v1_documents__document_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Delete Document Api V1 Documents  Document Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Document",
+        "tags": [
+          "documents"
+        ]
+      },
+      "get": {
+        "operationId": "get_document_api_v1_documents__document_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "a version id; default = head",
+            "in": "query",
+            "name": "version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "a version id; default = head",
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Document",
+        "tags": [
+          "documents"
+        ]
+      },
+      "patch": {
+        "description": "Share with the caller's school (colleagues may read and copy, never edit) or\nmake private again (removed from colleagues' lists immediately).",
+        "operationId": "set_document_visibility_api_v1_documents__document_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VisibilityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoredDocument"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Document Visibility",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}/copy": {
+      "post": {
+        "description": "Copy a plan you can read into a new private document of your own.",
+        "operationId": "copy_document_api_v1_documents__document_id__copy_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/CopyRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopiedDocument"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Copy Document",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}/manual": {
+      "post": {
+        "description": "Persist a teacher's direct edit as a new ``manual`` version (owner only).",
+        "operationId": "commit_manual_edit_api_v1_documents__document_id__manual_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonDesignDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedLesson"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Commit Manual Edit",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}/redo": {
+      "post": {
+        "description": "Move the head forward again after an undo. 409 when there is no child.",
+        "operationId": "redo_document_api_v1_documents__document_id__redo_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoredDocument"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Redo Document",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}/refine": {
+      "post": {
+        "description": "Refine the head lesson (owner only). Proposes by default; with\n``commit=true`` an accepted refine is appended as a new version.",
+        "operationId": "refine_document_api_v1_documents__document_id__refine_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentRefineRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentRefineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refine Document",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}/undo": {
+      "post": {
+        "description": "Move the head back to the previous version. 409 at the root.",
+        "operationId": "undo_document_api_v1_documents__document_id__undo_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoredDocument"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Undo Document",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/documents/{document_id}/versions": {
+      "get": {
+        "description": "The full edit history, oldest first, without snapshots (fetch one version\nwith ``GET /documents/{id}?version=``).",
+        "operationId": "document_versions_api_v1_documents__document_id__versions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PageOut_DocumentVersionInfo_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Document Versions",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/events": {
+      "get": {
+        "description": "Raw, incremental, replayable: store ``next_cursor`` and poll with\n``after=<it>``. The cursor is the event id, so the feed is gap-free.",
+        "operationId": "events_feed_api_v1_events_get",
+        "parameters": [
+          {
+            "description": "cursor (event id)",
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": "0",
+              "description": "cursor (event id)",
+              "maxLength": 20,
+              "title": "After",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "comma-separated event types",
+            "in": "query",
+            "name": "types",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 1000,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "comma-separated event types",
+              "title": "Types"
+            }
+          },
+          {
+            "in": "query",
+            "name": "school",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "School"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Events Feed Api V1 Events Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Events Feed",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/v1/export/manifest": {
+      "get": {
+        "description": "What the export subsystem can produce and in which formats.",
+        "operationId": "export_manifest_api_v1_export_manifest_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Export Manifest Api V1 Export Manifest Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Export Manifest",
+        "tags": [
+          "export"
+        ]
+      }
+    },
+    "/api/v1/grounding/preview": {
+      "post": {
+        "description": "WHICH chunks \u2014 and their heading hierarchy \u2014 a lesson on this topic grounds\nin, via the same deterministic retrieval generation uses (within the caller's\nknowledge scope). No LLM.",
+        "operationId": "grounding_preview_api_v1_grounding_preview_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GroundingPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Grounding Preview Api V1 Grounding Preview Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Grounding Preview",
+        "tags": [
+          "grounding"
+        ]
+      }
+    },
+    "/api/v1/health/providers": {
+      "get": {
+        "description": "Which backend is wired for each component and whether it is reachable.",
+        "operationId": "provider_health_api_v1_health_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Provider Health Api V1 Health Providers Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Provider Health",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/v1/lessons/critique": {
+      "post": {
+        "description": "Score an already-generated LDD against the anti-generic rubric.",
+        "operationId": "critique_lesson_api_v1_lessons_critique_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonDesignDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Critique"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Critique Lesson",
+        "tags": [
+          "lessons"
+        ]
+      }
+    },
+    "/api/v1/lessons/export/bundle/zip": {
+      "post": {
+        "description": "One-click zip of every configured artifact.",
+        "operationId": "export_bundle_api_v1_lessons_export_bundle_zip_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonDesignDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Bundle",
+        "tags": [
+          "export"
+        ]
+      }
+    },
+    "/api/v1/lessons/export/{kind}": {
+      "post": {
+        "description": "Render one artifact from an already-generated LDD.",
+        "operationId": "export_artifact_api_v1_lessons_export__kind__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactKind"
+            }
+          },
+          {
+            "description": "Override the configured format",
+            "in": "query",
+            "name": "fmt",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 16,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Override the configured format",
+              "title": "Fmt"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonDesignDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Artifact",
+        "tags": [
+          "export"
+        ]
+      }
+    },
+    "/api/v1/lessons/generate": {
+      "post": {
+        "description": "Full pipeline: intake \u2192 enrichment \u2192 critique & revise \u2192 validated LDD.\nThe teacher's stored profile (and Edboox assignments) fill unset fields.",
+        "operationId": "generate_lesson_api_v1_lessons_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LessonDesignDocument"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Lesson",
+        "tags": [
+          "lessons"
+        ]
+      }
+    },
+    "/api/v1/lessons/intake": {
+      "post": {
+        "description": "US-3 preview: normalize a raw request / pasted plan into a brief, without\ngenerating. Profile defaults apply, so the preview matches what generate sees.",
+        "operationId": "intake_lesson_api_v1_lessons_intake_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NormalizedBrief"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Intake Lesson",
+        "tags": [
+          "lessons"
+        ]
+      }
+    },
+    "/api/v1/lessons/refine": {
+      "post": {
+        "description": "Reprompt one section (or the whole lesson) and PROPOSE an improved,\nre-validated LDD; a change that would break a guardrail is cascade-repaired or\nrejected with the reason, never silently forced through.",
+        "operationId": "refine_lesson_api_v1_lessons_refine_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefineLessonRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefineResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Refine Lesson",
+        "tags": [
+          "lessons"
+        ]
+      }
+    },
+    "/api/v1/lessons/refine/targets": {
+      "get": {
+        "description": "The reprompt-able sections and their edit blast radius.",
+        "operationId": "refine_targets_api_v1_lessons_refine_targets_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Refine Targets Api V1 Lessons Refine Targets Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Refine Targets",
+        "tags": [
+          "lessons"
+        ]
+      }
+    },
+    "/api/v1/lessons/validate": {
+      "post": {
+        "description": "Validate an edited LDD against the guardrails WITHOUT exporting. Returns 200\neven when invalid so the editor shows field errors inline.",
+        "operationId": "validate_ldd_api_v1_lessons_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Validate Ldd",
+        "tags": [
+          "lessons"
+        ]
+      }
+    },
+    "/api/v1/me": {
+      "get": {
+        "description": "Who the caller is, what they may do, and their context summary \u2014 what a UI\n(ours or Edboox's) builds its navigation and pickers from. Requires only\nauthentication.",
+        "operationId": "me_api_v1_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Me Api V1 Me Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Me",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/profile": {
+      "get": {
+        "description": "The caller's stored preferences (unset defaults filled from Edboox context).",
+        "operationId": "get_profile_api_v1_profile_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherProfile"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Profile",
+        "tags": [
+          "profile"
+        ]
+      },
+      "put": {
+        "description": "Save the caller's preferences (the owner is the caller, whatever the body says).",
+        "operationId": "put_profile_api_v1_profile_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeacherProfile"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeacherProfile"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Profile",
+        "tags": [
+          "profile"
+        ]
+      }
+    },
+    "/api/v1/reports/chat-topics": {
+      "get": {
+        "description": "Top subjects/chapters asked about; share of turns answered from sources.",
+        "operationId": "report_chat_topics_api_v1_reports_chat_topics_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "school",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "School"
+            }
+          },
+          {
+            "in": "query",
+            "name": "grade",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 12,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Grade"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Report Chat Topics Api V1 Reports Chat Topics Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report Chat Topics",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/v1/reports/quizzes": {
+      "get": {
+        "description": "Quizzes made and taken, average score, completion rate, weakest chapters.",
+        "operationId": "report_quizzes_api_v1_reports_quizzes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "school",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "School"
+            }
+          },
+          {
+            "in": "query",
+            "name": "grade",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 12,
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Grade"
+            }
+          },
+          {
+            "in": "query",
+            "name": "subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 120,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subject"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Report Quizzes Api V1 Reports Quizzes Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report Quizzes",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/v1/reports/usage": {
+      "get": {
+        "description": "Active users, chats, quizzes, lessons and tokens, grouped.",
+        "operationId": "report_usage_api_v1_reports_usage_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "description": "comma list of day, school, role",
+            "in": "query",
+            "name": "group_by",
+            "required": false,
+            "schema": {
+              "default": "day",
+              "description": "comma list of day, school, role",
+              "maxLength": 40,
+              "title": "Group By",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "school",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "School"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Report Usage Api V1 Reports Usage Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report Usage",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/v1/reports/users/{subject}/summary": {
+      "get": {
+        "description": "One user's activity (what Edboox shows on a student/teacher page).",
+        "operationId": "report_user_api_v1_reports_users__subject__summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "subject",
+            "required": true,
+            "schema": {
+              "title": "Subject",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "school",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 80,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "School"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Report User Api V1 Reports Users  Subject  Summary Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Report User",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
+    "/api/v1/units/generate": {
+      "post": {
+        "description": "Plan and expand a full multi-day unit, then persist it with version history.",
+        "operationId": "generate_unit_api_v1_units_generate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateUnitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedUnit"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Unit",
+        "tags": [
+          "units"
+        ]
+      }
+    },
+    "/api/v1/units/plan": {
+      "post": {
+        "description": "The unit spine (the arc) + syllabus-coverage report, for review BEFORE the\nexpensive per-day expansion.",
+        "operationId": "plan_unit_api_v1_units_plan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Plan Unit",
+        "tags": [
+          "units"
+        ]
+      }
+    },
+    "/api/v1/units/{document_id}": {
+      "get": {
+        "operationId": "get_unit_api_v1_units__document_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "a version id; default = head",
+            "in": "query",
+            "name": "version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "a version id; default = head",
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnitView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Unit",
+        "tags": [
+          "units"
+        ]
+      }
+    },
+    "/api/v1/units/{document_id}/assessment/{kind}": {
+      "post": {
+        "description": "An end-of-unit (or chosen-days) test from a saved unit.",
+        "operationId": "assessment_from_unit_api_v1_units__document_id__assessment__kind__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/ArtifactKind"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UnitAssessmentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Assessment From Unit",
+        "tags": [
+          "units"
+        ]
+      }
+    },
+    "/api/v1/units/{document_id}/days/{day}": {
+      "put": {
+        "description": "Replace ONE day's lesson with a teacher-edited LDD, re-run coherence and\ncommit a new manual version (owner only).",
+        "operationId": "edit_unit_day_api_v1_units__document_id__days__day__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "title": "Day",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LessonDesignDocument"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedUnit"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Edit Unit Day",
+        "tags": [
+          "units"
+        ]
+      }
+    },
+    "/api/v1/units/{document_id}/days/{day}/regenerate": {
+      "post": {
+        "description": "Rebuild ONE day against the same arc and commit it as a new version.",
+        "operationId": "regenerate_unit_day_api_v1_units__document_id__days__day__regenerate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "day",
+            "required": true,
+            "schema": {
+              "title": "Day",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedUnit"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Regenerate Unit Day",
+        "tags": [
+          "units"
+        ]
+      }
+    },
+    "/api/v1/units/{document_id}/export": {
+      "post": {
+        "description": "Download the whole unit as a zip of per-day lesson plans (a read).",
+        "operationId": "export_unit_api_v1_units__document_id__export_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Unit",
+        "tags": [
+          "units"
+        ]
+      }
+    }
+  }
+}
