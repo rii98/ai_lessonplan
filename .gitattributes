@@ -1,0 +1,7 @@
+# Normalise line endings in the repo; check text out natively per platform…
+* text=auto
+# …except files that run inside Linux containers. A Windows checkout with
+# CRLF breaks them (`set -eu\r` → "set: Illegal option -", exit 2).
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf
