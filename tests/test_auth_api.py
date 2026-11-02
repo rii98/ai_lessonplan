@@ -148,7 +148,7 @@ def test_pages_are_static_shells_and_public(env):
     _, client = env
     for page in ("/", "/chat", "/units", "/library", "/corpus", "/admin"):
         r = client.get(page)
-        assert r.status_code == 200 and 'src="/static/lf.js"' in r.text
+        assert r.status_code == 200 and 'id="root"' in r.text
 
 
 # ── the role matrix ──────────────────────────────────────────────────────────

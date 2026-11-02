@@ -1,0 +1,44 @@
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.label { font-size: var(--text-sm); font-weight: 560; color: var(--ink-2); display: flex; align-items: baseline; gap: 6px; }
+.optional { font-weight: 400; color: var(--ink-3); font-size: var(--text-xs); }
+.hint { font-size: var(--text-xs); color: var(--ink-3); }
+.error { font-size: var(--text-xs); color: var(--brick); }
+
+.control {
+  width: 100%; min-height: var(--control-h); padding: 8px 11px;
+  border: 1px solid var(--rule-strong); border-radius: var(--radius-md);
+  background: var(--paper); color: var(--ink);
+  font-size: 16px; /* ≥16px: iOS doesn't zoom on focus */
+  line-height: 1.45;
+  transition: border-color var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+}
+@media (min-width: 900px) { .control { font-size: var(--text-md); } }
+.control::placeholder { color: var(--ink-3); opacity: 1; }
+.control:hover:not(:disabled):not(:focus) { border-color: var(--ink-3); }
+.control:focus { outline: none; border-color: var(--pine); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pine) 18%, transparent); }
+.control:disabled, .control[readonly] { background: var(--sunken); color: var(--ink-2); }
+.control[aria-invalid="true"] { border-color: var(--brick); }
+textarea.control { resize: vertical; }
+.autogrow { resize: none; overflow: hidden; }
+
+select.control {
+  appearance: none; padding-right: 32px; cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--ink-3) 50%), linear-gradient(135deg, var(--ink-3) 50%, transparent 50%);
+  background-position: calc(100% - 17px) 55%, calc(100% - 12px) 55%;
+  background-size: 5px 5px; background-repeat: no-repeat;
+}
+
+/* Seamless: reads like the document until you touch it. */
+.seamless {
+  width: 100%; border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: transparent; color: inherit; padding: 4px 6px; margin: -5px -7px;
+  font: inherit; line-height: inherit; resize: none; overflow: hidden;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.seamless::placeholder { color: var(--ink-3); font-style: italic; opacity: 1; }
+.seamless:hover:not([readonly]) { background: var(--sunken); }
+.seamless:focus { outline: none; background: var(--paper); border-color: var(--pine); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pine) 14%, transparent); }
+.seamless[aria-invalid="true"] { border-color: color-mix(in srgb, var(--brick) 60%, transparent); }
+.seamless[readonly] { cursor: text; }
+
+.grid { display: grid; gap: var(--space-3) var(--space-4); grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }

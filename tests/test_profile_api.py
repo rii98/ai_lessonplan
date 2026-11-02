@@ -121,4 +121,4 @@ def test_index_serves_the_editor(client):
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert "LessonForge" in resp.text
-    assert "/lessons/generate" in resp.text and 'src="/static/lf.js"' in resp.text  # the page wires the real endpoints
+    assert 'id="root"' in resp.text  # the SPA shell; the client calls /api/v1 itself

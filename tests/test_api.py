@@ -107,7 +107,7 @@ def test_critique_endpoint_scores_an_ldd(client, export_ldd_dict):
 def test_corpus_page_is_served(client):
     resp = client.get("/corpus")
     assert resp.status_code == 200
-    assert "Knowledge base" in resp.text
+    assert 'id="root"' in resp.text
 
 
 def test_corpus_overview_lists_all_collections_with_counts(client):

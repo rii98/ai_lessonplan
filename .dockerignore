@@ -8,3 +8,6 @@ tests
 *.md
 !README.md
 .cache
+web/node_modules
+web/dist
+src/lessonforge/api/webui

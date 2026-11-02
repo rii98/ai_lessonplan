@@ -14,3 +14,4 @@ htmlcov/
 # Large local ingest source documents (kept out of the repo)
 /Grade 10 Science.pdf
 /SCIENCE_10.md
+src/lessonforge/api/webui/

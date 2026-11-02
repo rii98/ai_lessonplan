@@ -1,0 +1,33 @@
+.btn {
+  --h: var(--control-h);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: var(--h); padding: 0 14px; border-radius: var(--radius-md);
+  border: 1px solid var(--rule-strong); background: var(--paper); color: var(--ink);
+  font-size: var(--text-md); font-weight: 560; line-height: 1; white-space: nowrap;
+  cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent;
+  transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.btn:hover:not(:disabled) { border-color: var(--ink-3); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn[aria-busy="true"] { cursor: progress; opacity: 1; }
+
+.primary { background: var(--pine); border-color: var(--pine); color: var(--on-pine); }
+.primary:hover:not(:disabled) { background: var(--pine-hover); border-color: var(--pine-hover); }
+
+.quiet { background: transparent; border-color: transparent; color: var(--ink-2); }
+.quiet:hover:not(:disabled) { background: var(--sunken); border-color: transparent; color: var(--ink); }
+
+.danger { color: var(--brick); }
+.danger:hover:not(:disabled) { border-color: var(--brick); background: var(--brick-tint); }
+
+/* the AI affordance — a marigold pen, never a sparkle */
+.ai { color: var(--marigold-ink); border-color: color-mix(in srgb, var(--marigold) 55%, var(--rule)); background: transparent; }
+.ai:hover:not(:disabled) { background: var(--marigold-tint); border-color: var(--marigold); }
+
+.sm { --h: var(--control-h-sm); padding: 0 10px; font-size: var(--text-sm); border-radius: var(--radius-sm); gap: 5px; }
+.block { width: 100%; }
+
+.icon { width: var(--h); padding: 0; }
+
+.spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }

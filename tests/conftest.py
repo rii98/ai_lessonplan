@@ -480,3 +480,24 @@ def build_container(settings: Settings, *, llm=None, store=None, **kw):
                      vector_store=store, retriever=retriever, grounding=grounding,
                      generator=LessonGenerator(llm=llm, grounding=grounding),
                      exporter=ExportService(settings.export), intake=HeuristicIntake(), **kw)
+
+
+# ── the web client: a tiny stand-in build, so no test depends on `npm run build` ──
+FAKE_SHELL = '<!doctype html><html><head><title>LessonForge</title></head><body><div id="root" data-lf-root></div><script type="module" src="/assets/app-abc123.js"></script></body></html>'
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _fake_web_build(tmp_path_factory):
+    import os
+
+    dist = tmp_path_factory.mktemp("webui")
+    (dist / "assets").mkdir()
+    (dist / "index.html").write_text(FAKE_SHELL, encoding="utf-8")
+    (dist / "assets" / "app-abc123.js").write_text("console.log('lf')", encoding="utf-8")
+    old = os.environ.get("LF_WEB_DIST")
+    os.environ["LF_WEB_DIST"] = str(dist)
+    yield dist
+    if old is None:
+        os.environ.pop("LF_WEB_DIST", None)
+    else:
+        os.environ["LF_WEB_DIST"] = old

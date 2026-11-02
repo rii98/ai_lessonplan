@@ -1,0 +1,29 @@
+.prose { line-height: 1.65; overflow-wrap: anywhere; }
+.plain { white-space: pre-wrap; }
+.prose > :first-child { margin-top: 0; }
+.prose > :last-child { margin-bottom: 0; }
+.prose p, .prose ul, .prose ol, .prose pre, .prose blockquote, .prose table { margin: 0 0 0.75em; }
+.prose h1, .prose h2, .prose h3, .prose h4 { margin: 1.1em 0 0.4em; font-size: 1.08em; }
+.prose h1 { font-size: 1.25em; }
+.prose ul, .prose ol { padding-left: 1.3em; }
+.prose li + li { margin-top: 0.2em; }
+.prose blockquote { border-left: 3px solid var(--rule-strong); padding-left: 0.9em; color: var(--ink-2); }
+.prose code { background: var(--sunken); padding: 0.1em 0.35em; border-radius: 4px; }
+.prose pre { background: var(--sunken); padding: 0.8em 1em; border-radius: var(--radius-md); overflow-x: auto; font-size: 0.88em; }
+.prose pre code { background: none; padding: 0; }
+.prose table { border-collapse: collapse; display: block; overflow-x: auto; font-size: 0.94em; }
+.prose th, .prose td { border: 1px solid var(--rule); padding: 0.35em 0.6em; text-align: left; }
+.prose th { background: var(--sunken); }
+.prose hr { margin: 1em 0; }
+.prose :global(.katex-display) { overflow-x: auto; overflow-y: hidden; padding: 0.2em 0; }
+.prose :global(.cite) {
+  display: inline-grid; place-items: center; min-width: 1.45em; height: 1.45em; padding: 0 0.35em; margin: 0 0.1em;
+  vertical-align: 0.15em; border: 0; border-radius: var(--radius-full); background: var(--pine-tint); color: var(--pine);
+  font-size: 0.7em; font-weight: 700; cursor: pointer; line-height: 1;
+}
+.prose :global(.cite):hover { background: var(--pine); color: var(--on-pine); }
+.prose :global(.hljs-keyword), .prose :global(.hljs-built_in) { color: var(--phase-3); }
+.prose :global(.hljs-string), .prose :global(.hljs-attr) { color: var(--phase-1); }
+.prose :global(.hljs-number), .prose :global(.hljs-literal) { color: var(--phase-4); }
+.prose :global(.hljs-comment) { color: var(--ink-3); font-style: italic; }
+.prose :global(.hljs-title), .prose :global(.hljs-function) { color: var(--phase-6); }

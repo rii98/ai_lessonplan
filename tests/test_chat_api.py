@@ -110,4 +110,4 @@ def test_message_on_missing_conversation_is_404(client):
 
 def test_chat_page_served(client):
     r = client.get("/chat")
-    assert r.status_code == 200 and "LessonForge" in r.text
+    assert r.status_code == 200 and 'id="root"' in r.text

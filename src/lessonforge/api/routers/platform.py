@@ -1,19 +1,17 @@
-"""Platform routes: health, ``/me``, the launch / logout flow, and the static
-page shells.
+"""Platform routes: health, ``/me`` and the launch / logout flow.
 
-Pages (``/``, ``/chat``, ``/units``, ``/library``, ``/corpus``) are static shells:
-they embed no data and call only ``/api/v1``, so the API is the whole contract
-and Edboox's own UI can replace ours screen by screen (D3).
+The web client itself is served by ``api/webui.py``; it embeds no data and calls
+only ``/api/v1``, so the API is the whole contract and Edboox's own UI can
+replace ours screen by screen (D3).
 """
 
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from urllib.parse import parse_qs
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from ... import request_context
@@ -26,7 +24,6 @@ from ..activity import emit
 from ..deps import get_container, request_ctx, require
 from ..errors import ApiError
 
-_STATIC = Path(__file__).resolve().parent.parent / "static"
 _MAX_FORM_BYTES = 16 * 1024
 # first bearer call of the day per principal (per process) → session.started
 _api_sessions: TTLCache[tuple[str, str], bool] = TTLCache(ttl_s=24 * 3600, max_items=100_000)
@@ -34,44 +31,6 @@ _api_sessions: TTLCache[tuple[str, str], bool] = TTLCache(ttl_s=24 * 3600, max_i
 pages = APIRouter(include_in_schema=False)
 ops = APIRouter(tags=["ops"])
 api = APIRouter(prefix="/api/v1")
-
-
-# ── pages ────────────────────────────────────────────────────────────────────
-def _page(name: str, title: str) -> HTMLResponse:
-    f = _STATIC / name
-    html = f.read_text(encoding="utf-8") if f.exists() else (
-        f"<h1>{title}</h1><p>UI asset missing. See /docs for the API.</p>")
-    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
-
-
-@pages.get("/", response_class=HTMLResponse)
-def index() -> HTMLResponse:
-    return _page("index.html", "LessonForge")
-
-
-@pages.get("/units", response_class=HTMLResponse)
-def units_page() -> HTMLResponse:
-    return _page("units.html", "Unit planner")
-
-
-@pages.get("/library", response_class=HTMLResponse)
-def library_page() -> HTMLResponse:
-    return _page("library.html", "Library")
-
-
-@pages.get("/corpus", response_class=HTMLResponse)
-def corpus_page() -> HTMLResponse:
-    return _page("corpus.html", "Corpus manager")
-
-
-@pages.get("/chat", response_class=HTMLResponse)
-def chat_page() -> HTMLResponse:
-    return _page("chat.html", "LessonForge chat")
-
-
-@pages.get("/admin", response_class=HTMLResponse)
-def admin_page() -> HTMLResponse:
-    return _page("admin.html", "Owner console")
 
 
 # ── launch / logout (the LTI-style flow our UI rides on) ─────────────────────
@@ -104,7 +63,7 @@ async def launch(request: Request, c: Container = Depends(get_container)) -> Res
 @pages.get("/auth/launch")
 def launch_revisited() -> Response:
     """Back/refresh onto the launch URL (a GET carries no token): continue into
-    the app — its shell sends an unauthenticated user to Edboox to sign in."""
+    the app — the client sends an unauthenticated user to Edboox to sign in."""
     return RedirectResponse("/", status_code=303)
 
 

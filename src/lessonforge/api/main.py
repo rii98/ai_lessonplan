@@ -20,21 +20,18 @@ import re
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from ..config import load_settings
-from . import errors
+from . import errors, webui
 from .deps import get_container
 from .routers import admin, artifacts, chat, corpus, demo, documents, lessons, platform, reports
 
 log = logging.getLogger("lessonforge.api")
 
-_STATIC_DIR = Path(__file__).parent / "static"
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{8,64}$")
 
 
@@ -105,14 +102,12 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestIdMiddleware,
                        frame_ancestors=" ".join(["'self'", *origins]))
 
-    # Shared assets (app.css/app.js/lf.js) and the vendored, version-pinned
-    # browser libraries — no build step, no runtime CDN.
-    if _STATIC_DIR.is_dir():
-        app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+    # The web client (web/ → api/webui or $LF_WEB_DIST): hashed bundles + app shell.
+    app.mount("/assets", webui.assets_app(), name="assets")
 
     for router in (platform.pages, platform.ops, platform.api, lessons.router,
                    documents.router, artifacts.router, corpus.router, chat.router,
-                   reports.router, admin.router, demo.router):
+                   reports.router, admin.router, demo.router, webui.router):
         app.include_router(router)
     return app
 

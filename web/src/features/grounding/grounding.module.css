@@ -1,0 +1,13 @@
+.tree { display: grid; gap: var(--space-4); }
+.collection { display: grid; gap: 8px; }
+.colHead { display: flex; align-items: center; gap: 8px; }
+.meta { font-size: var(--text-xs); color: var(--ink-3); }
+.doc { padding-left: 4px; }
+.docTitle { font-weight: 600; font-size: var(--text-sm); margin-bottom: 2px; }
+.chunk { border-left: 2px solid var(--rule); margin: 2px 0; }
+.chunk[open] { border-left-color: var(--pine); }
+.chunk summary { list-style: none; cursor: pointer; display: flex; gap: 8px; justify-content: space-between; padding: 4px 10px; font-size: var(--text-sm); color: var(--ink-2); }
+.chunk summary::-webkit-details-marker { display: none; }
+.chunk summary:hover { color: var(--ink); background: var(--sunken); }
+.score { color: var(--ink-3); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.text { padding: 8px 12px 10px; font-size: var(--text-sm); line-height: 1.6; white-space: pre-wrap; color: var(--ink); max-height: 300px; overflow: auto; }

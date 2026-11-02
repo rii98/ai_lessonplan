@@ -57,6 +57,7 @@ export LF_COOKIE_SECURE=false              # plain-http local dev only
 lessonforge-db migrate                     # versioned schema (the API refuses a stale one)
 python -m lessonforge.rag.ingest --seed    # load the shared grounding corpus
 
+npm --prefix web ci && npm --prefix web run build   # the web client → src/lessonforge/api/webui
 uvicorn lessonforge.api.main:app --reload
 # → http://localhost:8000/docs   (API under /api/v1; sign in through Edboox, below)
 ```
@@ -101,6 +102,21 @@ Each artifact's default format is one line in `config/config.yaml` under
 `export:` (or `LF__EXPORT__SLIDES=…`); the `(kind, format)` registry resolves it,
 so adding a `pdf` renderer never touches the service or API. Nepali (Devanagari)
 text is embedded with a complex-script font hint so it renders in Word/PowerPoint.
+
+## Web client
+
+The UI is a React + TypeScript app in [`web/`](web) (Vite, TanStack Query,
+CSS Modules, Radix primitives). Design, information architecture and the
+layering rules are in [`docs/FRONTEND.md`](docs/FRONTEND.md). FastAPI serves the
+build as a static SPA; Docker builds it in a Node stage.
+
+```bash
+cd web
+npm ci
+npm run dev        # http://localhost:5173, proxies /api,/auth,/health → :8000
+npm run verify     # contract types · typecheck · lint · tests · build
+npm run gen:api    # after the API changes: regenerate types from docs/openapi.v1.json
+```
 
 ## Grounding (RAG)
 

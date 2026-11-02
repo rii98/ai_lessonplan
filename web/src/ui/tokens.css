@@ -1,0 +1,139 @@
+/*
+ * Design tokens — "the plan book" (docs/FRONTEND.md §2).
+ * Scoped to [data-lf-root] so an embedding host (Edboox) never inherits them by
+ * accident; the standalone shell also applies them to :root.
+ *
+ *  pine     — the one action colour (primary, focus, links)
+ *  marigold — the highlighter: ONLY AI proposals and "needs attention"
+ *  brick    — errors and destructive actions
+ */
+:root, [data-lf-root] {
+  --paper: #fbf9f4;
+  --canvas: #f3efe6;
+  --sunken: #ece7dc;
+  --rule: #e2dccf;
+  --rule-strong: #cbc2af;
+  --ink: #1d1a16;
+  --ink-2: #4a443b;
+  --ink-3: #776f62;
+  --pine: #1f5a4c;
+  --pine-hover: #174639;
+  --pine-tint: #e2ede8;
+  --on-pine: #fbf9f4;
+  --marigold: #dc9a2e;
+  --marigold-ink: #7a4d07;
+  --marigold-tint: #fbefd6;
+  --brick: #b3412e;
+  --brick-tint: #f8e4df;
+  --ok: #2f7a4a;
+  --ok-tint: #e3f1e7;
+  --scrim: rgb(29 26 22 / 0.42);
+  --shadow-overlay: 0 1px 2px rgb(29 26 22 / 0.08), 0 12px 32px -8px rgb(29 26 22 / 0.24);
+
+  /* phase timeline hues — distinguishable, muted, AA against paper text */
+  --phase-1: #2f6f5e;
+  --phase-2: #c08a2c;
+  --phase-3: #4f6d8f;
+  --phase-4: #a8573f;
+  --phase-5: #6f7a3a;
+  --phase-6: #7a5a86;
+
+  --font-serif: "Iowan Old Style", Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, "Noto Serif Devanagari", "Noto Serif", serif;
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Noto Sans Devanagari", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.625rem;
+  --text-3xl: 2rem;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 999px;
+
+  --control-h: 38px;
+  --control-h-sm: 30px;
+  --rail-w: 220px;
+  --topbar-h: 56px;
+  --tabbar-h: 60px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur: 160ms;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]), :root:not([data-theme="light"]) [data-lf-root] {
+    --paper: #1c1915;
+    --canvas: #15120e;
+    --sunken: #26221c;
+    --rule: #332d25;
+    --rule-strong: #4a4135;
+    --ink: #efe9dd;
+    --ink-2: #c9c0b0;
+    --ink-3: #978c7b;
+    --pine: #74b8a2;
+    --pine-hover: #8cc8b4;
+    --pine-tint: #1d2e28;
+    --on-pine: #0e1a16;
+    --marigold: #e8b252;
+    --marigold-ink: #f0c777;
+    --marigold-tint: #36290f;
+    --brick: #e5826d;
+    --brick-tint: #3a1d17;
+    --ok: #7cc495;
+    --ok-tint: #18291e;
+    --scrim: rgb(0 0 0 / 0.6);
+    --shadow-overlay: 0 12px 40px -8px rgb(0 0 0 / 0.7);
+    --phase-1: #5ea592;
+    --phase-2: #d6a24a;
+    --phase-3: #7f9cc0;
+    --phase-4: #cf7d63;
+    --phase-5: #9aa65a;
+    --phase-6: #a585b2;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"], :root[data-theme="dark"] [data-lf-root] {
+  --paper: #1c1915;
+  --canvas: #15120e;
+  --sunken: #26221c;
+  --rule: #332d25;
+  --rule-strong: #4a4135;
+  --ink: #efe9dd;
+  --ink-2: #c9c0b0;
+  --ink-3: #978c7b;
+  --pine: #74b8a2;
+  --pine-hover: #8cc8b4;
+  --pine-tint: #1d2e28;
+  --on-pine: #0e1a16;
+  --marigold: #e8b252;
+  --marigold-ink: #f0c777;
+  --marigold-tint: #36290f;
+  --brick: #e5826d;
+  --brick-tint: #3a1d17;
+  --ok: #7cc495;
+  --ok-tint: #18291e;
+  --scrim: rgb(0 0 0 / 0.6);
+  --shadow-overlay: 0 12px 40px -8px rgb(0 0 0 / 0.7);
+  --phase-1: #5ea592;
+  --phase-2: #d6a24a;
+  --phase-3: #7f9cc0;
+  --phase-4: #cf7d63;
+  --phase-5: #9aa65a;
+  --phase-6: #a585b2;
+  color-scheme: dark;
+}

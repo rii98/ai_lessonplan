@@ -194,11 +194,3 @@ def test_errors(client, quiz):
     assert client.post(f"/api/v1/chat/attempts/{att}/answer", json={"response": 1}).status_code == 422
     assert client.post(f"/api/v1/chat/attempts/{att}/answer", json={"question_id": "zzz", "response": 1}).status_code == 422
 
-
-def test_chat_page_links_and_serves_the_canvas_assets(client):
-    page = client.get("/chat").text
-    assert "/static/chat_artifacts.js" in page and "/static/chat_artifacts.css" in page
-    assert 'id="canvas"' in page
-    js = client.get("/static/chat_artifacts.js")
-    assert js.status_code == 200 and "RENDERERS" in js.text      # the kind → renderer registry
-    assert client.get("/static/chat_artifacts.css").status_code == 200

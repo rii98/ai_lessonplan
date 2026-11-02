@@ -1,0 +1,37 @@
+.grid { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.card { display: grid; gap: 8px; padding: var(--space-4); border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--paper); text-decoration: none; color: inherit; transition: border-color var(--dur) var(--ease); }
+.card:hover { border-color: var(--ink-3); color: inherit; }
+.cardTitle { font-family: var(--font-serif); font-size: var(--text-lg); font-weight: 600; color: var(--ink); }
+.meta { font-size: var(--text-sm); color: var(--ink-3); display: flex; gap: 8px; flex-wrap: wrap; }
+
+.arc { display: grid; gap: var(--space-3); }
+.day { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: var(--space-3); padding: var(--space-3) var(--space-4) var(--space-4) var(--space-3); border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--paper); }
+.dayNo { display: grid; justify-items: center; align-content: start; gap: 2px; padding-top: 4px; }
+.dayNo b { font-family: var(--font-serif); font-size: var(--text-2xl); line-height: 1; color: var(--pine); }
+.dayNo span { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); font-weight: 650; }
+.dayBody { min-width: 0; display: grid; gap: 8px; }
+.dayHead { display: flex; align-items: flex-start; gap: 6px; }
+.dayTopic { font-family: var(--font-serif); font-size: var(--text-lg); font-weight: 600; flex: 1; }
+.links { display: grid; gap: var(--space-3); }
+@media (min-width: 700px) { .links { grid-template-columns: 1fr 1fr; } }
+.small { font-size: var(--text-sm); }
+.lbl { font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 650; color: var(--ink-3); margin-bottom: 2px; }
+
+.coverage { display: grid; gap: 10px; }
+.covChips { display: flex; flex-wrap: wrap; gap: 6px; }
+.cov { font-size: var(--text-xs); padding: 3px 9px; border-radius: var(--radius-full); display: inline-flex; gap: 5px; align-items: center; }
+.covHas { background: var(--ok-tint); color: var(--ok); }
+.covGap { background: var(--marigold-tint); color: var(--marigold-ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--marigold) 45%, transparent); }
+
+.split { display: grid; gap: var(--space-5); }
+@media (min-width: 1100px) { .split { grid-template-columns: minmax(0, 1fr) 320px; align-items: start; } .aside { position: sticky; top: 24px; } }
+.aside { display: grid; gap: var(--space-4); }
+
+.stickyCta { position: sticky; bottom: calc(var(--tabbar-h) + 12px); z-index: 5; display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; padding: var(--space-3) var(--space-4); background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius-lg); box-shadow: var(--shadow-overlay); margin-top: var(--space-5); }
+@media (min-width: 900px) { .stickyCta { bottom: 16px; } }
+
+.timelineDays { display: grid; gap: var(--space-3); counter-reset: day; }
+.dayCard { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--paper); }
+.objList { margin: 0; padding-left: 18px; font-size: var(--text-sm); color: var(--ink-2); display: grid; gap: 2px; }
+.hook { font-family: var(--font-serif); font-style: italic; color: var(--ink-2); border-left: 2px solid var(--rule-strong); padding-left: 10px; font-size: var(--text-sm); }
+.dayActions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
