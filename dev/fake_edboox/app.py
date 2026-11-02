@@ -23,6 +23,7 @@ import hmac
 import html
 import json
 import os
+import re
 import secrets
 import time
 import uuid
@@ -395,6 +396,11 @@ def admin_page(request: Request, msg: str = ""):
         students = conn.execute("SELECT * FROM students ORDER BY school_id, grade, id").fetchall()
         teachers = conn.execute("SELECT * FROM teachers ORDER BY school_id, id").fetchall()
         assign = conn.execute("SELECT * FROM teaching_assignments ORDER BY teacher_id").fetchall()
+    members: dict[str, list[int]] = {sc["id"]: [0, 0] for sc in schools}
+    for t in teachers:
+        members.setdefault(t["school_id"], [0, 0])[0] += 1
+    for st in students:
+        members.setdefault(st["school_id"], [0, 0])[1] += 1
     by_t: dict[int, list[str]] = {}
     for a in assign:
         by_t.setdefault(a["teacher_id"], []).append(
@@ -413,8 +419,24 @@ def admin_page(request: Request, msg: str = ""):
         f"<td>{t['school_id']}</td><td>{'<br>'.join(e(x) for x in by_t.get(t['id'], []))}</td>"
         f"<td>{'' if t['is_admin'] else _remove_btn('teachers', t['id'], 'teacher')}</td></tr>"
         for t in teachers)
+    schrows = "".join(
+        f"<tr><td>{e(sc['id'])}</td><td>{e(sc['name'])}</td><td>{e(sc['district'] or '')}</td>"
+        f"<td>{e(sc['province'] or '')}</td><td>{members[sc['id']][0]}</td><td>{members[sc['id']][1]}</td>"
+        f"<td>{'' if sum(members[sc['id']]) else _remove_school_btn(sc['id'])}</td></tr>"
+        for sc in schools)
     note = f"<p style='color:#047857'><b>{e(msg)}</b></p>" if msg else ""
     return _page("Edboox admin", f"""<p><a href=/>← back</a></p>{note}
+      <div class=card><h2>Schools</h2><table><tr><th>School id</th><th>Name</th><th>District</th>
+      <th>Province</th><th>Teachers</th><th>Students</th><th></th></tr>{schrows}</table>
+      <h3>Add a school</h3><form method=post action=/admin/schools>
+      <p><input name=id placeholder="School id (sch-12)" required pattern="[A-Za-z0-9][A-Za-z0-9_.\\-]{{0,63}}"
+        title="Letters, digits, dot, dash or underscore; no spaces">
+      <input name=name placeholder="School name" required size=34></p>
+      <p><input name=district placeholder=District> <input name=province placeholder=Province>
+      <button>Add school</button></p>
+      <p class=muted>The id is what LessonForge sees in the sign-in token: it separates each school's
+      shared plans and private knowledge shelf. It can't be changed later. A school can be removed
+      only while it has no teachers or students.</p></form></div>
       <div class=card><h2>Students</h2><table><tr><th>Edboox id</th><th>Name</th><th>Username</th>
       <th>School</th><th>Class</th><th>Medium</th><th></th></tr>{srows}</table>
       <h3>Add a student</h3><form method=post action=/admin/students>
@@ -434,6 +456,43 @@ def admin_page(request: Request, msg: str = ""):
       <button>Add teacher</button></form></div>
       <p class=muted>Removing someone here removes them from Edboox only. To delete what LessonForge
       holds about them, use LessonForge's Owner console → People → Delete their data.</p>""")
+
+
+_SCHOOL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")   # = LessonForge's school id rule
+
+
+def _remove_school_btn(sid: str) -> str:
+    return (f"<form method=post action=/admin/schools/{html.escape(sid)}/delete "
+            f"onsubmit=\"return confirm('Remove this school from Edboox?')\">"
+            f"<button style='background:#b91c1c'>Remove</button></form>")
+
+
+@app.post("/admin/schools")
+def add_school(request: Request, id: str = Form(...), name: str = Form(...),
+               district: str = Form(""), province: str = Form("")):
+    _require_admin(request)
+    sid, name = id.strip(), name.strip()
+    if not _SCHOOL_ID.match(sid) or not name:
+        return RedirectResponse("/admin?msg=School+id+must+be+letters,+digits,+.+-+_+(no+spaces)",
+                                status_code=303)
+    try:
+        with _db() as conn:
+            conn.execute("INSERT INTO schools (id, name, district, province) VALUES (%s,%s,%s,%s)",
+                         (sid, name, district.strip() or None, province.strip() or None))
+    except psycopg.errors.UniqueViolation:
+        return RedirectResponse("/admin?msg=That+school+id+is+taken", status_code=303)
+    return RedirectResponse(f"/admin?msg=Added+school+{sid}", status_code=303)
+
+
+@app.post("/admin/schools/{sid}/delete")
+def remove_school(request: Request, sid: str):
+    _require_admin(request)
+    try:
+        with _db() as conn:
+            conn.execute("DELETE FROM schools WHERE id = %s", (sid,))
+    except psycopg.errors.ForeignKeyViolation:
+        return RedirectResponse("/admin?msg=Remove+its+teachers+and+students+first", status_code=303)
+    return RedirectResponse(f"/admin?msg=Removed+school+{sid}", status_code=303)
 
 
 @app.post("/admin/students")
