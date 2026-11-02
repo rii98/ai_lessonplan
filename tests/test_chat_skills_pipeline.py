@@ -52,10 +52,21 @@ class RoutedLLM(LLMClient):
         return True
 
 
+class FKChatStore(MemoryChatStore):
+    """Postgres parity: an artifact must point at an assistant message that is
+    already stored (chat_artifacts.message_id → chat_messages.id)."""
+
+    def add_artifact(self, artifact):
+        known = {m.id for m in self.messages(artifact.conversation_id)}
+        if artifact.message_id not in known:
+            raise AssertionError(f"artifact saved before its message {artifact.message_id!r}")
+        return super().add_artifact(artifact)
+
+
 def _build(fake_embedder, fake_store, fake_reranker, llm, *, router=None, gate="always", **intent):
     config = ChatConfig(intent={"gate": gate, **intent})
     config.retrieval.collections = []
-    store = MemoryChatStore()
+    store = FKChatStore()
     deps = SkillDeps(llm=llm, llm_fast=llm, grounding=None, config=config)
     skills = build_skills(deps)
     router = router or HybridRouter(config.intent, [s.spec for s in skills.values()], llm)
@@ -205,6 +216,8 @@ def test_a_skill_that_raises_keeps_the_turn(parts, monkeypatch):
                         lambda self, ctx: (_ for _ in ()).throw(RuntimeError("boom")))
     events = _say(pipe, conv, "quiz me on x")
     assert [e.type for e in events][-2:] == ["error", "done"]
+    err = next(e for e in events if e.type == "error").data
+    assert "boom" not in str(err) and err["code"] == "internal"   # internals stay in the log
     assert [m.role for m in store.messages(conv.id)] == [Role.user, Role.assistant]
 
 

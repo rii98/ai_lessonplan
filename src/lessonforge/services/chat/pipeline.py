@@ -14,6 +14,7 @@ be swapped or faked without touching this file.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -45,6 +46,8 @@ __all__ = ["ChatEvent", "ChatPipeline"]  # ChatEvent re-exported: the API import
 
 _ROUTER_HISTORY = 6   # recent messages the intent router sees
 
+
+log = logging.getLogger("lessonforge.chat")
 
 class ChatPipeline:
     def __init__(
@@ -143,8 +146,9 @@ class ChatPipeline:
             for piece in self.synthesizer.stream(request.message, built, view):
                 answer_parts.append(piece)
                 yield ChatEvent("token", piece)
-        except Exception as exc:  # streaming can't be retried mid-answer
-            yield ChatEvent("error", {"message": str(exc)})
+        except Exception:  # streaming can't be retried mid-answer; internals stay in the log
+            log.exception("chat answer stream failed")
+            yield ChatEvent("error", {"code": "internal", "message": "the answer was cut off"})
             # still persist what we have so the turn isn't lost
         answer = "".join(answer_parts)
 
@@ -245,6 +249,9 @@ class ChatPipeline:
         reply = ChatMessage(role=Role.assistant, content="")
         parts: list[str] = []
         artifact_ids: list[str] = []
+        # Artifacts reference their assistant message (a foreign key in Postgres),
+        # so they are streamed as they appear but persisted after the reply is.
+        pending: list[ChatArtifact] = []
         awaiting = None
         skill = self.skills[routed.skill]
         ctx = SkillContext(conversation=conversation, message=request.message, routed=routed,
@@ -255,16 +262,18 @@ class ChatPipeline:
                     parts.append(ev.data)
                     yield ev
                 elif ev.type == "artifact":
-                    art = self._save_artifact(ev.data, reply.id)
+                    art = ev.data
+                    art.message_id = reply.id
+                    pending.append(art)
                     artifact_ids.append(art.id)
-                    self._record_artifact(art)
                     yield ChatEvent("artifact", self._artifact_payload(art))
                 elif ev.type == "awaiting":
                     awaiting = ev.data
                 else:  # status, … — pass through
                     yield ev
-        except Exception as exc:  # a skill bug must not lose the turn
-            yield ChatEvent("error", {"message": str(exc)})
+        except Exception:  # a skill bug must not lose the turn — nor leak its internals
+            log.exception("chat skill %r failed", routed.skill)
+            yield ChatEvent("error", {"code": "internal", "message": "the assistant could not finish this"})
 
         reply.content = "".join(parts)
         reply.meta = {"mode": mode.value, "intent": routed.meta()}
@@ -273,16 +282,14 @@ class ChatPipeline:
         if awaiting:
             reply.meta["awaiting"] = awaiting
         self.store.add_message(conversation.id, reply)
+        for art in pending:
+            self._record_artifact(self.store.add_artifact(art))
 
         title = self._maybe_title(conversation, prev_len, request.message)
         self.memory.maybe_summarize(conversation, prev_len=prev_len, total=prev_len + 2)
         self._record_turn(routed, filters, conversation, [], started)
         yield ChatEvent("done", {"citations": 0, "mode": mode.value, "title": title,
                                  "intent": routed.meta(), "artifacts": artifact_ids})
-
-    def _save_artifact(self, artifact: ChatArtifact, message_id: str) -> ChatArtifact:
-        artifact.message_id = message_id
-        return self.store.add_artifact(artifact)
 
     def _artifact_payload(self, artifact: ChatArtifact) -> dict:
         if self.artifacts is not None:
