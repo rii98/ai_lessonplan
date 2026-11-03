@@ -2,9 +2,17 @@
 
 MathDial measured an unguided LLM tutor revealing the solution in ~66% of cases.
 The guard is deterministic and cheap: before a reply is shown, it looks for the
-answers of the checks the student has not passed yet — and *always* for the answer of
+answers of the checks that still *measure* something — and *always* for the answer of
 the widget about to be shown under this very reply (even after a ``bottom_out``,
 whose transfer check must still be a real question).
+
+A check that has already been answered is NOT guarded: grading showed its answer on
+the card, so the tutor explaining it is the point, not a leak. Answers are compared
+through :mod:`lessonforge.domain.answers` — the same equivalence the grader uses, so
+"three", "3" and "तीन" are one answer to both.
+
+:meth:`AnswerLeakGuard.find` returns *what* leaked, so the service can ask the model
+to rephrase without that phrase (a targeted re-ask) instead of discarding the reply.
 """
 
 from __future__ import annotations
@@ -12,20 +20,13 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 
+from ...domain.answers import canonical, mentions
 from ...domain.ldd import QuestionType
 from ...domain.learning import REVEALING_MOVES, CheckItem, Decision, LearningSession
 
-_NUM = re.compile(r"-?\d+(?:\.\d+)?")
-
-
-def _norm(s: str) -> str:
-    s = re.sub(r"[^\w\s.ऀ-ॿ]", " ", s.casefold(), flags=re.UNICODE)
-    s = re.sub(r"(?<!\d)\.|\.(?!\d)", " ", s)      # keep the point only inside decimals
-    return re.sub(r"\s+", " ", s).strip()
-
 
 def secrets(check: CheckItem) -> list[str]:
-    """The strings that would give this check away."""
+    """The answers that would give this check away."""
     q = check.question
     out: list[str] = []
     if q.type is QuestionType.mcq:
@@ -36,48 +37,54 @@ def secrets(check: CheckItem) -> list[str]:
             ans = opts[i] if 0 <= i < len(opts) else ""
         out.append(ans)
     elif q.type in (QuestionType.fill_blank, QuestionType.numerical):
-        out += [p for p in re.split(r"\s*(?:/|\||;|\bor\b)\s*", q.answer) if p.strip()]
-    elif q.type is QuestionType.ordering:   # the full order, as a sequence
+        out.append(q.answer)                      # alternatives are expanded by ``mentions``
+    elif q.type is QuestionType.ordering:         # the full order, as a sequence
         out.append(" ".join(q.options or []))
     # true/false, matching and written answers can't be leaked by one phrase
-    return [s for s in out if len(_norm(s)) >= 3]
+    return [s for s in out if canonical(s)]
 
 
 def leaks(text: str, secret: str) -> bool:
-    t, s = f" {_norm(text)} ", _norm(secret)
-    if not s:
-        return False
-    if _NUM.fullmatch(s):
-        n = float(s)
-        if abs(n) < 10 and "." not in s:      # small integers are everywhere in prose
-            return False
-        return any(float(m) == n for m in _NUM.findall(t))
-    return f" {s} " in t
+    return mentions(text, secret)
+
+
+def guarded_checks(session: LearningSession, decision: Decision) -> list[CheckItem]:
+    """The checks whose answers must not appear in this reply."""
+    guarded: list[CheckItem] = []
+    if decision.check_id:
+        found = session.find_check(decision.check_id)
+        if found:
+            guarded.append(found[1])
+    if decision.move not in REVEALING_MOVES:
+        obj = session.plan.objective(decision.objective_id)
+        st = session.states[obj.id]
+        if st.status not in ("mastered", "skipped"):
+            guarded += [c for c in obj.checks
+                        if c not in guarded and c.id not in st.used_checks]   # answered → shown
+    return guarded
 
 
 class AnswerLeakGuard(ABC):
     @abstractmethod
-    def leaked(self, text: str, session: LearningSession, decision: Decision) -> bool: ...
+    def find(self, text: str, session: LearningSession, decision: Decision) -> str | None:
+        """The answer this reply gives away, or ``None``."""
+
+    def leaked(self, text: str, session: LearningSession, decision: Decision) -> bool:
+        return self.find(text, session, decision) is not None
 
 
 class RulesLeakGuard(AnswerLeakGuard):
-    def leaked(self, text, session, decision):
-        guarded: list[CheckItem] = []
-        if decision.check_id:
-            found = session.find_check(decision.check_id)
-            if found:
-                guarded.append(found[1])
-        if decision.move not in REVEALING_MOVES:
-            obj = session.plan.objective(decision.objective_id)
-            st = session.states[obj.id]
-            if st.status not in ("mastered", "skipped"):
-                guarded += [c for c in obj.checks if c not in guarded]
-        return any(leaks(text, s) for c in guarded for s in secrets(c))
+    def find(self, text, session, decision):
+        for c in guarded_checks(session, decision):
+            for s in secrets(c):
+                if leaks(text, s):
+                    return s
+        return None
 
 
 class NoGuard(AnswerLeakGuard):
-    def leaked(self, text, session, decision):
-        return False
+    def find(self, text, session, decision):
+        return None
 
 
 def build_guard(provider: str) -> AnswerLeakGuard:

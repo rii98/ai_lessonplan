@@ -197,8 +197,50 @@ def test_fill_blank_accepts_alternatives_articles_and_small_typos():
 def test_numerical_compares_numbers_not_strings():
     q = ALL_TYPES[5]
     assert _grade(q, "30").correct and _grade(q, "30.0 km/h").correct and _grade(q, "about 30 kmph").correct
-    assert not _grade(q, "40").correct and not _grade(q, "thirty").correct
+    assert not _grade(q, "40").correct and not _grade(q, "30 m/s").correct   # wrong value / unit
     assert _grade(_q(type="numerical", answer="1,200 m"), "1200").correct
+
+
+def test_a_number_is_a_value_in_any_script_or_spelling():
+    """Regression (learn mode, NH3): the key "three" marked the student's "3" wrong."""
+    fill = _q(type="fill_blank", prompt="One nitrogen atom and _____ hydrogen atoms.", answer="three")
+    for said in ("3", "three", "Three", "३", "तीन", "3.0"):
+        assert _grade(fill, said).correct, said
+    assert not _grade(fill, "4").correct and not _grade(fill, "thirty").correct
+    assert _grade(ALL_TYPES[5], "thirty").correct and _grade(ALL_TYPES[5], "thirty km/h").correct
+    # digits inside a term are not a typo away from another term
+    assert not _grade(_q(type="fill_blank", prompt="Ammonia is _____.", answer="NH3"), "NH4").correct
+    assert _grade(_q(type="fill_blank", prompt="Ammonia is _____.", answer="NH3"), "NH₃").correct
+
+
+def test_true_false_accepts_yes_no_and_nepali():
+    q = ALL_TYPES[1]          # answer: False
+    assert _grade(q, "F").correct and _grade(q, "no").correct and _grade(q, "गलत").correct
+    assert not _grade(q, "maybe").correct and not _grade(q, "सही").correct
+
+
+def test_llm_grader_judges_only_short_misses_and_can_only_upgrade():
+    from lessonforge.services.chat.quiz_play import LLMGrader
+
+    class Judge:
+        calls = 0
+
+        def complete(self, prompt, **kw):
+            Judge.calls += 1
+            return type("R", (), {"text": '{"equivalent": true}'})()
+
+    g = LLMGrader(Judge())
+    fill = _q(type="fill_blank", prompt="Plants make food by _____.", answer="photosynthesis")
+    assert g.grade(fill, 1, "photosynthesis").correct and Judge.calls == 0      # rules settled it
+    assert g.grade(fill, 1, "प्रकाश संश्लेषण").correct and Judge.calls == 1    # judged
+    assert g.grade(fill, 1, "प्रकाश संश्लेषण").correct and Judge.calls == 1    # cached
+    assert not g.grade(fill, 1, "").correct and Judge.calls == 1               # nothing to judge
+
+    class Down:
+        def complete(self, prompt, **kw):
+            raise RuntimeError("model down")
+
+    assert not LLMGrader(Down()).grade(fill, 1, "sunlight").correct             # rule verdict kept
 
 
 def test_matching_and_ordering_grade_against_the_shuffled_key():

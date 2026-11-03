@@ -24,6 +24,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from ...config import LearnPlannerConfig
+from ...domain.answers import mentions
 from ...domain.ldd import Question, QuestionType
 from ...domain.learning import (
     CheckItem,
@@ -87,7 +88,7 @@ _DETAIL_SYSTEM = (
     '"distractor_misconceptions": {{"<option index 0-based>": "<misconception id>"}}, '
     'predict also "reveal": "<what really happens and why>"\n'
     '  true_false: "answer": "True"|"False"\n'
-    '  fill: prompt contains a blank "_____", "answer": "<word(s)>"\n'
+    '  fill: prompt contains a blank "_____", "answer": "<word(s)> / <other accepted forms>"\n'
     '  numeric: "answer": "<number with unit>"\n'
     '  order: "options": [<steps in the CORRECT order>]\n'
     '  match: "pairs": [{{"left": "...", "right": "..."}}, ...3-4 pairs]\n'
@@ -214,7 +215,27 @@ class LLMPlanner(LessonPlanner):
             data = {}
         if not isinstance(data, dict):
             data = {}
-        return build_detailed(obj, data, pins)
+        detailed = build_detailed(obj, data, pins)
+        leaked = hook_leaks(detailed)
+        if leaked:
+            detailed = detailed.model_copy(update={"hook": self._repair_hook(detailed, leaked)})
+        return detailed
+
+    def _repair_hook(self, obj: Objective, leaked: list[str]) -> str:
+        """Validate-and-repair: one targeted rewrite of a hook that states a check's
+        answer, re-validated; a neutral opener from the title if that fails too."""
+        avoid = ", ".join(f'"{a}"' for a in leaked)
+        prompt = (f"Objective: {obj.title}\nHook: {obj.hook}\n\nThis hook gives away {avoid}. "
+                  f"Rewrite it without {avoid} (in words or digits).")
+        try:
+            text = self.llm.complete(prompt, system=_REPAIR_HOOK_SYSTEM,
+                                     temperature=0.4).text.strip().strip('"')[:400]
+        except Exception:
+            text = ""
+        plausible = len(text) >= 12 and not text.lstrip().startswith(("{", "[")) and "?" in text
+        if plausible and not hook_leaks(obj.model_copy(update={"hook": text})):
+            return text
+        return neutral_hook(obj)
 
     def fresh_check(self, plan, objective_id):
         obj = plan.objective(objective_id)
@@ -227,11 +248,18 @@ class LLMPlanner(LessonPlanner):
             data = None
         asked = {c.question.prompt.strip().casefold() for c in obj.checks}
         check = _check(obj, data, f"{obj.id}.f{len(obj.checks) + 1}", known) if isinstance(data, dict) else None
-        if check is not None and check.question.prompt.strip().casefold() not in asked:
+        if check is not None and check.question.prompt.strip().casefold() not in asked \
+                and not gives_itself_away(check):
             return check
         fallback = fallback_check(obj)       # "explain it in your own words", if not used yet
         return None if any(c.id == fallback.id for c in obj.checks) else fallback
 
+
+_REPAIR_HOOK_SYSTEM = (
+    "You rewrite the opening hook of a tutoring step. The hook must make the student curious "
+    "WITHOUT stating the answer they are about to work out. Output ONLY the new hook: one "
+    "short question, plain text."
+)
 
 _FRESH_SYSTEM = (
     "You write ONE new interactive check for an objective of a tutoring session. It must test "
@@ -255,19 +283,56 @@ def build_detailed(obj: Objective, data: dict[str, Any], pins: list[PinnedChunk]
     checks: list[CheckItem] = []
     for i, raw in enumerate(data.get("checks") or [], 1):
         c = _check(obj, raw, f"{obj.id}.c{i}", known)
-        if c is not None:
+        if c is not None and not gives_itself_away(c):
             checks.append(c)
     if not checks:
         checks.append(fallback_check(obj))
     challenge = _check(obj, data.get("challenge"), f"{obj.id}.x", known) \
         if isinstance(data.get("challenge"), dict) else None
+    if challenge is not None and gives_itself_away(challenge):
+        challenge = None
+    hints = _str_list(data.get("hints"), 4)
+    # every hint but the last ("almost the answer") must leave the answer to the student
+    hints = [h for i, h in enumerate(hints)
+             if i == len(hints) - 1 or not _states_answer(h, checks)]
     return obj.model_copy(update={
         "hook": str(data.get("hook") or obj.hook or "")[:400],
         "worked_example": str(data.get("worked_example") or "")[:1500]
                           or " ".join(e.statement for e in obj.expectations),
-        "hint_ladder": _str_list(data.get("hints"), 4),
+        "hint_ladder": hints,
         "checks": checks, "challenge": challenge, "evidence": pins, "detailed": True,
     })
+
+
+# ── item quality (authoring time; strict — a false alarm costs one rewrite) ──
+_ANSWERABLE = (QuestionType.fill_blank, QuestionType.numerical)
+
+
+def _answers(c: CheckItem) -> list[str]:
+    q = c.question
+    if q.type in _ANSWERABLE or (q.type is QuestionType.mcq and q.answer):
+        return [q.answer]
+    return []
+
+
+def gives_itself_away(c: CheckItem) -> bool:
+    """A fill/numeric check whose prompt states its answer ("…NH3… one nitrogen and _____
+    hydrogen atoms" → three) measures reading, not understanding."""
+    q = c.question
+    return q.type in _ANSWERABLE and mentions(q.prompt.replace("_____", " "), q.answer, strict=True)
+
+
+def _states_answer(text: str, checks: list[CheckItem]) -> list[str]:
+    return [a for c in checks for a in _answers(c) if mentions(text, a, strict=True)]
+
+
+def hook_leaks(obj: Objective) -> list[str]:
+    """The check answers the objective's hook gives away."""
+    return _states_answer(obj.hook, obj.checks) if obj.hook else []
+
+
+def neutral_hook(obj: Objective) -> str:
+    return f"Let's explore \"{obj.title}\". What do you already know about it?"
 
 
 def fallback_check(obj: Objective) -> CheckItem:

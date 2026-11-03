@@ -215,7 +215,35 @@ def test_finishing_a_lesson_commits_mastery_and_an_episode():
     assert any(k.startswith("free:photosynthesis/") for k in m)        # no standard → stable slug
     assert len(m) == 2                                                  # O3 never reached
     [ep] = [i for i in svc.list(s.owner_id) if i.kind == "episode"]
-    assert "mastered 1/3" in ep.content and "found hard" in ep.content and ep.expires_at
+    assert "worked through 1/3 parts, mastered 1" in ep.content and "found hard" in ep.content
+    assert ep.expires_at
+
+
+def test_the_same_concept_worded_differently_shares_one_mastery_record():
+    """Regression: "What is ammonia?" then "what's ammonia" forked the learner's history
+    (exact slug equality), so the second lesson started from scratch."""
+    svc = _svc()
+    old = "free:what-is-ammonia?/chemical-formula-and-structure"
+    svc.store.upsert_mastery(MasteryRecord(owner_id="u", kc_ref=old, title="Chemical Formula and Structure",
+                                           p_mastery=0.8, stability=2.5, last_seen=datetime.now(UTC)))
+    new = "free:what's-ammonia/chemical-formula-and-structure"
+    other = "free:what's-ammonia/ammonia-in-agriculture"
+    assert svc.resolve("u", [new, other]) == {new: old, other: other}
+    prior = svc.prior("u", [new, other])
+    assert prior[new] == pytest.approx(0.8, abs=0.05) and other not in prior
+    # a different topic with the same part title is a different concept
+    assert svc.resolve("u", ["free:nitric-acid/chemical-formula-and-structure"]) == \
+        {"free:nitric-acid/chemical-formula-and-structure": "free:nitric-acid/chemical-formula-and-structure"}
+
+
+def test_an_episode_counts_only_mastered_parts_as_mastered():
+    svc = _svc()
+    s = learn_session()
+    for oid, status in (("O1", "mastered"), ("O2", "skipped"), ("O3", "left")):
+        s.states[oid].status = status
+    svc.commit_session(s)
+    [ep] = [i for i in svc.list(s.owner_id) if i.kind == "episode"]
+    assert "worked through 3/3 parts, mastered 1" in ep.content
 
 
 def test_prior_mastery_is_discounted_by_forgetting():

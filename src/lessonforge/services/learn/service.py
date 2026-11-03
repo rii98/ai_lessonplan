@@ -39,7 +39,7 @@ from .guard import AnswerLeakGuard
 from .learner import LearnerModel
 from .planner import LessonPlanner, PlanningError
 from .policy import ASKING, PedagogicalPolicy, enough_evidence, is_mastered, pick_check
-from .renderer import RenderContext, TemplateRenderer, TutorRenderer
+from .renderer import RenderContext, TemplateRenderer, TutorRenderer, safe_line
 from .retrieval import RetrievalPolicy
 from .store import LearningSessionStore, SessionConflict
 from .tracer import StudentStateTracer
@@ -341,6 +341,9 @@ class LearnService:
             self._finished(session)
 
     def _render(self, ctx: RenderContext) -> str:
+        """Model → targeted re-ask → template → a safe line. Every candidate passes the
+        leak guard; a re-ask names the phrase to avoid (rather than a vague "don't
+        reveal it"), which is what makes a second draft actually differ."""
         for attempt in range(2):
             ctx.strict = attempt > 0
             try:
@@ -348,13 +351,15 @@ class LearnService:
             except Exception:
                 log.warning("tutor renderer failed; using the template", exc_info=True)
                 break
+            leaked = self.guard.find(text, ctx.session, ctx.decision)
+            if leaked is None:
+                return text
+            ctx.avoid = [*ctx.avoid, leaked]
+            log.info("leak guard fired (move %s)", ctx.decision.move.value)
+        for text in (self._template.render(ctx), safe_line(ctx)):
             if not self.guard.leaked(text, ctx.session, ctx.decision):
                 return text
-            log.info("leak guard fired (move %s)", ctx.decision.move.value)
-        text = self._template.render(ctx)
-        if self.guard.leaked(text, ctx.session, ctx.decision):
-            text = "Let's try this one:" if ctx.decision.check_id else "Let's think about it together — what do you notice?"
-        return text
+        return "Let's try this one:" if ctx.decision.check_id else "Let's keep going — what do you think?"
 
     def _with_fresh_check(self, session: LearningSession, d: Decision) -> Decision:
         obj = session.plan.objective(d.objective_id)

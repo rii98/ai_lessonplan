@@ -794,3 +794,37 @@ Regression tests replay the trial's exact sequence.
 - SocraticLM — [github.com/CMLF-git-dev/SocraticLM](https://github.com/CMLF-git-dev/SocraticLM); TutorGym — [arXiv 2505.01563](https://arxiv.org/pdf/2505.01563)
 - Knowledge tracing + LLMs — [TutorLLM, arXiv 2502.15709](https://arxiv.org/pdf/2502.15709)
 - Agent memory: Mem0 / Letta / Zep comparisons — [overview](https://dev.to/agdex_ai/letta-vs-zepgraphiti-vs-mem0-choosing-an-ai-agent-memory-architecture-155a), [glossary](https://klu.ai/glossary/agent-memory-architectures)
+
+## 15. Robustness: meaning over strings (2026-11-03)
+
+Real sessions surfaced one bug family in many forms. The tutor's "Let's think about it
+together — what do you notice?" filler: the planner's hook stated the fill check's
+answer ("three"), so the leak guard blocked every draft. "3" marked wrong for "three".
+"why does the reaction stop?" ended the lesson. "what's ammonia" didn't find the
+mastery from "What is ammonia?". Each one recognised *meaning* by comparing *strings*.
+Patching each case adds rules forever, so the fix is structural:
+
+| Principle | Where |
+|---|---|
+| **One equivalence, shared.** Canonical form (NFKC, case, Devanagari digits), numbers as values in any spelling/script, alternatives, typo tolerance never across digits. The grader, the leak guard and the item validator all call it, so they can't disagree. | `domain/answers.py` |
+| **Tiered grading.** Rules settle what they can (free, certain); a short typed answer the rules marked *wrong* gets one cached LLM equivalence judgement (synonym, other language, unit). The judge can only upgrade, never downgrade; failure keeps the rule verdict. | `LLMGrader` |
+| **Validate-and-repair at authoring time.** A fill/numeric check whose stem gives its answer away is dropped; a hook (or early hint) that states a check's answer gets one targeted rewrite, re-validated, else a neutral opener. Strict matching here (false alarms cost one rewrite); lenient at runtime. | `planner.gives_itself_away`, `hook_leaks`, `_repair_hook` |
+| **Guard what still measures.** Answered checks are not guarded (the card already showed the answer). The guard reports *what* leaked, so the re-ask names the phrase; the last resort is a move-aware line from the part title, never filler. | `guard.find`, `service._render`, `renderer.safe_line` |
+| **Rules = high-precision fast path only.** A command settles a turn only when it *is* the message and the message isn't a question (`tracer.dominant`); yes/no after a yes/no question is an answer; topic switches are guessed by rules only when no model is available. Everything ambiguous goes to the classifier. | `tracer.py` |
+| **Entity resolution for knowledge components.** A curriculum code is an identity; a free-text key is a description, matched to the learner's existing record when topic *and* title agree (`memory.long_term.concept_match`). | `MemoryService.resolve` |
+| **One source for "mastered".** The episode note counts only `mastered` parts (it said 3/3 while the bars read 57%). | `MemoryService._commit` |
+
+**Testing the state machine by invariants, not examples** (`tests/test_learn_simulation.py`).
+Seeded simulated students (4 personas × 25 seeds) play whole lessons with every kind of
+input: right and wrong answers, numbers in other spellings, idk, one-word replies,
+questions containing command words, quick actions. After every turn the test asserts:
+the lesson terminates, no objective runs away, no check is shown twice, a reply is never
+empty or filler and never states the answer of the check below it, a correct answer in
+another spelling is graded correct, a question never ends the lesson, and exactly one
+objective is active. A failing seed is a reproducible bug report. **Every production
+bug becomes a scripted regression in the same file.** That's the loop that replaces
+hand-patching.
+
+Still open: an LLM item-quality critic for semantic giveaways the lexical validator
+can't see (a hook that explains the formula without naming the answer); replaying
+logged `learning_events` as an offline eval set.

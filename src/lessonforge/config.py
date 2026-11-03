@@ -368,6 +368,9 @@ class LongTermMemoryConfig(BaseModel):
     profile_slice: int = 5
     max_items_per_user: int = 300
     episode_ttl_days: int = 180
+    # a free-text lesson part is the same knowledge component as a stored one when topic
+    # AND title agree at least this much ("What is ammonia?" ≈ "what's ammonia")
+    concept_match: float = Field(default=0.75, ge=0.0, le=1.0)
 
 
 class ChatMemoryConfig(BaseModel):

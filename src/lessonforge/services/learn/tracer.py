@@ -40,6 +40,24 @@ SWITCH = re.compile(r"\b(?:teach me|let'?s (?:learn|study|do)|can we (?:learn|st
 QUESTION = re.compile(r"\?\s*$|^\s*(what|why|how|when|where|which|who|does|do|is|are|can|could|will|would)\b", _I)
 FRUSTRATED = re.compile(r"(this is (?:hard|boring|stupid)|i hate|ugh+|so hard|too hard|i give up|😡|😤)", _I)
 LOW_EFFORT = {"ok", "k", "okay", "yes", "no", "ya", "yeah", "hmm", "fine", "sure", "nope", "yep", "kk", "ho", "hajur"}
+# a one-word reply that is a real ANSWER when the tutor just asked a yes/no question
+YES_NO = {"yes", "no", "ya", "yeah", "nope", "yep", "ho", "hajur", "हो", "होइन"}
+
+
+def dominant(m: re.Match[str] | None, text: str, *, share: float = 0.5) -> bool:
+    """Is the matched command phrase most of the message, and the message not a question?
+
+    The precision rule for every command fast path: "stop" settles the turn; "why does
+    the reaction stop?" does not (it's a question that happens to contain the word).
+    Anything the rule can't settle goes to the classifier, which reads meaning."""
+    if m is None or QUESTION.search(text):
+        return False
+    total = len(words(text))
+    return total > 0 and len(words(m.group(0))) / total >= share
+
+
+def _last_tutor(history: list[ChatMessage]) -> str:
+    return next((m.content for m in reversed(history) if m.role is Role.assistant), "")
 
 def keyword_coverage(session: LearningSession, text: str) -> dict[str, float]:
     """Expectation id → share of its keywords present in ``text``, for every objective."""
@@ -71,34 +89,41 @@ class StudentStateTracer(ABC):
 
 class RulesTracer(StudentStateTracer):
     def trace(self, session, text, history):
-        return self.read(session, text)
+        return self.read(session, text, _last_tutor(history))
 
     @staticmethod
-    def command(session: LearningSession, text: str) -> Trace | None:
-        """Settle unmistakable turns with no model: commands and one-word replies."""
+    def command(session: LearningSession, text: str, last_tutor: str = "") -> Trace | None:
+        """Settle UNMISTAKABLE turns with no model — high precision, low recall by
+        design: a command only when it is the message (:func:`dominant`), a one-word
+        reply only when it can't be an answer. Everything else returns ``None``."""
         t = text.strip()
         ws = words(t)
-        if STOP.search(t) and len(ws) <= 8:
+        if dominant(STOP.search(t), t):
             return Trace(act=Act.stop_request)
-        if MOVE_ON.search(t) and len(ws) <= 8:
+        if dominant(MOVE_ON.search(t), t):
             return Trace(act=Act.skip_request, move_on=True)
-        if SKIP.search(t) and len(ws) <= 10:
+        if dominant(SKIP.search(t), t):
             return Trace(act=Act.skip_request, affect=Affect.confident)
-        if WANTS_ANSWER.search(t):
+        if WANTS_ANSWER.search(t) and len(ws) <= 8:
             return Trace(act=Act.help_request, wants_answer=True)
-        m = SWITCH.search(t)
-        if m and overlap(m.group("topic"), _plan_vocab(session)) < 0.34:
-            return Trace(act=Act.switch_topic, topic=m.group("topic").strip())
         if len(ws) <= 3 and HELP.search(t):
             return Trace(act=Act.help_request, affect=Affect.confused)
-        if ws and len(ws) <= 2 and all(w in LOW_EFFORT for w in ws):
+        asked_yes_no = last_tutor.rstrip().endswith("?")
+        if ws and len(ws) <= 2 and all(w in LOW_EFFORT for w in ws) \
+                and not (asked_yes_no and any(w in YES_NO for w in ws)):
             return Trace(act=Act.chitchat, low_effort=True)
         return None
 
-    def read(self, session: LearningSession, text: str) -> Trace:
-        cmd = self.command(session, text)
+    def read(self, session: LearningSession, text: str, last_tutor: str = "") -> Trace:
+        cmd = self.command(session, text, last_tutor)
         if cmd is not None:
             return cmd
+        # topic switches are only guessed by rules when no model is available — "can we
+        # do an example" is not a new topic, and only meaning can tell the difference
+        m = SWITCH.search(text)
+        if m and overlap(m.group("topic"), _plan_vocab(session)) < 0.34 \
+                and len(content_terms(m.group("topic"))) >= 1 and not QUESTION.search(text):
+            return Trace(act=Act.switch_topic, topic=m.group("topic").strip())
         covered = keyword_coverage(session, text)
         affect = Affect.frustrated if FRUSTRATED.search(text) else Affect.neutral
         if HELP.search(text):
@@ -204,7 +229,7 @@ class HybridTracer(StudentStateTracer):
         self.llm = LLMTracer(llm, fallback=self.rules)
 
     def trace(self, session, text, history):
-        cmd = self.rules.command(session, text)
+        cmd = self.rules.command(session, text, _last_tutor(history))
         return cmd if cmd is not None else self.llm.trace(session, text, history)
 
 

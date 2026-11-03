@@ -21,7 +21,6 @@ Design points:
 
 from __future__ import annotations
 
-import difflib
 import re
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
@@ -30,6 +29,7 @@ from typing import Any
 
 from ...activity import events as act
 from ...activity.store import ActivityRecorder
+from ...domain.answers import canonical, numeric_equivalent, text_equivalent, truth_value
 from ...domain.artifacts import Quiz
 from ...domain.assessment import view
 from ...domain.chat import ArtifactAttempt, ChatArtifact
@@ -98,46 +98,12 @@ class Grade:
     self_check: bool = False
 
 
-_ARTICLES = re.compile(r"^(a|an|the)\s+", re.IGNORECASE)
-
-
 def _norm(s: Any) -> str:
-    s = str(s).strip().casefold()
-    s = re.sub(r"[^\w\s.%/-]", " ", s, flags=re.UNICODE)
-    s = _ARTICLES.sub("", re.sub(r"\s+", " ", s).strip())
-    return s
-
-
-def _alternatives(answer: str) -> list[str]:
-    """``"vibrates / vibrating"`` → both are right."""
-    parts = [p for p in re.split(r"\s*(?:/|\||;|\bor\b)\s*", answer) if p.strip()]
-    return parts or [answer]
+    return canonical(s)
 
 
 def _text_match(response: Any, answer: str) -> bool:
-    r = _norm(response)
-    if not r:
-        return False
-    for alt in _alternatives(answer):
-        a = _norm(alt)
-        if r == a:
-            return True
-        if len(a) >= 5 and difflib.SequenceMatcher(None, r, a).ratio() >= 0.88:
-            return True  # a small typo shouldn't cost the mark
-    return False
-
-
-_NUM = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
-
-
-def _first_number(s: Any) -> float | None:
-    m = _NUM.search(str(s))
-    if not m:
-        return None
-    try:
-        return float(m.group().replace(",", ""))
-    except ValueError:
-        return None
+    return text_equivalent(response, answer)
 
 
 class AnswerGrader(ABC):
@@ -158,7 +124,8 @@ class RuleGrader(AnswerGrader):
             if t is QuestionType.mcq:
                 return self._mcq(q, response, base)
             if t is QuestionType.true_false:
-                ok = _norm(response) == _norm(q.answer)
+                got, want = truth_value(response), truth_value(q.answer)
+                ok = got is not None and got == want
                 return Grade(ok, float(ok), q.answer, **base)
             if t is QuestionType.fill_blank:
                 ok = _text_match(response, q.answer)
@@ -189,11 +156,7 @@ class RuleGrader(AnswerGrader):
 
     @staticmethod
     def _numerical(q: Question, response: Any, base: dict[str, Any]) -> Grade:
-        want, got = _first_number(q.answer), _first_number(response)
-        if want is None:                       # an answer with no number: compare as text
-            ok = _text_match(response, q.answer)
-        else:
-            ok = got is not None and abs(got - want) <= max(abs(want) * 0.01, 1e-9)
+        ok = numeric_equivalent(response, q.answer)
         return Grade(ok, float(ok), q.answer, **base)
 
 
@@ -205,20 +168,48 @@ _JUDGE_SYSTEM = (
 )
 
 
-class LLMGrader(RuleGrader):
-    """Rule grading, plus an LLM-judged verdict for typed written answers. Any
-    failure leaves the question as self-check — grading never blocks the quiz."""
+_EQUIV_SYSTEM = (
+    "You check a school student's short typed answer against the answer key. Decide "
+    "whether the student's answer MEANS the same as the key for this question: accept "
+    "synonyms, other spellings, another language or script, a number written in words or "
+    "digits, an equivalent unit, a correct but more specific term. Reject an answer that "
+    "is vague, different or only partly right. Output ONLY JSON: {\"equivalent\": true|false}."
+)
+_SHORT = (QuestionType.fill_blank, QuestionType.numerical)
 
-    def __init__(self, llm: LLMClient) -> None:
+
+class LLMGrader(RuleGrader):
+    """Tiered grading, as production answer checkers do it:
+
+    1. the deterministic rules (canonical form, numbers as values, alternatives, typos)
+       settle everything they can — free and certain;
+    2. a short typed answer the rules marked WRONG gets one equivalence judgement
+       (a synonym, another language, an equivalent unit) — the model can only turn a
+       miss into a hit, never mark a rules-correct answer wrong;
+    3. written answers get a judged verdict against the marking points.
+
+    Verdicts are cached per (question, canonical response), and any model failure keeps
+    the rule verdict — grading never blocks the quiz."""
+
+    def __init__(self, llm: LLMClient, *, cache_size: int = 2048) -> None:
         self.llm = llm
+        self._cache: dict[tuple[str, str, str], bool] = {}
+        self._cache_size = cache_size
 
     def grade(self, q: Question, number: int, response: Any) -> Grade:
         g = super().grade(q, number, response)
-        if q.type not in WRITTEN or not str(response or "").strip():
+        text = str(response or "").strip()
+        if not text:
+            return g
+        if q.type in _SHORT and g.correct is False and len(text) <= 120:
+            if self._equivalent(q, text):
+                g.correct, g.score = True, 1.0
+            return g
+        if q.type not in WRITTEN:
             return g
         pts = "\n".join(f"- {p}" for p in q.key_points) or "(none)"
         prompt = (f"Question: {q.prompt}\nModel answer: {q.answer}\nMarking points:\n{pts}\n\n"
-                  f"Student's answer: {str(response)[:1500]}\n\nJSON:")
+                  f"Student's answer: {text[:1500]}\n\nJSON:")
         try:
             data = extract_json(self.llm.complete(prompt, system=_JUDGE_SYSTEM,
                                                   temperature=0.0).text)
@@ -230,6 +221,23 @@ class LLMGrader(RuleGrader):
         g.score, g.self_check = score, False
         g.feedback = str(data.get("feedback", ""))[:300]
         return g
+
+    def _equivalent(self, q: Question, text: str) -> bool:
+        key = (q.prompt, q.answer, canonical(text))
+        if key in self._cache:
+            return self._cache[key]
+        prompt = (f"Question: {q.prompt}\nAnswer key: {q.answer}\n"
+                  f"Student's answer: {text}\n\nJSON:")
+        try:
+            data = extract_json(self.llm.complete(prompt, system=_EQUIV_SYSTEM,
+                                                  temperature=0.0).text)
+            ok = data.get("equivalent") is True or str(data.get("equivalent")).lower() == "true"
+        except Exception:
+            return False                       # not cached: a later try may succeed
+        if len(self._cache) >= self._cache_size:
+            self._cache.pop(next(iter(self._cache)))
+        self._cache[key] = ok
+        return ok
 
 
 # ── sessions ─────────────────────────────────────────────────────────────────

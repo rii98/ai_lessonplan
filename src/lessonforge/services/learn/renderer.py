@@ -36,6 +36,7 @@ class RenderContext:
     learner_notes: list[str] = field(default_factory=list)   # long-term memory (personalises only)
     max_hints: int = 3
     strict: bool = False                 # a retry after the leak guard fired
+    avoid: list[str] = field(default_factory=list)   # what the leak guard caught last draft
     action: str | None = None            # the student tapped a quick-action chip (no typed answer)
 
 
@@ -114,8 +115,16 @@ def move_instruction(ctx: RenderContext) -> str:
         lines.append(f"Confirm what was right, praising their reasoning specifically (not "
                      f"\"great job\"). Then ask ONE question that leads to: \"{nxt}\".")
     elif m is MoveKind.reexplain:
-        lines.append("Explain kindly, in a NEW way (an analogy or everyday example), why the "
-                     "correct answer is right — 2-3 sentences. Then ask one short question.")
+        if fb is not None and fb.correct is False:
+            # the card has already shown the right answer: asking it again is a non-question
+            lines.append("The correct answer is already shown to the student on the card. Explain "
+                         "kindly, in a NEW way (an analogy or everyday example), WHY it is right — "
+                         "2-3 sentences. Do NOT ask the same question again or ask them to repeat "
+                         "the answer; end with ONE short question that applies the idea to a new "
+                         "case.")
+        else:
+            lines.append("Explain kindly, in a NEW way (an analogy or everyday example), why the "
+                         "correct answer is right — 2-3 sentences. Then ask one short question.")
     elif m is MoveKind.bottom_out:
         lines.append("Give the answer clearly with the reasoning in 2-4 sentences (use HIDDEN). "
                      "No lecture about trying harder."
@@ -188,6 +197,30 @@ def move_instruction(ctx: RenderContext) -> str:
     return "\n".join(lines)
 
 
+def _strict_line(ctx: RenderContext) -> str:
+    said = ", ".join(f'"{a}"' for a in ctx.avoid[-3:])
+    return ("IMPORTANT: your previous draft gave away the answer"
+            + (f" ({said}). Do not write {said} — in words or digits — or anything that "
+               "states it" if said else ". Do not state it") + ".\n")
+
+
+def safe_line(ctx: RenderContext) -> str:
+    """The last-resort reply when every draft leaked: tied to THIS move and part, built
+    only from titles (which carry no check answers), so it still reads as a turn of the
+    lesson rather than filler."""
+    s, d = ctx.session, ctx.decision
+    title = s.plan.objective(d.objective_id).title
+    if d.check_id:
+        return f"Let's check \"{title}\" — try this one:"
+    if d.advance_to:
+        return f"Nice — let's move on to \"{_title(s, d.advance_to)}\". What do you already know about it?"
+    if d.move is MoveKind.wrap_up:
+        return "Well done today — your progress is saved."
+    if d.move is MoveKind.pause:
+        return "Your progress is saved — come back any time!"
+    return f"Let's look at \"{title}\" together. What do you already know about it?"
+
+
 _PERSONA = (
     "You are a warm, encouraging tutor for a school student{who}. You teach by SCAFFOLDING: "
     "guide the student to think instead of handing over answers. Write in {lang}. Short "
@@ -226,7 +259,7 @@ class LLMRenderer(TutorRenderer):
         learner = "; ".join(ctx.learner_notes[:5])
         prompt = (
             f"INSTRUCTION FOR THIS REPLY:\n{move_instruction(ctx)}\n"
-            + ("IMPORTANT: your previous draft revealed the answer. Do not state it.\n" if ctx.strict else "")
+            + (_strict_line(ctx) if ctx.strict else "")
             + f"\nLESSON: {s.plan.goal}\nCURRENT PART: {obj.title}\n"
             f"\nSOURCES:\n{src}\n\nHIDDEN (teacher notes):\n{hidden}\n"
             + (f"\nABOUT THE LEARNER (personalise only; not facts about the subject): {learner}\n" if learner else "")
@@ -265,6 +298,9 @@ class TemplateRenderer(TutorRenderer):
             body = f"Here's a hint: {hint} What do you think?"
         elif m is MoveKind.hook:
             body = (obj.hook or f"Let's explore: {obj.title}.") + " What's your guess?"
+        elif m is MoveKind.reexplain and d.feedback is not None and d.feedback.correct is False:
+            why = d.feedback.explanation or obj.worked_example.split(". ")[0]
+            body = (f"{why} " if why else "") + "Can you think of another example of this?"
         elif m in (MoveKind.explain_chunk, MoveKind.reexplain):
             body = f"Let's look at it step by step. {obj.title}. Can you say it in your own words?"
         elif m is MoveKind.worked_step:
