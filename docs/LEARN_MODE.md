@@ -540,6 +540,12 @@ turn/session finished ─► MemoryJobQueue
 - **Mastery also comes from quizzes**: `QuizSessions.finish` already records per-question
   results. Tagging questions with `kc_ref` (where the corpus has `standard`) lets ordinary
   quiz attempts update mastery too. One learner model for every surface.
+- **Context, not just the message.** The extractor also receives the previous exchange (the
+  tutor's last reply, up to ~800 chars, and the student's message before it), so "I like the
+  above style" or "yes" (to "shorter answers from now on?") can be understood. That context
+  is **for understanding only**: a memory records only what the student stated or agreed to.
+  A note must be self-contained; the policy vetoes unresolved references ("likes the above
+  style"). Short replies are read only when they answer a question the tutor just asked.
 - Extraction is **conservative**: only durable, user-stated or repeatedly observed facts.
   "The student said they are in grade 8" is not stored (that comes from `UserContext`,
   which is authoritative). "Student asked about mitochondria" is not a memory (it's in the

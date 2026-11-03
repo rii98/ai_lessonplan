@@ -204,7 +204,7 @@ class ChatPipeline:
         # 10. title a fresh conversation from its first question; roll the summary and
         #     learn from what the user said — both queued, off the request path.
         title = self._maybe_title(conversation, prev_len, request.message)
-        self._after_turn(conversation, prev_len, request.message, user_msg.id)
+        self._after_turn(conversation, prev_len, request.message, user_msg.id, history)
         self._record_turn(routed, filters, conversation, built.citations, started)
 
         yield ChatEvent("done", {
@@ -291,7 +291,7 @@ class ChatPipeline:
                                meta={"mode": mode.value, "intent": routed.meta()},
                                prev_len=prev_len, title_text=request.message,
                                routed=routed, filters=filters, started=started,
-                               said=(request.message, user_msg.id))
+                               said=(request.message, user_msg.id), prior=history)
 
     # ── learn mode ───────────────────────────────────────────────────────────
     def learn_input(self, conversation: Conversation, request: LearnInputRequest) -> Iterator[ChatEvent]:
@@ -326,7 +326,7 @@ class ChatPipeline:
                                what="learn turn", meta={"mode": "learn", "intent": routed.meta()},
                                prev_len=prev_len, title_text=session.plan.topic, routed=routed,
                                filters=session.plan.scope.filters, started=started,
-                               said=(lt.text, user_msg.id) if lt.text else None)
+                               said=(lt.text, user_msg.id) if lt.text else None, prior=history)
 
     def start_learning(self, conversation: Conversation, request: StartLearningRequest, *,
                        turn: TurnScope | None = None, language: str = "en") -> Iterator[ChatEvent]:
@@ -363,7 +363,8 @@ class ChatPipeline:
     def _relay(self, conversation: Conversation, events: Iterator[ChatEvent], *, what: str,
                meta: dict[str, Any], prev_len: int, title_text: str, routed: RoutedIntent,
                filters: dict[str, Any], started: float,
-               said: tuple[str, str] | None = None) -> Iterator[ChatEvent]:
+               said: tuple[str, str] | None = None,
+               prior: list[ChatMessage] | None = None) -> Iterator[ChatEvent]:
         """Stream a non-QA turn (a skill or learn mode): forward its events, saving any
         artifact as it appears; ``meta`` events are captured onto the assistant message
         (not forwarded). Then persist the reply, title the chat, roll the summary."""
@@ -407,7 +408,7 @@ class ChatPipeline:
             self._record_artifact(self.store.add_artifact(art))
 
         title = self._maybe_title(conversation, prev_len, title_text)
-        self._after_turn(conversation, prev_len, *(said or (None, None)))
+        self._after_turn(conversation, prev_len, *(said or (None, None)), prior)
         self._record_turn(routed, filters, conversation, [], started)
         done: dict[str, Any] = {"citations": 0, "mode": meta.get("mode"), "title": title,
                                 "intent": routed.meta(), "artifacts": artifact_ids}
@@ -415,13 +416,14 @@ class ChatPipeline:
             done["learn"] = extra["learn"]
         yield ChatEvent("done", done)
 
-    def _after_turn(self, conversation: Conversation, prev_len: int,
-                    said: str | None, message_id: str | None) -> None:
+    def _after_turn(self, conversation: Conversation, prev_len: int, said: str | None,
+                    message_id: str | None, prior: list[ChatMessage] | None = None) -> None:
         """Queue the memory upkeep for a finished turn (never on the request path)."""
         self.jobs.submit(self.memory.maybe_summarize, conversation,
                          prev_len=prev_len, total=prev_len + 2)
         if self.long_term is not None and said:
-            self.long_term.remember_turn(conversation.owner_id, conversation.id, said, message_id)
+            self.long_term.remember_turn(conversation.owner_id, conversation.id, said, message_id,
+                                         context=_prior_turns(prior or []))
 
     def _artifact_payload(self, artifact: ChatArtifact) -> dict:
         if self.artifacts is not None:
@@ -483,6 +485,17 @@ class ChatPipeline:
             return
         self.activity.record(act.build_event("quiz.created", props, resource_type="quiz",
                                             resource_id=art.id))
+
+
+_MEMORY_CONTEXT = 2   # the previous exchange: enough to resolve "the above", "yes, that one"
+
+
+def _prior_turns(history: list[ChatMessage]):
+    """The messages just before the student's new one, for the memory extractor."""
+    from ...domain.memory import PriorTurn
+
+    turns = [m for m in history if m.role in (Role.user, Role.assistant) and m.content.strip()]
+    return [PriorTurn(role=m.role.value, text=m.content) for m in turns[-_MEMORY_CONTEXT:]]
 
 
 def _deferred(fn, *args, **kwargs) -> Iterator[ChatEvent]:

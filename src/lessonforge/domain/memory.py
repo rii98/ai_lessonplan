@@ -77,6 +77,15 @@ class MasteryRecord(BaseModel):
                 "due": self.due_at <= _now()}
 
 
+class PriorTurn(BaseModel):
+    """One message BEFORE the student's new one, given to the extractor so references
+    ("the above style", "yes, that one") can be understood. Context only — a memory
+    may record only what the STUDENT states or agrees to."""
+
+    role: Literal["user", "assistant"]
+    text: str
+
+
 class MemoryOp(BaseModel):
     """One change the extractor proposes; the policy may veto it."""
 

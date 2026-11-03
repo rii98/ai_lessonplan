@@ -163,7 +163,8 @@ class FixedExtractor(MemoryExtractor):
     def __init__(self, ops):
         self.ops = ops
 
-    def extract(self, message, similar):
+    def extract(self, message, similar, context=()):
+        self.seen = (message, list(context))
         return [op(similar) if callable(op) else op for op in self.ops]
 
 
@@ -345,3 +346,65 @@ def test_forget_erases_a_learners_memories_mastery_and_lessons(pg):
                       "learning_sessions", "learning_events"):
             cur.execute(f"SELECT count(*) AS n FROM {table}")
             assert cur.fetchone()["n"] == 0, table
+
+
+
+# ── context: understanding "the above style" / "yes, that one" ───────────────
+def test_the_extractor_sees_the_previous_exchange_as_context_only():
+    from lessonforge.domain.memory import PriorTurn
+
+    class Capture(OpsLLM):
+        def complete(self, prompt, *, system=None, json_schema=None, temperature=None):
+            self.prompt, self.system = prompt, system
+            return super().complete(prompt, system=system)
+
+    llm = Capture([])
+    ctx = [PriorTurn(role="user", text="explain photosynthesis"),
+           PriorTurn(role="assistant", text="- Leaves catch sunlight\n- Like steaming momos: heat in, food out")]
+    LLMExtractor(llm).extract("I like the above style, explain like this always", [], ctx)
+    assert "Tutor: - Leaves catch sunlight - Like steaming momos" in llm.prompt
+    assert "Student's NEW message: I like the above style" in llm.prompt
+    assert "SELF-CONTAINED" in llm.system and "never something the tutor said" in llm.system
+
+
+def test_a_short_reply_counts_only_when_it_answers_the_tutors_question():
+    from lessonforge.domain.memory import PriorTurn
+    from lessonforge.services.memory.extractor import worth_reading
+
+    asked = [PriorTurn(role="assistant", text="Should I keep answers short from now on?")]
+    told = [PriorTurn(role="assistant", text="Plants make food from sunlight.")]
+    assert worth_reading("yes", asked) and not worth_reading("yes", told) and not worth_reading("yes", [])
+    assert worth_reading("I like momo", [])
+
+
+@pytest.mark.parametrize("text, ok", [
+    ("likes the above style", False), ("prefers answers like this", False),
+    ("wants explanations the same way", False), ("finds it hard to remember it", False),
+    ("prefers short bullet-point answers with food examples", True), ("likes momo", True),
+])
+def test_a_memory_must_make_sense_on_its_own(text, ok):
+    op = MemoryOp(op="add", kind="preference", content=text, confidence=0.9)
+    assert AllowlistPolicy().allow(op, []) is ok
+
+
+def test_the_pipeline_passes_the_previous_reply_to_memory(fake_embedder, fake_store, fake_reranker):
+    llm = EchoLLM()
+    config = ChatConfig()
+    config.retrieval.collections = []
+    store = MemoryChatStore()
+    capture = FixedExtractor([])
+    long_term = MemoryService(store=MemoryMemoryStore(), extractor=capture, policy=AllowlistPolicy(),
+                              jobs=InlineJobs(), config=LongTermMemoryConfig())
+    retr = Retriever(embedder=fake_embedder, vector_store=fake_store, reranker=fake_reranker, hybrid=False)
+    pipe = ChatPipeline(store=store, memory=ConversationMemory(store, config.memory, llm=llm),
+                        transformer=PassthroughTransformer(), retriever=ChatRetriever(retr, config.retrieval),
+                        context_builder=ContextBuilder(config.context),
+                        synthesizer=AnswerSynthesizer(llm, config.synthesis), config=config,
+                        jobs=InlineJobs(), long_term=long_term)
+    conv = store.create(Conversation(owner_id="u"))
+    list(pipe.stream(conv, ChatMessageRequest(message="explain photosynthesis briefly")))
+    list(pipe.stream(store.get(conv.id, owner_id="u"), ChatMessageRequest(message="I like the above style")))
+    message, context = capture.seen
+    assert message == "I like the above style"
+    assert [(t.role, t.text) for t in context] == [("user", "explain photosynthesis briefly"),
+                                                   ("assistant", "answer")]

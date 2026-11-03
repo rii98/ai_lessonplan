@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from ...config import LongTermMemoryConfig
 from ...domain.learning import LearningSession, kc_key
-from ...domain.memory import MasteryRecord, MemoryItem, MemoryOp
+from ...domain.memory import MasteryRecord, MemoryItem, MemoryOp, PriorTurn
 from ...providers.base import Embedder
 from ...util import overlap
 from .extractor import MemoryExtractor
@@ -98,18 +99,22 @@ class MemoryService:
 
     # ── write (queued) ───────────────────────────────────────────────────────
     def remember_turn(self, owner_id: str, conversation_id: str, message: str,
-                      message_id: str | None = None) -> None:
-        self.jobs.submit(self._extract, owner_id, conversation_id, message, message_id)
+                      message_id: str | None = None, context: Sequence[PriorTurn] = ()) -> None:
+        """Queue extraction. ``context`` = the messages just before ``message`` (so "the
+        above style" / "yes" can be understood) — context only, never a source."""
+        self.jobs.submit(self._extract, owner_id, conversation_id, message, message_id,
+                         list(context))
 
     def commit_session(self, session: LearningSession) -> None:
         self.jobs.submit(self._commit, session.model_copy(deep=True))
 
-    def _extract(self, owner_id: str, conversation_id: str, message: str, message_id: str | None) -> None:
+    def _extract(self, owner_id: str, conversation_id: str, message: str, message_id: str | None,
+                 context: Sequence[PriorTurn] = ()) -> None:
         if not self.store.enabled(owner_id):
             return
         existing = self.store.live(owner_id)
         similar = self._relevant(message, existing) or existing[:5]
-        for op in self.extractor.extract(message, similar):
+        for op in self.extractor.extract(message, similar, context):
             if self.policy.allow(op, existing):
                 self._apply(owner_id, op, {"conversation_id": conversation_id, "message_id": message_id})
 

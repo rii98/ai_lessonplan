@@ -40,6 +40,17 @@ def sensitive(text: str) -> bool:
     return any(p.search(text) for p in DENY)
 
 
+# A note read weeks later must make sense with no conversation around it.
+VAGUE = re.compile(r"\b(the above|above (?:style|one|way|format)|(?:this|that|same) (?:style|way|one|format|thing)|"
+                   r"like (?:this|that|before)|as before|the previous (?:one|answer|style)|it)\b\s*\.?$|"
+                   r"\b(the above|this style|that style|that one|this one|the same way)\b", _I)
+
+
+def vague(text: str) -> bool:
+    """Unresolved references ("likes the above style") — meaningless out of context."""
+    return bool(VAGUE.search(text))
+
+
 class MemoryPolicy(ABC):
     @abstractmethod
     def allow(self, op: MemoryOp, existing: list[MemoryItem]) -> bool: ...
@@ -56,7 +67,7 @@ class AllowlistPolicy(MemoryPolicy):
         content = op.content.strip()
         if not (3 <= len(content) <= 200) or op.kind not in MEMORY_KINDS:
             return False
-        if op.confidence < self.min_confidence or sensitive(content):
+        if op.confidence < self.min_confidence or sensitive(content) or vague(content):
             return False
         if op.op == "update":
             return op.target_id in {i.id for i in existing}
