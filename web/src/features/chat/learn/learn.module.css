@@ -22,28 +22,44 @@
 /* phones: names of the other steps go — the bars still show where you are */
 @media (max-width: 639px) { .step:not([data-current]) .stepText { display: none; } .step[data-current] { flex-grow: 3; } }
 
-/* an open check is the page's focal point: raised, pine-edged, the largest prompt */
-.widget { border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--paper); padding: 14px 16px 16px; display: grid; gap: 12px; margin-top: 4px; }
-.widget[data-open] { border-color: color-mix(in srgb, var(--pine) 55%, var(--rule)); box-shadow: inset 3px 0 0 var(--pine), 0 1px 2px rgb(29 26 22 / 0.05), 0 8px 24px -12px rgb(29 26 22 / 0.18); }
-.widget[data-open][data-purpose="challenge"] { border-color: color-mix(in srgb, var(--marigold) 60%, var(--rule)); box-shadow: inset 3px 0 0 var(--marigold), 0 1px 2px rgb(29 26 22 / 0.05), 0 8px 24px -12px rgb(29 26 22 / 0.18); }
+/* an open check is the page's focal point: raised, pine-edged, the largest prompt — and it arrives */
+.widget { border: 1.5px solid var(--rule); border-radius: 14px; background: var(--paper); padding: 16px 18px 18px; display: grid; gap: 14px; margin-top: 6px; animation: lf-card-in 320ms var(--ease) backwards; }
+.widget[data-open] {
+  border-color: color-mix(in srgb, var(--pine) 60%, var(--rule));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--pine-tint) 70%, var(--paper)) 0, var(--paper) 88px);
+  box-shadow: 0 1px 2px rgb(9 9 11 / 0.05), 0 12px 32px -14px color-mix(in srgb, var(--pine) 45%, transparent);
+}
+.widget[data-open][data-purpose="challenge"] {
+  border-color: color-mix(in srgb, var(--marigold) 70%, var(--rule));
+  background: linear-gradient(180deg, var(--marigold-tint) 0, var(--paper) 88px);
+  box-shadow: 0 1px 2px rgb(9 9 11 / 0.05), 0 12px 32px -14px color-mix(in srgb, var(--marigold) 55%, transparent);
+}
 .widgetHead { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
-.widgetLabel { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-xs); font-weight: 600; color: var(--pine); }
-.widget[data-purpose="challenge"] .widgetLabel { color: var(--marigold-ink); }
-.yourTurn { font-size: var(--text-xs); font-weight: 600; color: var(--on-pine); background: var(--pine); border-radius: var(--radius-full); padding: 2px 9px; }
-.widget[data-purpose="challenge"] .yourTurn { background: var(--marigold-tint); color: var(--marigold-ink); }
-.widgetPrompt { font-family: var(--font-serif); font-size: var(--text-xl); font-weight: 600; line-height: 1.4; color: var(--ink); }
+.widgetLabel { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--pine); background: var(--paper); border: 1px solid color-mix(in srgb, var(--pine) 30%, var(--rule)); border-radius: var(--radius-full); padding: 3px 10px; }
+.widget[data-purpose="challenge"] .widgetLabel { color: var(--marigold-ink); border-color: color-mix(in srgb, var(--marigold) 45%, var(--rule)); }
+.yourTurn { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); font-weight: 700; color: var(--on-pine); background: var(--pine); border-radius: var(--radius-full); padding: 3px 10px 3px 8px; }
+.yourTurn::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: lf-pulse 1.6s ease-in-out infinite; }
+.widget[data-purpose="challenge"] .yourTurn { background: var(--marigold); color: #1b1300; }
+.widgetPrompt { font-family: var(--font-serif); font-size: 1.375rem; font-weight: 650; line-height: 1.35; letter-spacing: -0.005em; color: var(--ink); }
 .widget:not([data-open]) .widgetPrompt { font-size: var(--text-lg); }
+
+@keyframes lf-card-in { from { opacity: 0.4; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes lf-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
+@keyframes lf-pop-in { 0% { opacity: 0; transform: scale(0.6); } 60% { opacity: 1; transform: scale(1.15); } 100% { transform: scale(1); } }
 .sure { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: var(--text-xs); color: var(--ink-3); }
 .sure span { margin-right: 4px; }
 .sure button { border: 1px solid var(--rule); background: transparent; border-radius: var(--radius-full); padding: 2px 8px; font-size: var(--text-xs); color: var(--ink-2); cursor: pointer; }
 .sure button[data-on] { border-color: var(--pine); background: var(--pine-tint); color: var(--pine); }
 
 /* a graded check is history: a compact, quiet result — outcome first */
-.graded { border: 1px solid var(--rule); border-left-width: 3px; border-radius: var(--radius-md); background: var(--canvas); padding: 10px 14px; display: grid; gap: 6px; font-size: var(--text-sm); margin-top: 4px; }
+.graded { border: 1px solid var(--rule); border-left-width: 4px; border-radius: var(--radius-lg); background: var(--canvas); padding: 12px 16px; display: grid; gap: 6px; font-size: var(--text-sm); margin-top: 4px; animation: lf-card-in 280ms var(--ease) backwards; }
+.graded[data-tone="ok"] { background: color-mix(in srgb, var(--ok-tint) 60%, var(--paper)); }
+.graded[data-tone="miss"] { background: color-mix(in srgb, var(--marigold-tint) 60%, var(--paper)); }
 .graded[data-tone="ok"] { border-left-color: var(--ok); }
 .graded[data-tone="miss"] { border-left-color: var(--marigold); }
 .gradedHead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.verdict { display: inline-flex; align-items: center; gap: 5px; font-weight: 650; color: var(--ink); }
+.verdict { display: inline-flex; align-items: center; gap: 6px; font-weight: 750; font-size: var(--text-md); color: var(--ink); }
+.verdict svg { animation: lf-pop-in 420ms var(--ease) 120ms backwards; }
 .graded[data-tone="ok"] .verdict { color: var(--ok); }
 .graded[data-tone="miss"] .verdict { color: var(--marigold-ink); }
 .gradedKind { font-size: var(--text-xs); color: var(--ink-3); }

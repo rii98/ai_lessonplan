@@ -26,6 +26,9 @@
 .thread > .user + .ai, .thread > .receipt + .ai { margin-top: calc(-1 * var(--space-4)); }
 .thread > .ai + .receipt { margin-top: calc(-1 * var(--space-4)); }
 .msg { display: grid; gap: var(--space-3); }
+/* only the turn being written fades in — saved history (and the swap from live to saved) stays put */
+.msg[data-live] { animation: lf-msg-in 220ms var(--ease) backwards; }
+@keyframes lf-msg-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 /* the student's own words: a quiet sans bubble, a step smaller than the tutor's voice */
 .user { justify-self: end; max-width: 80%; background: var(--sunken); color: var(--ink); border-radius: 18px 18px 4px 18px; padding: 9px 14px; font-size: var(--text-md); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -55,10 +58,30 @@
 .refN { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: var(--pine-tint); color: var(--pine); font-weight: 700; flex-shrink: 0; }
 .refText { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.card { display: grid; grid-template-columns: 36px 1fr auto; gap: 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--canvas); cursor: pointer; text-align: left; width: 100%; color: var(--ink); }
-.card:hover { border-color: var(--pine); }
-.cardIcon { width: 36px; height: 36px; border-radius: var(--radius-md); background: var(--pine-tint); color: var(--pine); display: grid; place-items: center; }
+/* a quiz made in chat: a bold, playable card — not a file row */
+.card {
+  display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; gap: 14px; align-items: center; width: 100%; text-align: left;
+  padding: 14px 16px; border: 1.5px solid color-mix(in srgb, var(--pine) 35%, var(--rule)); border-radius: 14px; cursor: pointer; color: var(--ink);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--pine-tint) 85%, var(--paper)), var(--paper) 70%);
+  box-shadow: 0 1px 2px rgb(9 9 11 / 0.05), 0 10px 28px -16px color-mix(in srgb, var(--pine) 50%, transparent);
+  transition: transform 160ms var(--ease), box-shadow 160ms var(--ease), border-color 160ms var(--ease);
+  animation: lf-card-rise 320ms var(--ease) backwards;
+}
+.card:hover { border-color: var(--pine); transform: translateY(-2px); box-shadow: 0 2px 4px rgb(9 9 11 / 0.06), 0 16px 32px -14px color-mix(in srgb, var(--pine) 60%, transparent); }
+.card:active { transform: scale(0.99); }
+.cardIcon { width: 48px; height: 48px; border-radius: 12px; background: var(--pine); color: var(--on-pine); display: grid; place-items: center; transition: transform 220ms var(--ease); }
+.card:hover .cardIcon { transform: rotate(-6deg) scale(1.05); }
+.cardBody { display: grid; gap: 2px; min-width: 0; }
+.cardKicker { font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--pine); }
+.cardTitle { font-family: var(--font-serif); font-size: var(--text-lg); font-weight: 650; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cardMeta { font-size: var(--text-xs); color: var(--ink-3); }
+.cardBar { display: block; height: 4px; margin-top: 6px; max-width: 180px; border-radius: var(--radius-full); background: var(--sunken); overflow: hidden; }
+.cardBar i { display: block; height: 100%; background: var(--pine); border-radius: inherit; animation: lf-grow 700ms var(--ease) 200ms backwards; transform-origin: left; }
+.cardCta { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--radius-full); background: var(--pine); color: var(--on-pine); font-weight: 650; font-size: var(--text-sm); white-space: nowrap; transition: background-color 160ms var(--ease); }
+.card:hover .cardCta { background: var(--pine-hover); }
+@media (max-width: 480px) { .card { grid-template-columns: 40px minmax(0, 1fr); } .cardIcon { width: 40px; height: 40px; } .cardCta { grid-column: 1 / -1; justify-content: center; } }
+@keyframes lf-card-rise { from { opacity: 0.4; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes lf-grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 
 .quick { display: flex; gap: 6px; flex-wrap: wrap; }
 .quick button { border: 1px solid var(--rule); background: transparent; border-radius: var(--radius-full); padding: 5px 12px; font-size: var(--text-sm); color: var(--ink-2); cursor: pointer; }

@@ -37,14 +37,22 @@ export function UserMessage({ text, kind = "speech" }: { text: string; kind?: Us
 }
 
 export function ArtifactCard({ a, onOpen }: { a: ArtifactSummary; onOpen: () => void }) {
+  const best = a.best != null ? (Number.isInteger(a.best) ? a.best : a.best.toFixed(1)) : null;
   const status = a.in_progress ? "In progress"
-    : !a.attempts ? `${a.question_count} questions · not tried yet`
-    : `${a.question_count} questions · ${a.attempts} attempt${a.attempts > 1 ? "s" : ""}${a.best != null ? ` · best ${Number.isInteger(a.best) ? a.best : a.best.toFixed(1)}/${a.question_count}` : ""}`;
+    : !a.attempts ? "Not tried yet"
+    : `${a.attempts} attempt${a.attempts > 1 ? "s" : ""}${best != null ? ` · best ${best}/${a.question_count}` : ""}`;
+  const cta = a.in_progress ? "Resume" : a.attempts ? "Play again" : "Start quiz";
+  const pct = a.best != null && a.question_count ? Math.round((a.best / a.question_count) * 100) : null;
   return (
     <button type="button" className={s.card} onClick={onOpen}>
-      <span className={s.cardIcon}><Icon.ListChecks size={18} /></span>
-      <span style={{ minWidth: 0 }}><div style={{ fontWeight: 600 }}>{a.title}</div><div className={s.cardMeta}>{status}</div></span>
-      <Icon.ChevronRight size={18} style={{ color: "var(--ink-3)" }} />
+      <span className={s.cardIcon}><Icon.ListChecks size={22} /></span>
+      <span className={s.cardBody}>
+        <span className={s.cardKicker}>Quiz · {a.question_count} questions</span>
+        <span className={s.cardTitle}>{a.title}</span>
+        <span className={s.cardMeta}>{status}</span>
+        {pct != null && <span className={s.cardBar} aria-hidden><i style={{ width: `${pct}%` }} /></span>}
+      </span>
+      <span className={s.cardCta}>{a.in_progress || a.attempts ? <Icon.RotateCcw size={15} /> : <Icon.Play size={15} />}{cta}</span>
     </button>
   );
 }
@@ -63,7 +71,7 @@ export function AssistantMessage({ content, citations = [], artifacts = [], stat
 }) {
   const byN = new Map(citations.map((c) => [c.n, c]));
   return (
-    <div className={`${s.msg} ${s.ai}`}>
+    <div className={`${s.msg} ${s.ai}`} data-live={pending || undefined}>
       {showName && (
         <div className={s.aiName}>
           {skill === "learn" ? <Icon.GraduationCap size={14} aria-hidden /> : <Icon.BookOpen size={14} aria-hidden />}

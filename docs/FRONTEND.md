@@ -31,8 +31,8 @@ The metaphor is a teacher's plan book: paper, ink, a pen for the teacher's work,
 highlighter for a colleague's (the AI's) suggestions. It deliberately avoids the
 generic-AI look: no purple gradients, no glass, no sparkle icons, no emoji as UI.
 
-- **Surfaces:** warm paper (`--paper`), slightly darker margin (`--canvas`). Sections are separated by hairline rules and whitespace instead of floating shadowed cards.
-- **Ink:** a near-black warm ink for text, and muted ink for metadata.
+- **Surfaces:** plain white paper (`--paper`) and a barely-grey margin (`--canvas`) in light mode; neutral near-black in dark mode. Surfaces are deliberately colourless (no cream/warm tint) so the accents carry all the colour. Sections are separated by hairline rules and whitespace instead of floating shadowed cards.
+- **Ink:** neutral near-black ink for text, and muted grey ink for metadata.
 - **Pine** (`--pine`), the single action colour, for primary buttons, focus rings and links.
 - **Marigold** (`--marigold`), the highlighter, *only* for AI proposals and "needs attention" markers. Because it means one thing, the eye learns that marigold = "look here".
 - **Brick** (`--brick`) for errors and destructive actions.

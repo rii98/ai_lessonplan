@@ -1,5 +1,6 @@
 /*
- * Design tokens — "the plan book" (docs/FRONTEND.md §2).
+ * Design tokens — "the plan book" (docs/FRONTEND.md §2). Neutral surfaces: plain
+ * white (light) and neutral near-black (dark); colour lives only in the accents.
  * Scoped to [data-lf-root] so an embedding host (Edboox) never inherits them by
  * accident; the standalone shell also applies them to :root.
  *
@@ -8,18 +9,18 @@
  *  brick    — errors and destructive actions
  */
 :root, [data-lf-root] {
-  --paper: #fbf9f4;
-  --canvas: #f3efe6;
-  --sunken: #ece7dc;
-  --rule: #e2dccf;
-  --rule-strong: #cbc2af;
-  --ink: #1d1a16;
-  --ink-2: #4a443b;
-  --ink-3: #776f62;
+  --paper: #ffffff;
+  --canvas: #f7f7f8;
+  --sunken: #efeff1;
+  --rule: #e4e4e7;
+  --rule-strong: #cdcdd3;
+  --ink: #18181b;
+  --ink-2: #3f3f46;
+  --ink-3: #6b6b74;
   --pine: #1f5a4c;
   --pine-hover: #174639;
   --pine-tint: #e2ede8;
-  --on-pine: #fbf9f4;
+  --on-pine: #ffffff;
   --marigold: #dc9a2e;
   --marigold-ink: #7a4d07;
   --marigold-tint: #fbefd6;
@@ -27,8 +28,8 @@
   --brick-tint: #f8e4df;
   --ok: #2f7a4a;
   --ok-tint: #e3f1e7;
-  --scrim: rgb(29 26 22 / 0.42);
-  --shadow-overlay: 0 1px 2px rgb(29 26 22 / 0.08), 0 12px 32px -8px rgb(29 26 22 / 0.24);
+  --scrim: rgb(9 9 11 / 0.42);
+  --shadow-overlay: 0 1px 2px rgb(9 9 11 / 0.08), 0 12px 32px -8px rgb(9 9 11 / 0.24);
 
   /* phase timeline hues — distinguishable, muted, AA against paper text */
   --phase-1: #2f6f5e;
@@ -76,18 +77,18 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]), :root:not([data-theme="light"]) [data-lf-root] {
-    --paper: #1c1915;
-    --canvas: #15120e;
-    --sunken: #26221c;
-    --rule: #332d25;
-    --rule-strong: #4a4135;
-    --ink: #efe9dd;
-    --ink-2: #c9c0b0;
-    --ink-3: #978c7b;
+    --paper: #18181b;
+    --canvas: #111113;
+    --sunken: #26262a;
+    --rule: #2e2e33;
+    --rule-strong: #45454c;
+    --ink: #f4f4f5;
+    --ink-2: #cacacf;
+    --ink-3: #93939b;
     --pine: #74b8a2;
     --pine-hover: #8cc8b4;
     --pine-tint: #1d2e28;
-    --on-pine: #0e1a16;
+    --on-pine: #0b1714;
     --marigold: #e8b252;
     --marigold-ink: #f0c777;
     --marigold-tint: #36290f;
@@ -108,18 +109,18 @@
 }
 
 :root[data-theme="dark"], :root[data-theme="dark"] [data-lf-root] {
-  --paper: #1c1915;
-  --canvas: #15120e;
-  --sunken: #26221c;
-  --rule: #332d25;
-  --rule-strong: #4a4135;
-  --ink: #efe9dd;
-  --ink-2: #c9c0b0;
-  --ink-3: #978c7b;
+  --paper: #18181b;
+  --canvas: #111113;
+  --sunken: #26262a;
+  --rule: #2e2e33;
+  --rule-strong: #45454c;
+  --ink: #f4f4f5;
+  --ink-2: #cacacf;
+  --ink-3: #93939b;
   --pine: #74b8a2;
   --pine-hover: #8cc8b4;
   --pine-tint: #1d2e28;
-  --on-pine: #0e1a16;
+  --on-pine: #0b1714;
   --marigold: #e8b252;
   --marigold-ink: #f0c777;
   --marigold-tint: #36290f;

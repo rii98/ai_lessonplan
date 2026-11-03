@@ -19,12 +19,13 @@ function Choices({ options, result, picked, onPick, busy, isRight }: {
 }) {
   return (
     <div className={s.opts} role="group">
-      {options.map((o) => {
-        const state = result ? (isRight(o.value) ? "ok" : picked === o.value ? "no" : undefined) : picked === o.value ? "pick" : undefined;
+      {options.map((o, i) => {
+        // once graded: the right answer pops, a wrong pick is nudged, the rest step back
+        const state = result ? (isRight(o.value) ? "ok" : picked === o.value ? "no" : "dim") : picked === o.value ? "pick" : undefined;
         return (
-          <button key={o.key} type="button" className={s.opt} data-state={state} disabled={!!result || busy} onClick={() => onPick(o.value)}>
+          <button key={o.key} type="button" className={s.opt} data-state={state} style={{ ["--i" as string]: i }} disabled={!!result || busy} onClick={() => onPick(o.value)}>
             <span className={s.optKey}>{o.key}</span><span className={s.optText}>{o.label}</span>
-            {state === "ok" && <Icon.Check size={16} />}{state === "no" && <Icon.X size={16} />}
+            <span className={s.optMark}>{state === "ok" && <Icon.CheckCircle2 size={20} aria-label="correct" />}{state === "no" && <Icon.RotateCcw size={18} aria-label="your pick" />}</span>
           </button>
         );
       })}

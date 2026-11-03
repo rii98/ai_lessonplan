@@ -93,7 +93,7 @@ export function QuizArtifact({ id, onSummary, onNew, onDeleted }: ArtifactRender
         )}
         {result && !result.pending && (
           <div className={`${s.fb} ${result.correct ? s.ok : result.score > 0 ? s.part : s.no}`} role="status">
-            <div className={s.fbHead}>{result.correct ? "Correct" : result.score > 0 ? "Partly right" : "Not quite"}</div>
+            <div className={s.fbHead}>{result.correct ? <Icon.CheckCircle2 size={20} /> : <Icon.RotateCcw size={18} />}{result.correct ? "Correct" : result.score > 0 ? "Partly right" : "Not quite"}</div>
             {result.feedback && <p>{result.feedback}</p>}
             {!result.correct && <div><b>Answer:</b> <RichText text={result.expected} /></div>}
             {result.explanation && <RichText text={result.explanation} />}
