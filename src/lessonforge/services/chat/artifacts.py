@@ -21,6 +21,7 @@ class ArtifactService:
     def __init__(self, store: ChatStore, grader: AnswerGrader,
                  activity: ActivityRecorder | None = None) -> None:
         self.store = store
+        self.grader = grader   # shared with learn-mode widgets: one grading rule set
         self._kinds: dict[str, QuizSessions] = {QUIZ: QuizSessions(store, grader, activity)}
 
     def for_kind(self, kind: str) -> QuizSessions:

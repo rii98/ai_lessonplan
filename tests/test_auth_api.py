@@ -20,6 +20,7 @@ from tests.conftest import api_client, build_container
 # (test_every_route_is_classified) — that is what keeps the matrix from drifting.
 AREAS: list[tuple[str, Perm | None]] = [
     (r"^/api/v1/me$", None),                               # authentication only
+    (r"^/api/v1/me/", Perm.CHAT),                          # the learner's memory & progress
     (r"^/api/v1/chat/", Perm.CHAT),
     (r"^/api/v1/(lessons|documents|units|artifacts|export|profile|grounding)(/|$)", Perm.AUTHOR),
     (r"^/api/v1/corpus/", Perm.CORPUS_MANAGE),

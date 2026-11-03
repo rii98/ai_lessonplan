@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { breadcrumb } from "@/lib/format";
 import { RichText, Icon } from "@/ui";
 import type { ArtifactSummary, Citation } from "./types";
@@ -27,14 +28,18 @@ export function ArtifactCard({ a, onOpen }: { a: ArtifactSummary; onOpen: () => 
   );
 }
 
-export function AssistantMessage({ content, citations = [], artifacts = [], status, pending, skill, onCite, onOpenArtifact, onQuickAction }: {
+export function AssistantMessage({ content, citations = [], artifacts = [], status, pending, skill, onCite, onOpenArtifact, onQuickAction, onTeach, children }: {
   content: string; citations?: Citation[]; artifacts?: ArtifactSummary[]; status?: string | null; pending?: boolean; skill?: string | null;
   onCite: (c: Citation) => void; onOpenArtifact: (id: string) => void; onQuickAction?: (text: string) => void;
+  /** Offer a scaffolded lesson on what was just asked (learn mode). */
+  onTeach?: () => void;
+  /** Learn-mode extras under the reply: the inline widget, quick chips, a lesson offer. */
+  children?: ReactNode;
 }) {
   const byN = new Map(citations.map((c) => [c.n, c]));
   return (
     <div className={`${s.msg} ${s.ai}`}>
-      <div className={s.aiName}>LessonForge{skill && skill !== "qa" && <span style={{ color: "var(--marigold-ink)" }}>· {skill}</span>}</div>
+      <div className={s.aiName}>LessonForge{skill && skill !== "qa" && <span style={{ color: "var(--marigold-ink)" }}>· {skill === "learn" ? "lesson" : skill}</span>}</div>
       {content ? <RichText text={content} onCite={(n) => { const c = byN.get(n); if (c) onCite(c); }} />
         : pending && <div className={s.status}><span className={s.typing} aria-label="Thinking"><i /><i /><i /></span>{status}</div>}
       {content && pending && status && <div className={s.status}>{status}</div>}
@@ -48,8 +53,12 @@ export function AssistantMessage({ content, citations = [], artifacts = [], stat
         </div>
       )}
       {artifacts.map((a) => <ArtifactCard key={a.id} a={a} onOpen={() => onOpenArtifact(a.id)} />)}
+      {children}
       {!pending && content && !artifacts.length && (!skill || skill === "qa") && onQuickAction && (
-        <div className={s.quick}><button type="button" onClick={() => onQuickAction("Quiz me on this")}>Quiz me on this</button></div>
+        <div className={s.quick}>
+          {onTeach && <button type="button" onClick={onTeach}>Teach me this step by step</button>}
+          <button type="button" onClick={() => onQuickAction("Quiz me on this")}>Quiz me on this</button>
+        </div>
       )}
     </div>
   );

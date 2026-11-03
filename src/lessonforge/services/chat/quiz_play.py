@@ -60,24 +60,28 @@ def _split_letter(s: str) -> dict[str, str]:
 
 
 # ── the student-safe view ────────────────────────────────────────────────────
+def question_play_item(q: Question, number: int) -> dict[str, Any]:
+    """One question as the student sees it — prompt and choices, never the answer.
+    Shared by quiz artifacts and learn-mode widgets, so both render and grade alike."""
+    v = view(q, number)
+    item: dict[str, Any] = {
+        "id": q.id, "number": number, "type": q.type.value, "widget": _WIDGET[q.type],
+        "prompt": q.prompt, "difficulty": v.difficulty,
+    }
+    if q.type is QuestionType.mcq:
+        item["choices"] = list(q.options or [])
+    elif q.type is QuestionType.matching:
+        item["left"] = [p.left for p in (q.pairs or [])]
+        item["right"] = [_split_letter(r) for r in v.right]
+    elif q.type is QuestionType.ordering:
+        item["items"] = [_split_letter(c) for c in v.choices]
+    return item
+
+
 def play_view(artifact: ChatArtifact) -> dict[str, Any]:
     """The quiz as the student sees it: prompts and choices, never answers."""
     quiz = Quiz.model_validate(artifact.payload)
-    items = []
-    for n, q in enumerate(quiz.questions, 1):
-        v = view(q, n)
-        item: dict[str, Any] = {
-            "id": q.id, "number": n, "type": q.type.value, "widget": _WIDGET[q.type],
-            "prompt": q.prompt, "difficulty": v.difficulty,
-        }
-        if q.type is QuestionType.mcq:
-            item["choices"] = list(q.options or [])
-        elif q.type is QuestionType.matching:
-            item["left"] = [p.left for p in (q.pairs or [])]
-            item["right"] = [_split_letter(r) for r in v.right]
-        elif q.type is QuestionType.ordering:
-            item["items"] = [_split_letter(c) for c in v.choices]
-        items.append(item)
+    items = [question_play_item(q, n) for n, q in enumerate(quiz.questions, 1)]
     return {"id": artifact.id, "kind": KIND, "title": artifact.title, "topic": quiz.topic,
             "sources": quiz.grounding_sources, "notes": quiz.notes, "questions": items}
 

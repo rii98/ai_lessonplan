@@ -28,7 +28,18 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from ..config import load_settings
 from . import errors, webui
 from .deps import get_container
-from .routers import admin, artifacts, chat, corpus, demo, documents, lessons, platform, reports
+from .routers import (
+    admin,
+    artifacts,
+    chat,
+    corpus,
+    demo,
+    documents,
+    lessons,
+    memory,
+    platform,
+    reports,
+)
 
 log = logging.getLogger("lessonforge.api")
 
@@ -106,7 +117,7 @@ def create_app() -> FastAPI:
     app.mount("/assets", webui.assets_app(), name="assets")
 
     for router in (platform.pages, platform.ops, platform.api, lessons.router,
-                   documents.router, artifacts.router, corpus.router, chat.router,
+                   documents.router, artifacts.router, corpus.router, chat.router, memory.router,
                    reports.router, admin.router, demo.router, webui.router):
         app.include_router(router)
     return app

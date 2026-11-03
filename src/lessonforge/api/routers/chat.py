@@ -25,6 +25,8 @@ from ...domain.chat import (
     ChatMessageRequest,
     Conversation,
     CreateConversationRequest,
+    LearnInputRequest,
+    StartLearningRequest,
     UpdateConversationRequest,
 )
 from ...export import ArtifactKind
@@ -161,9 +163,21 @@ def send_message(conversation_id: str, req: ChatMessageRequest,
     turn = c.platform.scope_policy.turn_scope(p, ctx.user_context)
     allowed = _allowed_skills(c, p)
 
+    return _stream(pipeline.stream(conv, req, turn=turn, allowed_skills=allowed,
+                                   language=_language(ctx)), ctx)
+
+
+def _language(ctx: RequestContext) -> str:
+    uc = ctx.user_context
+    lang = (uc.student.medium if uc and uc.student and uc.student.medium else None) or \
+        (uc.language if uc else None)
+    return lang or "en"
+
+
+def _stream(events, ctx: RequestContext) -> StreamingResponse:
     def event_stream():
         try:
-            for event in pipeline.stream(conv, req, turn=turn, allowed_skills=allowed):
+            for event in events:
                 yield sse(event)
         except Exception:   # never leak internals into the stream
             log.exception("chat turn failed (request %s)", ctx.request_id)
@@ -173,6 +187,73 @@ def send_message(conversation_id: str, req: ChatMessageRequest,
 
     return StreamingResponse(event_stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ── learn mode (docs/LEARN_MODE.md) ──────────────────────────────────────────
+def _learn(c: Container):
+    learn = c.get_chat_pipeline().learn
+    if learn is None:
+        raise not_found("learn mode")
+    return learn
+
+
+@router.post("/conversations/{conversation_id}/learning-sessions")
+def start_learning(conversation_id: str, req: StartLearningRequest,
+                   c: Container = Depends(get_container),
+                   ctx: RequestContext = Depends(request_ctx)) -> StreamingResponse:
+    """Start a scaffolded learn-mode session on ``topic`` and stream its opening turn
+    (SSE: ``status`` · ``token`` · ``learn_widget`` · ``learn_state`` · ``done``). A
+    session already running in the conversation is paused, not lost."""
+    p = ctx.principal
+    assert p is not None and ctx.user_context is not None
+    conv = _conversation(c, conversation_id, p)
+    _learn(c)
+    turn = c.platform.scope_policy.turn_scope(p, ctx.user_context)
+    return _stream(c.get_chat_pipeline().start_learning(conv, req, turn=turn,
+                                                        language=_language(ctx)), ctx)
+
+
+@router.post("/conversations/{conversation_id}/learn")
+def learn_input(conversation_id: str, req: LearnInputRequest,
+                c: Container = Depends(get_container),
+                ctx: RequestContext = Depends(request_ctx)) -> StreamingResponse:
+    """Answer the learn-mode widget on screen, or press a quick action (hint, example,
+    skip, faster, slower, pause, end, choose, resume). Typed replies go to ``/message``."""
+    p = ctx.principal
+    assert p is not None
+    conv = _conversation(c, conversation_id, p)
+    _learn(c)
+    return _stream(c.get_chat_pipeline().learn_input(conv, req), ctx)
+
+
+@router.get("/conversations/{conversation_id}/learning-session")
+def current_learning_session(conversation_id: str, c: Container = Depends(get_container),
+                             p: Principal = Depends(current_principal)) -> dict[str, Any]:
+    """The conversation's active or paused session (student-safe view), or ``null``."""
+    conv = _conversation(c, conversation_id, p)
+    session = _learn(c).current(conv.id)
+    out: dict[str, Any] = {"session": session.public() if session else None}
+    if session and session.pending:   # re-show the widget awaiting an answer after a reload
+        found = session.find_check(session.pending.check_id)
+        if found:
+            from ...services.learn.widgets import WidgetService
+
+            out["widget"] = WidgetService.play(found[1], purpose=session.pending.purpose,
+                                               objective_id=found[0].id,
+                                               instance_id=session.pending.instance_id)
+    return out
+
+
+@router.post("/learning-sessions/{session_id}/end")
+def end_learning_session(session_id: str, c: Container = Depends(get_container),
+                         p: Principal = Depends(current_principal)) -> dict[str, Any]:
+    learn = _learn(c)
+    session = learn.store.get(session_id, owner_id=p.id)
+    if session is None:
+        raise not_found("learning session")
+    if session.status in ("planning", "active", "paused"):
+        session = learn.end(session)
+    return session.public()
 
 
 # ── chat artifacts: interactive quizzes, played & revisited ──────────────────

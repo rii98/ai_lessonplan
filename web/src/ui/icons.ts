@@ -9,4 +9,5 @@ export {
   PenLine, Plus, Presentation, Redo2, RefreshCw, Save, Search, Send, Settings, Share2, Shield, Square,
   Trash2, Undo2, Upload, User, Users, X, XCircle, Lock, Globe, CalendarRange, ScrollText, Gauge, Wrench,
   BarChart3, KeyRound, Database, ArrowUp, ArrowDown, Quote,
+  Lightbulb, Pause, Play, Star, Brain, Flag,
 } from "lucide-react";

@@ -45,6 +45,9 @@ from .services.documents.service import DocumentService
 from .services.documents.store import DocumentStore
 from .services.generation import LessonGenerator
 from .services.intake import Intake
+from .services.learn import LearnService, build_learn_service
+from .services.learn.store import build_session_store
+from .services.memory import MemoryJobQueue, MemoryService, build_jobs, build_memory_service
 from .services.pipeline import LessonPipeline
 from .services.profile import ProfileStore
 from .services.refine import Refiner
@@ -201,23 +204,54 @@ class Container:
             store = self.get_chat_store()
             # skills (quiz, …) + the router built from their specs — enabling a new
             # skill is registering it; nothing here names a concrete one
+            chat_retriever = ChatRetriever(self.retriever, chat.retrieval)
+            jobs = build_jobs(chat.memory.jobs)
+            long_term = self._build_long_term(jobs) if chat.memory.long_term.enabled else None
+            learn = self._build_learn(chat_retriever, long_term) if chat.learn.enabled else None
             deps = SkillDeps(llm=self.llm, llm_fast=self.llm_fast, grounding=self.grounding,
-                             config=chat)
-            skills = build_skills(deps, enabled=lambda n: n != "quiz" or chat.quiz.enabled)
+                             config=chat, learn=learn)
+            toggles = {"quiz": chat.quiz.enabled, "learn": chat.learn.enabled}
+            skills = build_skills(deps, enabled=lambda n: toggles.get(n, True))
             router = build_intent_router(chat.intent, llm=self.llm_fast,
                                          specs=[s.spec for s in skills.values()])
             self.chat_pipeline = ChatPipeline(
                 store=store,
                 memory=ConversationMemory(store, chat.memory, llm=self.llm_fast),
                 transformer=build_query_transformer(chat.query_transform, llm=self.llm_fast),
-                retriever=ChatRetriever(self.retriever, chat.retrieval),
+                retriever=chat_retriever,
                 context_builder=ContextBuilder(chat.context, llm=self.llm_fast),
                 synthesizer=AnswerSynthesizer(self.llm, chat.synthesis),
                 config=chat,
                 router=router, skills=skills, artifacts=self.get_artifact_service(),
                 activity=self.platform.activity,
+                learn=learn, jobs=jobs, long_term=long_term,
             )
         return self.chat_pipeline
+
+    def get_memory_service(self) -> MemoryService | None:
+        """The learner's long-term memory (``None`` when switched off in config)."""
+        return self.get_chat_pipeline().long_term
+
+    def _build_long_term(self, jobs: MemoryJobQueue) -> MemoryService:
+        chat = self.settings.chat
+        lt = chat.memory.long_term
+        return build_memory_service(lt, llm_fast=self.llm_fast, jobs=jobs,
+                                    store_provider=lt.store or chat.store.provider,
+                                    db=self.platform.db, embedder=self.embedder)
+
+    def _build_learn(self, chat_retriever: ChatRetriever,
+                     long_term: MemoryService | None = None) -> LearnService:
+        """Learn mode: every port from ``chat.learn``; the session store follows the chat
+        store's backend unless set explicitly."""
+        chat = self.settings.chat
+        return build_learn_service(
+            chat.learn, llm=self.llm, llm_fast=self.llm_fast,
+            grader=self.get_artifact_service().grader, retriever=chat_retriever,
+            store=build_session_store(chat.learn.store or chat.store.provider, db=self.platform.db),
+            prior=long_term.prior if long_term else None,
+            notes=long_term.notes_for if long_term else None,
+            on_end=long_term.commit_session if long_term else None,
+        )
 
     # ── document/version memory: lazily built so its backend fails in isolation ──
     def get_document_store(self) -> DocumentStore:

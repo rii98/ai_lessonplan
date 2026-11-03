@@ -19,7 +19,7 @@ memory is an enhancement, never a hard dependency of answering.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ...config import ChatMemoryConfig
 from ...domain.chat import ChatMessage, Conversation, Role
@@ -31,6 +31,7 @@ from .store import ChatStore
 class MemoryView:
     recent: list[ChatMessage]  # the verbatim window, oldest-first
     summary: str               # rolling summary of everything older
+    profile: list[str] = field(default_factory=list)   # long-term notes about the learner (L3)
 
 
 _SUMMARY_SYSTEM = (
@@ -38,6 +39,18 @@ _SUMMARY_SYSTEM = (
     "so far and the new messages that scrolled out of view, produce an updated, "
     "concise summary that preserves facts, the user's goals, and any established "
     "preferences. Output only the summary."
+)
+# Structured variant: fixed sections the answer prompt can rely on, and that stop a
+# long chat's summary from drifting into an unbounded story.
+_STRUCTURED_SYSTEM = (
+    "You maintain a running summary of a tutoring conversation. Given the summary so far "
+    "and the new messages that scrolled out of view, output an updated summary in EXACTLY "
+    "these sections (omit a section only if empty; at most 4 short bullets each):\n"
+    "Goals: what the user is trying to do\n"
+    "Facts established: answers and conclusions already reached\n"
+    "Open questions: things asked but not yet resolved\n"
+    "Preferences: how the user likes answers (language, length, examples)\n"
+    "Output only the summary."
 )
 
 
@@ -81,6 +94,9 @@ class ConversationMemory:
         new_boundary = total - self.window
         if new_boundary <= prev_boundary:
             return None
+        # read the summary fresh: this runs as a background job, and the caller's
+        # Conversation object was loaded before the previous fold may have finished
+        fresh = self.store.get(conversation.id, owner_id=conversation.owner_id) or conversation
         departed = self.store.messages_between(conversation.id, prev_boundary, new_boundary)
         if not departed:
             return None
@@ -90,11 +106,12 @@ class ConversationMemory:
             if m.role in (Role.user, Role.assistant)
         )
         prompt = (
-            f"Summary so far:\n{conversation.summary or '(none)'}\n\n"
+            f"Summary so far:\n{fresh.summary or '(none)'}\n\n"
             f"New messages that scrolled out of view:\n{transcript}\n\nUpdated summary:"
         )
         try:
-            summary = self.llm.complete(prompt, system=_SUMMARY_SYSTEM, temperature=0.0).text.strip()
+            system = _STRUCTURED_SYSTEM if self.config.structured_summary else _SUMMARY_SYSTEM
+            summary = self.llm.complete(prompt, system=system, temperature=0.0).text.strip()
         except Exception:
             return None
         if not summary:

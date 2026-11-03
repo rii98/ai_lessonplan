@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 def _now() -> datetime:
@@ -158,10 +158,42 @@ class UpdateConversationRequest(BaseModel):
     defaults: ChatDefaults | None = None
 
 
+class WidgetResponse(BaseModel):
+    """The student's answer to an inline learn-mode widget (graded server-side)."""
+
+    widget_id: str = Field(min_length=1, max_length=120)
+    response: Any = None
+    confidence: int | None = Field(default=None, ge=1, le=5)
+
+
 class ChatMessageRequest(BaseModel):
     """A user turn. ``mode`` / ``filters`` override the conversation defaults for
     this one message only (the two-modes control); omit to use the defaults."""
 
     message: str = Field(min_length=1, max_length=8000)
+    mode: FilterMode | None = None
+    filters: dict[str, Any] | None = None
+
+
+class LearnInputRequest(BaseModel):
+    """A learn-mode turn that is not typed text: EITHER an answer to the inline widget
+    on screen, OR a quick action (hint, example, skip, faster, slower, pause, end,
+    choose, resume — ``action_value`` carries e.g. the chosen objective id)."""
+
+    widget_response: WidgetResponse | None = None
+    action: str | None = Field(default=None, max_length=32)
+    action_value: str | None = Field(default=None, max_length=120)
+
+    @model_validator(mode="after")
+    def _one_kind(self) -> LearnInputRequest:
+        if (self.widget_response is None) == (self.action is None):
+            raise ValueError("send exactly one of: widget_response, action")
+        return self
+
+
+class StartLearningRequest(BaseModel):
+    """Start a learn-mode session in a conversation."""
+
+    topic: str = Field(min_length=2, max_length=200)
     mode: FilterMode | None = None
     filters: dict[str, Any] | None = None

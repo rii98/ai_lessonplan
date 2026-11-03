@@ -1,4 +1,4 @@
-import type { ArtifactSummary, Citation, TurnEvent } from "./types";
+import type { ArtifactSummary, Citation, LearnFeedback, LearnState, LearnWidget, TurnEvent } from "./types";
 
 /** The assistant's reply as it streams in. */
 export interface Turn {
@@ -14,9 +14,20 @@ export interface Turn {
   error: string | null;
   title: string | null;
   done: boolean;
+  /** Learn mode: the session's progress after this turn. */
+  learn: LearnState | null;
+  /** Learn mode: the inline check shown under this reply. */
+  widget: LearnWidget | null;
+  /** Learn mode: the grading of the widget the student just answered. */
+  feedback: LearnFeedback | null;
+  /** The router offers a lesson on this topic (the student decides). */
+  offer: string | null;
 }
 
-export const emptyTurn = (): Turn => ({ content: "", citations: [], status: null, skill: null, artifacts: [], awaiting: null, error: null, title: null, done: false });
+export const emptyTurn = (): Turn => ({
+  content: "", citations: [], status: null, skill: null, artifacts: [], awaiting: null, error: null, title: null, done: false,
+  learn: null, widget: null, feedback: null, offer: null,
+});
 
 /** Fold one SSE event into the turn. Pure — the whole streaming protocol lives here. */
 export function applyEvent(t: Turn, ev: { event: string; data: unknown }): Turn {
@@ -30,6 +41,10 @@ export function applyEvent(t: Turn, ev: { event: string; data: unknown }): Turn 
     case "awaiting": return { ...t, awaiting: e.data?.slot ?? "more detail" };
     case "done": return { ...t, done: true, status: null, title: e.data?.title ?? null };
     case "error": return { ...t, done: true, status: null, error: e.data?.message || "Something went wrong." };
+    case "learn_state": return { ...t, learn: e.data, skill: t.skill ?? "learn" };
+    case "learn_widget": return { ...t, widget: e.data };
+    case "learn_feedback": return { ...t, feedback: e.data };
+    case "learn_offer": return { ...t, offer: e.data?.topic ?? null };
     default: return t;
   }
 }

@@ -39,3 +39,29 @@ def extract_json(text: str) -> Any:
             pass
 
     raise ValueError("could not extract JSON from LLM response")
+
+
+# ── cheap lexical matching (learn-mode tracer, retrieval coverage, memory recall) ──
+_WORD = re.compile(r"[\w\u0900-\u097F]+", re.IGNORECASE | re.UNICODE)
+_STOP_WORDS = {"the", "a", "an", "of", "to", "in", "and", "is", "are", "it", "its", "that", "this",
+               "for", "on", "with", "by", "from", "as", "be", "or", "their", "they", "them", "into"}
+
+
+def words(text: str) -> list[str]:
+    return [w.casefold() for w in _WORD.findall(text)]
+
+
+def _stem(w: str) -> str:
+    return w[:5] if len(w) > 5 else w
+
+
+def content_terms(text: str) -> set[str]:
+    return {_stem(w) for w in words(text) if w not in _STOP_WORDS and len(w) > 2}
+
+
+def overlap(a: str, b: str) -> float:
+    """Share of ``a``'s content terms that appear in ``b`` (0..1)."""
+    ta, tb = content_terms(a), content_terms(b)
+    return len(ta & tb) / len(ta) if ta else 0.0
+
+

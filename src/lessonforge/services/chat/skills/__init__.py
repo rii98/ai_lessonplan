@@ -1,7 +1,7 @@
 """Chat skills. Importing this package registers every built-in skill — add a new
 capability by dropping a module here and importing it below."""
 
-from . import quiz  # noqa: F401  (registration side effect)
+from . import learn, quiz  # noqa: F401  (registration side effect)
 from .base import (
     QA,
     SKILL_REGISTRY,

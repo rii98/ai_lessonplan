@@ -89,6 +89,13 @@ any time. Many per conversation; many attempts per artifact.
   self-check if the model is down. Grading is a port (`AnswerGrader`).
 - Attempts are rows → retake, history, review, **retry the missed ones** (no LLM).
 
+## The learn skill
+
+`learn` is the router's door into **learn mode** (docs/LEARN_MODE.md). It does not
+answer. It starts a multi-turn scaffolded session, or offers one with a `learn_offer`
+event unless the student plainly asked ("teach me…"). While a session is active it owns
+the conversation's turns (no router, no QA retrieval). A paused session leaves the chat free.
+
 ## Where this goes next
 
 - **Proactive intents**: after a QA answer, offer a skill ("Quiz me on this" is the first).

@@ -20,6 +20,10 @@ data: <json>
 | `awaiting` | `{skill, slot, slots}` | the skill needs one more answer; the next message is routed back |
 | `done` | `{citations, mode, title, …}` | always last on success |
 | `error` | `{code, message, request_id}` | the turn failed; never contains internal details |
+| `learn_state` | the session's student-safe view `{id, status, goal, topic, ungrounded, pace, cursor, objectives[{id,title,status,early,mastery}], mastered, total, parking_lot, choices}` | every learn-mode turn (docs/LEARN_MODE.md) |
+| `learn_widget` | an inline check: the quiz play-view shape + `{kind, label, purpose, objective_id, ask_confidence}` — **never the answer** | after the tutor's text, when the move shows a check |
+| `learn_feedback` | `{widget_id, correct, score, expected, explanation, feedback, reveal}` | first event of a turn that answered a widget |
+| `learn_offer` | `{topic}` | the router suggests a lesson; the UI shows a "Start lesson" button |
 
 Rules for clients:
 
@@ -30,3 +34,19 @@ Rules for clients:
 - Retrieval scope may be constrained server-side (`scope_mode: "locked"` in
   `GET /api/v1/chat/config`); client `mode`/`filters` are then ignored for the
   bound keys.
+
+
+## Learn mode (docs/LEARN_MODE.md)
+
+Three more routes stream the SAME event protocol:
+
+| Route | Body | What |
+|---|---|---|
+| `POST /api/v1/chat/conversations/{id}/learning-sessions` | `{topic, mode?, filters?}` | plan a lesson and stream its opening turn (a running one is paused, not lost) |
+| `POST /api/v1/chat/conversations/{id}/learn` | `{widget_response: {widget_id, response, confidence?}}` **or** `{action, action_value?}` | answer the widget on screen, or press a quick action: `hint · example · skip · faster · slower · pause · end · choose · resume` |
+| `POST /api/v1/chat/conversations/{id}/message` | unchanged | while a lesson is **active**, typed replies go to the tutor (no router, no QA retrieval); a **paused** lesson leaves the chat free |
+
+Plus `GET …/conversations/{id}/learning-session` → `{session, widget?}` (re-shows the widget
+awaiting an answer after a reload) and `POST /api/v1/chat/learning-sessions/{id}/end`.
+The learner's memory: `GET/DELETE /api/v1/me/memories[/{id}]`, `PUT /api/v1/me/memory-settings`,
+`GET /api/v1/me/learning` (mastery, soonest review first).

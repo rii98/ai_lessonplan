@@ -180,9 +180,34 @@ chat:
     window_turns: 8                     # recent turns kept verbatim (1 turn = user+assistant)
     summarize: true                     # roll older turns into a running summary
     summary_trigger_turns: 12           # start summarizing once the thread exceeds this
+    structured_summary: true            # sections: goals / facts / open questions / preferences
+    jobs: threadpool                    # ← swap: threadpool | inline — memory upkeep off the request path
+    long_term:                          # L3 memory about the learner (docs/LEARN_MODE.md §7)
+      enabled: true                     # kill switch; learners can also switch it off themselves
+      extractor: llm                    # ← swap: llm | none
+      min_confidence: 0.6
+      recall_top_k: 3
+      profile_slice: 5
+      episode_ttl_days: 180
   synthesis:
     temperature: 0.3
     require_citations: true             # instruct the model to cite [n] from the sources
+  learn:                                # learn mode: scaffolded tutoring (docs/LEARN_MODE.md)
+    enabled: true                       # kill switch
+    tracer: hybrid                      # ← swap: rules | llm | hybrid
+    renderer: llm                       # ← swap: llm | template
+    guard: rules                        # ← swap: rules | none (answer-leak guard)
+    planner: {max_objectives: 4, checks_per_objective: 2}
+    policy:                             # the scaffolding strategy's knobs
+      provider: scaffolded
+      max_hints: 3                      # failed rungs before a worked step, then the answer
+      widget_every: 3                   # an interactive check at least every N tutor turns
+      max_questions_in_a_row: 2         # ask/tell balance
+      tangent_budget: 2
+      fast_track_streak: 2
+      low_effort_streak: 3
+      mastered: 0.85
+    retrieval: {coverage_threshold: 0.2, pins_per_objective: 3}
 
 # ════════════════════════════════════════════════════════════════════════════════
 # Platform: persistence, identity, access, user context, activity.

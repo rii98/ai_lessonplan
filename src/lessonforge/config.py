@@ -357,6 +357,19 @@ class ChatContextConfig(BaseModel):
     compression: bool = False
 
 
+class LongTermMemoryConfig(BaseModel):
+    """L3 memory about the learner (docs/LEARN_MODE.md §7.3). Personalises only."""
+
+    enabled: bool = True
+    store: str | None = None            # memory | postgres; None → same as chat.store
+    extractor: str = "llm"              # llm | none
+    min_confidence: float = 0.6
+    recall_top_k: int = 3
+    profile_slice: int = 5
+    max_items_per_user: int = 300
+    episode_ttl_days: int = 180
+
+
 class ChatMemoryConfig(BaseModel):
     """Long-context handling. The last ``window_turns`` turns are kept verbatim;
     when history grows past ``summary_trigger_turns`` and ``summarize`` is on,
@@ -365,6 +378,9 @@ class ChatMemoryConfig(BaseModel):
     window_turns: int = 8
     summarize: bool = True
     summary_trigger_turns: int = 12
+    structured_summary: bool = True     # sectioned summary: goals / facts / open questions / preferences
+    jobs: str = "threadpool"            # inline | threadpool — summaries & memory writes off the request path
+    long_term: LongTermMemoryConfig = Field(default_factory=LongTermMemoryConfig)
 
 
 class ChatSynthesisConfig(BaseModel):
@@ -410,6 +426,58 @@ class ChatQuizConfig(BaseModel):
     llm_grading: bool = True        # LLM judges typed short/long answers (else self-check)
 
 
+class LearnPlannerConfig(BaseModel):
+    provider: str = "llm"
+    max_objectives: int = Field(default=4, ge=1, le=8)
+    checks_per_objective: int = Field(default=2, ge=1, le=4)
+
+
+class LearnPolicyConfig(BaseModel):
+    """The scaffolding strategy's knobs (docs/LEARN_MODE.md §5.3, §5.6)."""
+
+    provider: str = "scaffolded"
+    max_hints: int = 3                   # failed rungs before a worked step / bottom-out
+    widget_every: int = 3                # at most this many tutor turns without a widget
+    max_questions_in_a_row: int = 2      # ask/tell balance (W1)
+    tangent_budget: int = 2              # in-scope tangents per objective
+    fast_track_streak: int = 2           # confident correct answers → fast track (W5)
+    low_effort_streak: int = 3           # one-word replies → switch it up (W10)
+    mastered: float = 0.85               # BKT threshold (with ≥1 passed check)
+    max_turns_per_objective: int = 10    # loop breaker: move on (and revisit later) after this
+
+
+class LearnLearnerConfig(BaseModel):
+    """Bayesian knowledge tracing parameters (per objective, session-local)."""
+
+    provider: str = "bkt"
+    p_init: float = 0.2
+    p_learn: float = 0.15
+    p_slip: float = 0.1
+    p_guess: float = 0.2
+    dialogue_weight: float = 0.5         # free-text evidence counts less than a graded check
+
+
+class LearnRetrievalConfig(BaseModel):
+    provider: str = "anchored"
+    coverage_threshold: float = 0.2      # below this lexical overlap a question is a coverage gap
+    pins_per_objective: int = 3
+
+
+class LearnConfig(BaseModel):
+    """Learn mode — scaffolded tutoring sessions. ``enabled: false`` is the kill switch."""
+
+    enabled: bool = True
+    tracer: str = "hybrid"               # rules | llm | hybrid
+    renderer: str = "llm"                # llm | template
+    guard: str = "rules"                 # rules | none
+    store: str | None = None             # memory | postgres; None → same as chat.store
+    planner: LearnPlannerConfig = Field(default_factory=LearnPlannerConfig)
+    policy: LearnPolicyConfig = Field(default_factory=LearnPolicyConfig)
+    learner: LearnLearnerConfig = Field(default_factory=LearnLearnerConfig)
+    retrieval: LearnRetrievalConfig = Field(default_factory=LearnRetrievalConfig)
+    temperature: float = 0.6             # tutor voice — warmer than grounded QA
+
+
 class ChatConfig(BaseModel):
     """The QA chatbot subsystem — a second product surface over the same corpus.
     Every stage is config-tuneable; secrets/DSNs stay env-driven under
@@ -423,6 +491,7 @@ class ChatConfig(BaseModel):
     synthesis: ChatSynthesisConfig = Field(default_factory=ChatSynthesisConfig)
     intent: ChatIntentConfig = Field(default_factory=ChatIntentConfig)
     quiz: ChatQuizConfig = Field(default_factory=ChatQuizConfig)
+    learn: LearnConfig = Field(default_factory=LearnConfig)
 
 
 # ── platform: persistence, identity, access, context, activity ───────────────

@@ -7,11 +7,16 @@ import { relativeTime, truncate } from "@/lib/format";
 import {
   Banner, Button, ConfirmDialog, Dialog, Field, Icon, IconButton, Menu, NumberInput, Popover, Segmented, Sheet, SkeletonLines, Spinner, TextInput, useToast,
 } from "@/ui";
-import { chatKeys, useChatConfig, useConversation, useConversationMutations, useConversations } from "./api";
+import { chatKeys, useChatConfig, useConversation, useConversationMutations, useConversations, useEndLesson, useLearningSession } from "./api";
 import { ARTIFACT_RENDERERS } from "./artifacts/registry";
+import { LearnWidget } from "./learn/LearnWidget";
+import { MemoryDialog } from "./learn/MemoryDialog";
+import { ProgressPath } from "./learn/ProgressPath";
+import { QuickChips } from "./learn/QuickChips";
+import learnCss from "./learn/learn.module.css";
 import { AssistantMessage, UserMessage } from "./Message";
-import type { ArtifactSummary, ChatConfig, Citation, ConversationDetail, Scope } from "./types";
-import { useChatTurn } from "./useChatTurn";
+import type { ArtifactSummary, ChatConfig, Citation, ConversationDetail, LearnAction, LearnFeedback, LearnWidget as Widget, Scope } from "./types";
+import { useChatTurn, type TurnInput } from "./useChatTurn";
 import s from "./chat.module.css";
 
 const SUGGESTIONS = [
@@ -20,6 +25,13 @@ const SUGGESTIONS = [
   "Give me a local-context hook for teaching fractions.",
   "Quiz me on the water cycle.",
 ];
+
+/** How a widget answer reads in the transcript (matches the server's wording). */
+export function answerLabel(w: Widget, response: unknown): string {
+  if (typeof response === "number" && w.choices?.[response] != null) return `Answered: ${w.choices[response]}`;
+  if (Array.isArray(response)) return "Answered: (arranged the items)";
+  return `Answered: ${String(response ?? "").slice(0, 200)}`;
+}
 
 function scopeFrom(cfg: ChatConfig | undefined, defaults?: Partial<Scope> | null): Scope {
   const d = { ...cfg?.scope_defaults, ...defaults };
@@ -44,6 +56,12 @@ export function ChatPage() {
   const [citation, setCitation] = useState<Citation | null>(null);
   const [canvas, setCanvas] = useState<string | null>(null);
   const [convosOpen, setConvosOpen] = useState(false);
+  const [learnMode, setLearnMode] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const learning = useLearningSession(conversationId);
+  const endLesson = useEndLesson(conversationId);
+  const lesson = learning.data?.session ?? null;
+  const lessonActive = lesson?.status === "active" || lesson?.status === "planning";
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -68,9 +86,9 @@ export function ChatPage() {
     if (el && pinned.current) el.scrollTop = el.scrollHeight;
   }, [messages.length, live?.content, live?.status]);
 
-  const send = async (raw?: string) => {
-    const msg = (raw ?? text).trim();
-    if (!msg || chat.streaming) return;
+  /** Run one turn: a typed message, a learn-mode input, or the start of a lesson. */
+  const go = async (input: TurnInput) => {
+    if (chat.streaming) return;
     let id = conversationId;
     if (!id) {
       try {
@@ -80,19 +98,61 @@ export function ChatPage() {
         navigate(`/chat/${conv.id}`, { replace: true });
       } catch (e) { toast.error(describeError(e)); return; }
     }
-    setText("");
+    if (input.kind !== "learn") setText("");
     pinned.current = true;
-    const t = await chat.send(id, msg, scope);
+    const t = await chat.run(id, input, scope);
     const art = t.artifacts[t.artifacts.length - 1];
     if (art) setCanvas(art.id);
+    if (t.learn) setLearnMode(false);   // the lesson now owns the chat; the toggle has done its job
     inputRef.current?.focus();
   };
+
+  const send = (raw?: string) => {
+    const msg = (raw ?? text).trim();
+    if (!msg) return;
+    // the Learn toggle turns the next message into a lesson topic (unless one is running)
+    return go(learnMode && !lessonActive ? { kind: "start", topic: msg } : { kind: "message", text: msg });
+  };
+  const act = (action: LearnAction, label: string, value?: string) => void go({ kind: "learn", label, action, value });
+  const answer = (w: Widget, response: unknown, confidence?: number) =>
+    void go({ kind: "learn", label: answerLabel(w, response), widget: { widget_id: w.id, response, confidence } });
 
   const upsertArtifact = (a: ArtifactSummary) => qc.setQueryData<ConversationDetail>(chatKeys.detail(conversationId ?? "-"), (prev) => prev && ({
     ...prev, artifacts: prev.artifacts.some((x) => x.id === a.id) ? prev.artifacts.map((x) => (x.id === a.id ? a : x)) : [...prev.artifacts, a],
   }));
 
   const artifactById = useMemo(() => new Map(artifacts.map((a) => [a.id, a])), [artifacts]);
+  // learn mode: grading arrives with the NEXT turn, keyed by the widget it grades
+  const feedbackFor = useMemo(() => {
+    const m = new Map<string, LearnFeedback>();
+    for (const x of messages) { const f = x.meta?.feedback as LearnFeedback | undefined; if (f) m.set(f.widget_id, f); }
+    if (chat.turn?.feedback) m.set(chat.turn.feedback.widget_id, chat.turn.feedback);
+    return m;
+  }, [messages, chat.turn?.feedback]);
+  const pendingWidget = lessonActive ? learning.data?.widget ?? null : null;
+  const lastAssistant = messages.reduce((n, m, i) => (m.role === "assistant" ? i : n), -1);
+  const widgetOf = (meta: Record<string, unknown> | undefined): Widget | null => {
+    const w = meta?.widget as Widget | undefined;
+    if (w) return w;
+    const wid = (meta?.learn as { widget_id?: string } | undefined)?.widget_id;
+    return wid && pendingWidget?.id === wid ? pendingWidget : null;
+  };
+  const learnExtras = (meta: Record<string, unknown> | undefined, isLast: boolean, pending: boolean) => {
+    const w = widgetOf(meta);
+    const offer = meta?.offer as string | undefined;
+    const fb = w ? feedbackFor.get(w.id) ?? null : null;
+    const canAnswer = !!w && !fb && !pending && isLast && pendingWidget?.id === w.id;
+    return (<>
+      {w && <LearnWidget widget={w} feedback={fb} busy={chat.streaming} onAnswer={canAnswer ? (r, c) => answer(w, r, c) : undefined} />}
+      {offer && isLast && !pending && !lessonActive && (
+        <div className={learnCss.offer}>
+          <Icon.GraduationCap size={16} /><span style={{ flex: 1 }}>Learn <b>{offer}</b> step by step?</span>
+          <Button size="sm" variant="primary" onClick={() => void go({ kind: "start", topic: offer })}>Start lesson</Button>
+        </div>
+      )}
+      {isLast && !pending && lessonActive && lesson && <QuickChips state={lesson} onAction={act} />}
+    </>);
+  };
   const openArtifact = artifacts.find((a) => a.id === canvas) ?? live?.artifacts.find((a) => a.id === canvas) ?? null;
   const Renderer = openArtifact ? ARTIFACT_RENDERERS[openArtifact.kind] : null;
   const title = detail.data?.conversation.title || "New chat";
@@ -121,9 +181,15 @@ export function ChatPage() {
           <span className={s.headTitle}>{conversationId ? title : "New chat"}</span>
           <ScopeControl scope={scope} onChange={setScope} cfg={cfg} locked={locked}
             onSaveDefault={conversationId ? () => muts.saveScope.mutate({ id: conversationId, scope }, { onSuccess: () => toast.show("Saved as this chat's default") }) : undefined} />
+          <IconButton label="What LessonForge remembers" onClick={() => setMemoryOpen(true)}><Icon.Brain size={18} /></IconButton>
           {conversationId && <Link to="/chat" className={s.mobileOnly}><IconButton label="New chat"><Icon.Plus size={18} /></IconButton></Link>}
         </div>
 
+        {lesson && (
+          <ProgressPath state={lesson} busy={chat.streaming || endLesson.isPending}
+            onPause={() => act("pause", "Take a break")} onResume={() => act("resume", "Continue the lesson")}
+            onEnd={() => endLesson.mutate(lesson.id, { onSuccess: () => toast.show("Lesson ended — your progress is saved") })} />
+        )}
         <div className={s.scroll} ref={scrollRef} onScroll={(e) => { const el = e.currentTarget; pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
           <div className={s.thread}>
             {conversationId && detail.isPending && <SkeletonLines lines={6} />}
@@ -139,11 +205,18 @@ export function ChatPage() {
               ? <UserMessage key={m.id ?? i} text={m.content} />
               : <AssistantMessage key={m.id ?? i} content={m.content} citations={m.citations} skill={m.meta?.intent?.skill}
                   artifacts={(m.meta?.artifact_ids ?? []).map((id) => artifactById.get(id)).filter(Boolean) as ArtifactSummary[]}
-                  onCite={setCitation} onOpenArtifact={setCanvas} onQuickAction={i === messages.length - 1 ? (q) => void send(q) : undefined} />)}
+                  onCite={setCitation} onOpenArtifact={setCanvas}
+                  onQuickAction={i === messages.length - 1 && !lessonActive ? (q) => void send(q) : undefined}
+                  onTeach={i === messages.length - 1 && !lessonActive && messages[i - 1]?.role === "user"
+                    ? () => void go({ kind: "start", topic: messages[i - 1]!.content.slice(0, 200) }) : undefined}>
+                  {learnExtras(m.meta, i === lastAssistant && !live, false)}
+                </AssistantMessage>)}
             {live && (<>
               <UserMessage text={live.userText} />
               <AssistantMessage pending content={live.content} citations={live.citations} artifacts={live.artifacts} status={live.status ?? (live.skill ? "Working on it…" : null)}
-                skill={live.skill} onCite={setCitation} onOpenArtifact={setCanvas} />
+                skill={live.skill} onCite={setCitation} onOpenArtifact={setCanvas}>
+                {live.widget && <LearnWidget widget={live.widget} feedback={null} busy />}
+              </AssistantMessage>
             </>)}
             {failed && <Banner tone="danger" title="That reply didn't finish">{failed}</Banner>}
           </div>
@@ -152,13 +225,23 @@ export function ChatPage() {
         <form className={s.composer} onSubmit={(e) => { e.preventDefault(); void send(); }}>
           <div className={s.box}>
             <AutoTextarea ref={inputRef} value={text} onChange={setText} disabled={muts.create.isPending}
-              placeholder={chat.turn?.awaiting && !live ? `Answer: ${chat.turn.awaiting}…` : "Ask about a topic, or say “quiz me on…”"}
+              placeholder={lessonActive ? "Type your answer, ask a question, or say “I don't know”…"
+                : learnMode ? "What do you want to learn? e.g. photosynthesis"
+                : chat.turn?.awaiting && !live ? `Answer: ${chat.turn.awaiting}…` : "Ask about a topic, or say “quiz me on…”"}
               onEnter={() => void send()} />
             {chat.streaming
               ? <Button className={s.send} variant="default" aria-label="Stop" title="Stop" onClick={chat.stop}><Icon.Square size={14} /></Button>
               : <Button className={s.send} type="submit" variant="primary" aria-label="Send" disabled={!text.trim()} busy={muts.create.isPending}><Icon.Send size={16} /></Button>}
           </div>
-          <div className={s.hint}><span>Enter to send · Shift+Enter for a new line</span>{chat.streaming && <span>Answering…</span>}</div>
+          <div className={s.hint}>
+            {lessonActive
+              ? <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><Icon.GraduationCap size={12} /> In a lesson — your typed replies go to the tutor</span>
+              : <button type="button" className={learnCss.learnToggle} aria-pressed={learnMode} onClick={() => setLearnMode(!learnMode)}
+                  title="Learn step by step: guiding questions, hints and quick checks instead of direct answers">
+                  <Icon.GraduationCap size={13} /> Learn mode{learnMode ? " on" : ""}
+                </button>}
+            <span>{chat.streaming ? "Answering…" : "Enter to send · Shift+Enter for a new line"}</span>
+          </div>
         </form>
       </section>
 
@@ -175,6 +258,7 @@ export function ChatPage() {
       </aside>
 
       {/* phones: the canvas and conversation list are sheets */}
+      <MemoryDialog open={memoryOpen} onOpenChange={setMemoryOpen} />
       <MobileSheet open={!!openArtifact} title={openArtifact?.title ?? ""} onClose={() => setCanvas(null)}>{canvasBody}</MobileSheet>
       <Sheet open={convosOpen} onOpenChange={setConvosOpen} title="Conversations">
         <div style={{ marginBottom: 12 }}><Link to="/chat" onClick={() => setConvosOpen(false)}><Button block icon={<Icon.Plus size={16} />}>New chat</Button></Link></div>

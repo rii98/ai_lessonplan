@@ -21,4 +21,12 @@ describe("chat turn", () => {
     expect(run([{ event: "error", data: { message: "nope" } }])).toMatchObject({ done: true, error: "nope" });
     expect(run([{ event: "intent", data: { skill: "qa" } }]).skill).toBeNull();
   });
+
+  it("folds learn-mode events: progress, the inline widget, its grading, an offer", () => {
+    const state = { id: "s1", status: "active", cursor: "O1", objectives: [], mastered: 0, total: 3 };
+    const widget = { id: "O1.c1", kind: "mcq", widget: "choice", prompt: "Why?", purpose: "check" };
+    const t = run([{ event: "token", data: "Let's check!" }, { event: "learn_widget", data: widget }, { event: "learn_state", data: state },
+      { event: "learn_feedback", data: { widget_id: "O1.c0", correct: true, score: 1, expected: "x" } }, { event: "learn_offer", data: { topic: "fractions" } }]);
+    expect(t).toMatchObject({ skill: "learn", widget: { id: "O1.c1" }, learn: { id: "s1" }, feedback: { correct: true }, offer: "fractions" });
+  });
 });

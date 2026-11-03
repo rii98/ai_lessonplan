@@ -98,6 +98,7 @@ class SkillDeps:
     llm_fast: LLMClient            # the cheap model
     grounding: Any = None          # GroundingRetriever | None
     config: Any = None             # ChatConfig
+    learn: Any = None              # LearnService | None (the learn skill starts sessions)
 
 
 @dataclass(slots=True)
@@ -108,6 +109,11 @@ class SkillContext:
     history: list[ChatMessage]     # recent turns, oldest first
     summary: str = ""
     deps: SkillDeps | None = None
+    # the turn's resolved retrieval scope (after ScopePolicy) — for skills that retrieve
+    filters: dict[str, Any] = field(default_factory=dict)
+    collections: list[str] | None = None
+    allow_fallback: bool = True
+    language: str = "en"
 
 
 class Skill(ABC):

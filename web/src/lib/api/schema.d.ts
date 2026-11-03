@@ -586,6 +586,69 @@ export interface paths {
         patch: operations["update_conversation_api_v1_chat_conversations__conversation_id__patch"];
         trace?: never;
     };
+    "/api/v1/chat/conversations/{conversation_id}/learn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Learn Input
+         * @description Answer the learn-mode widget on screen, or press a quick action (hint, example,
+         *     skip, faster, slower, pause, end, choose, resume). Typed replies go to ``/message``.
+         */
+        post: operations["learn_input_api_v1_chat_conversations__conversation_id__learn_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chat/conversations/{conversation_id}/learning-session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Current Learning Session
+         * @description The conversation's active or paused session (student-safe view), or ``null``.
+         */
+        get: operations["current_learning_session_api_v1_chat_conversations__conversation_id__learning_session_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chat/conversations/{conversation_id}/learning-sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Learning
+         * @description Start a scaffolded learn-mode session on ``topic`` and stream its opening turn
+         *     (SSE: ``status`` · ``token`` · ``learn_widget`` · ``learn_state`` · ``done``). A
+         *     session already running in the conversation is paused, not lost.
+         */
+        post: operations["start_learning_api_v1_chat_conversations__conversation_id__learning_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/chat/conversations/{conversation_id}/message": {
         parameters: {
             query?: never;
@@ -602,6 +665,23 @@ export interface paths {
          *     scope for this message — unless the caller's scope is ``locked``.
          */
         post: operations["send_message_api_v1_chat_conversations__conversation_id__message_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/chat/learning-sessions/{session_id}/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** End Learning Session */
+        post: operations["end_learning_session_api_v1_chat_learning_sessions__session_id__end_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1262,6 +1342,81 @@ export interface paths {
          */
         get: operations["me_api_v1_me_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/learning": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Learning Progress
+         * @description Mastery per topic part, discounted by forgetting, soonest review first.
+         */
+        get: operations["learning_progress_api_v1_me_learning_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/memories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Memories */
+        get: operations["list_memories_api_v1_me_memories_get"];
+        put?: never;
+        post?: never;
+        /**
+         * Forget All Memories
+         * @description Clear every memory AND the mastery history (a fresh start).
+         */
+        delete: operations["forget_all_memories_api_v1_me_memories_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/memories/{memory_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Forget Memory */
+        delete: operations["forget_memory_api_v1_me_memories__memory_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/memory-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Memory Settings */
+        put: operations["update_memory_settings_api_v1_me_memory_settings_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2047,6 +2202,19 @@ export interface components {
             prompt: string;
         };
         /**
+         * LearnInputRequest
+         * @description A learn-mode turn that is not typed text: EITHER an answer to the inline widget
+         *     on screen, OR a quick action (hint, example, skip, faster, slower, pause, end,
+         *     choose, resume — ``action_value`` carries e.g. the chosen objective id).
+         */
+        LearnInputRequest: {
+            /** Action */
+            action?: string | null;
+            /** Action Value */
+            action_value?: string | null;
+            widget_response?: components["schemas"]["WidgetResponse"] | null;
+        };
+        /**
          * LessonAssessmentRequest
          * @description Build a quiz/worksheet FROM a lesson. ``ldd`` is the lesson as the teacher has
          *     it now (possibly edited and unsaved) — its objectives become the assessment's.
@@ -2102,6 +2270,11 @@ export interface components {
             left: string;
             /** Right */
             right: string;
+        };
+        /** MemorySettings */
+        MemorySettings: {
+            /** Enabled */
+            enabled: boolean;
         };
         /** Misconception */
         Misconception: {
@@ -2410,6 +2583,19 @@ export interface components {
             version_id: string;
         };
         /**
+         * StartLearningRequest
+         * @description Start a learn-mode session in a conversation.
+         */
+        StartLearningRequest: {
+            /** Filters */
+            filters?: {
+                [key: string]: unknown;
+            } | null;
+            mode?: components["schemas"]["FilterMode"] | null;
+            /** Topic */
+            topic: string;
+        };
+        /**
          * StoredDocument
          * @description The document header: identity, ownership, and a pointer to the current
          *     version. The content lives in the versions; this row is what ``list`` returns
@@ -2665,6 +2851,18 @@ export interface components {
          */
         VisibilityRequest: {
             visibility: components["schemas"]["Visibility"];
+        };
+        /**
+         * WidgetResponse
+         * @description The student's answer to an inline learn-mode widget (graded server-side).
+         */
+        WidgetResponse: {
+            /** Confidence */
+            confidence?: number | null;
+            /** Response */
+            response?: unknown;
+            /** Widget Id */
+            widget_id: string;
         };
     };
     responses: never;
@@ -3711,6 +3909,109 @@ export interface operations {
             };
         };
     };
+    learn_input_api_v1_chat_conversations__conversation_id__learn_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LearnInputRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    current_learning_session_api_v1_chat_conversations__conversation_id__learning_session_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_learning_api_v1_chat_conversations__conversation_id__learning_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartLearningRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     send_message_api_v1_chat_conversations__conversation_id__message_post: {
         parameters: {
             query?: never;
@@ -3733,6 +4034,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    end_learning_session_api_v1_chat_learning_sessions__session_id__end_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -4841,6 +5175,138 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    learning_progress_api_v1_me_learning_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    list_memories_api_v1_me_memories_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    forget_all_memories_api_v1_me_memories_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+        };
+    };
+    forget_memory_api_v1_me_memories__memory_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                memory_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_memory_settings_api_v1_me_memory_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MemorySettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MemorySettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

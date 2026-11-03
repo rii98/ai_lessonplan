@@ -1182,6 +1182,47 @@
         "title": "Hook",
         "type": "object"
       },
+      "LearnInputRequest": {
+        "description": "A learn-mode turn that is not typed text: EITHER an answer to the inline widget\non screen, OR a quick action (hint, example, skip, faster, slower, pause, end,\nchoose, resume \u2014 ``action_value`` carries e.g. the chosen objective id).",
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "action_value": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Value"
+          },
+          "widget_response": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WidgetResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "LearnInputRequest",
+        "type": "object"
+      },
       "LessonAssessmentRequest": {
         "description": "Build a quiz/worksheet FROM a lesson. ``ldd`` is the lesson as the teacher has\nit now (possibly edited and unsaved) \u2014 its objectives become the assessment's.",
         "properties": {
@@ -1335,6 +1376,19 @@
           "right"
         ],
         "title": "MatchPair",
+        "type": "object"
+      },
+      "MemorySettings": {
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "MemorySettings",
         "type": "object"
       },
       "Misconception": {
@@ -2083,6 +2137,44 @@
         "title": "SavedUnit",
         "type": "object"
       },
+      "StartLearningRequest": {
+        "description": "Start a learn-mode session in a conversation.",
+        "properties": {
+          "filters": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filters"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FilterMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "topic": {
+            "maxLength": 200,
+            "minLength": 2,
+            "title": "Topic",
+            "type": "string"
+          }
+        },
+        "required": [
+          "topic"
+        ],
+        "title": "StartLearningRequest",
+        "type": "object"
+      },
       "StoredDocument": {
         "description": "The document header: identity, ownership, and a pointer to the current\nversion. The content lives in the versions; this row is what ``list`` returns\nand what the head pointer moves over on undo.",
         "properties": {
@@ -2666,6 +2758,38 @@
           "visibility"
         ],
         "title": "VisibilityRequest",
+        "type": "object"
+      },
+      "WidgetResponse": {
+        "description": "The student's answer to an inline learn-mode widget (graded server-side).",
+        "properties": {
+          "confidence": {
+            "anyOf": [
+              {
+                "maximum": 5.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "response": {
+            "title": "Response"
+          },
+          "widget_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Widget Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "widget_id"
+        ],
+        "title": "WidgetResponse",
         "type": "object"
       }
     }
@@ -4212,6 +4336,153 @@
         ]
       }
     },
+    "/api/v1/chat/conversations/{conversation_id}/learn": {
+      "post": {
+        "description": "Answer the learn-mode widget on screen, or press a quick action (hint, example,\nskip, faster, slower, pause, end, choose, resume). Typed replies go to ``/message``.",
+        "operationId": "learn_input_api_v1_chat_conversations__conversation_id__learn_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LearnInputRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Learn Input",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/conversations/{conversation_id}/learning-session": {
+      "get": {
+        "description": "The conversation's active or paused session (student-safe view), or ``null``.",
+        "operationId": "current_learning_session_api_v1_chat_conversations__conversation_id__learning_session_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Current Learning Session Api V1 Chat Conversations  Conversation Id  Learning Session Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Current Learning Session",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/conversations/{conversation_id}/learning-sessions": {
+      "post": {
+        "description": "Start a scaffolded learn-mode session on ``topic`` and stream its opening turn\n(SSE: ``status`` \u00b7 ``token`` \u00b7 ``learn_widget`` \u00b7 ``learn_state`` \u00b7 ``done``). A\nsession already running in the conversation is paused, not lost.",
+        "operationId": "start_learning_api_v1_chat_conversations__conversation_id__learning_sessions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartLearningRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Learning",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
     "/api/v1/chat/conversations/{conversation_id}/message": {
       "post": {
         "description": "Ask a question and stream the answer as Server-Sent Events (see\ndocs/CHAT_EVENTS.md). ``mode``/``filters`` override the conversation's default\nscope for this message \u2014 unless the caller's scope is ``locked``.",
@@ -4258,6 +4529,50 @@
           }
         },
         "summary": "Send Message",
+        "tags": [
+          "chat"
+        ]
+      }
+    },
+    "/api/v1/chat/learning-sessions/{session_id}/end": {
+      "post": {
+        "operationId": "end_learning_session_api_v1_chat_learning_sessions__session_id__end_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response End Learning Session Api V1 Chat Learning Sessions  Session Id  End Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "End Learning Session",
         "tags": [
           "chat"
         ]
@@ -5993,6 +6308,164 @@
           }
         },
         "summary": "Me",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/learning": {
+      "get": {
+        "description": "Mastery per topic part, discounted by forgetting, soonest review first.",
+        "operationId": "learning_progress_api_v1_me_learning_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Learning Progress Api V1 Me Learning Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Learning Progress",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/memories": {
+      "delete": {
+        "description": "Clear every memory AND the mastery history (a fresh start).",
+        "operationId": "forget_all_memories_api_v1_me_memories_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "integer"
+                  },
+                  "title": "Response Forget All Memories Api V1 Me Memories Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Forget All Memories",
+        "tags": [
+          "me"
+        ]
+      },
+      "get": {
+        "operationId": "list_memories_api_v1_me_memories_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response List Memories Api V1 Me Memories Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Memories",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/memories/{memory_id}": {
+      "delete": {
+        "operationId": "forget_memory_api_v1_me_memories__memory_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "title": "Memory Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Forget Memory Api V1 Me Memories  Memory Id  Delete",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Forget Memory",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/memory-settings": {
+      "put": {
+        "operationId": "update_memory_settings_api_v1_me_memory_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemorySettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemorySettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Memory Settings",
         "tags": [
           "me"
         ]
