@@ -1,11 +1,15 @@
-"""MemoryExtractor — propose memory changes from what the learner just said (Mem0's
-extract → compare → ADD/UPDATE/DELETE/NOOP pattern).
+"""MemoryExtractor — decide what in the learner's new message is worth remembering.
 
-Only the learner's OWN words are read (never the assistant's reply, which would let
-the model "remember" what it said). The model sees the existing memories most similar
-to the new message, so a changed preference becomes an UPDATE of the old one rather
-than a contradictory second item. Conservative by instruction: durable facts about
-how this learner learns — not what they asked about (that's in the transcript).
+Stage 1 of the write path (extract → policy → **reconcile** → apply): this stage only
+answers "is there a durable fact here?" and emits :class:`Candidate` facts with a kind,
+confidence and importance. How a candidate changes the store (new / refines / contradicts
+/ redundant) is the reconciler's job, done against the memories most similar to the
+CANDIDATE — not to the raw message — so neighbourhoods are precise.
+
+Only the learner's OWN words are a source (never the assistant's reply, which would let
+the model "remember" what it said); the previous exchange is context for resolving
+references. Conservative by instruction: durable facts about how this learner learns —
+not what they asked about (that's in the transcript).
 """
 
 from __future__ import annotations
@@ -13,29 +17,35 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from ...domain.memory import MEMORY_KINDS, MemoryItem, MemoryOp, PriorTurn
+from ...domain.memory import MEMORY_KINDS, Candidate, PriorTurn
 from ...providers.base import LLMClient
 from ...util import extract_json
 
 _SYSTEM = (
     "You maintain a small memory about a school student to personalise tutoring. Read the "
-    "student's message and decide if it reveals a DURABLE fact about how they learn: a "
+    "student's NEW message and decide if it reveals a DURABLE fact about how they learn: a "
     "preference (language, examples, pace, format), a learning_need (something they find "
     "hard), an interest (a hobby to use in examples), or a goal (an exam, a target). "
     "Ignore questions about the subject, one-off requests, and greetings. NEVER record "
     "names, contact details, family, health, religion, caste, money, marks, or anything "
-    "about other people. Output ONLY JSON: {\"ops\": [...]} where each op is one of\n"
-    '  {"op": "add", "kind": "preference|learning_need|interest|goal", "content": '
-    '"<short third-person statement>", "confidence": 0..1}\n'
-    '  {"op": "update", "id": "<existing id>", "content": "<new statement>", "confidence": 0..1}\n'
-    '  {"op": "delete", "id": "<existing id>"}   (the student contradicted it)\n'
+    "about other people.\n"
+    "Output ONLY JSON: {\"facts\": [{\"kind\": \"preference|learning_need|interest|goal\", "
+    "\"content\": \"<one short third-person statement>\", \"confidence\": 0..1, "
+    "\"importance\": 0..1, \"explicit\": true|false}]}\n"
+    "- importance = how much a future lesson would suffer from not knowing it.\n"
+    "- explicit = the student directly asked you to remember it (\"remember that…\", \"from now "
+    "on…\", \"always/never…\"); those get importance 1.0.\n"
+    "- If the student withdraws or reverses something (\"stop using football examples\", "
+    "\"actually, English is fine\"), state the NEW fact (\"does not want football examples\"). "
+    "If something they found hard is now easy for them (\"I get fractions now\"), say so "
+    "(\"no longer finds fractions hard\") — that is a durable change too.\n"
     "The RECENT CONVERSATION is context only: use it to understand what the student's new "
     "message refers to (\"the above style\", \"yes, that one\", \"like this\"). Record ONLY what "
     "the STUDENT states or agrees to — never something the tutor said, offered or assumed "
-    "that the student did not accept. Write every memory as a SELF-CONTAINED statement: "
+    "that the student did not accept. Write every fact as a SELF-CONTAINED statement: "
     "resolve this/that/the above from the context (e.g. \"prefers short bullet-point answers "
     "with food examples\"), never \"likes the above style\".\n"
-    'Usually the answer is {"ops": []}.'
+    'Usually the answer is {"facts": []}.'
 )
 
 _TUTOR_CHARS = 800      # enough to recognise a style; not the whole lecture
@@ -63,53 +73,60 @@ def _context_block(context: Sequence[PriorTurn]) -> str:
 
 class MemoryExtractor(ABC):
     @abstractmethod
-    def extract(self, message: str, similar: list[MemoryItem],
-                context: Sequence[PriorTurn] = ()) -> list[MemoryOp]:
-        """Proposed ops; ``[]`` when nothing durable was said or on any failure.
+    def extract(self, message: str, context: Sequence[PriorTurn] = ()) -> list[Candidate]:
+        """Candidate facts; ``[]`` when nothing durable was said or on any failure.
         ``context`` = the messages just before ``message`` (oldest first)."""
 
 
-class LLMExtractor(MemoryExtractor):
-    def __init__(self, llm: LLMClient) -> None:
-        self.llm = llm
+def _unit(value, default: float) -> float:
+    try:
+        return min(1.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        return default
 
-    def extract(self, message, similar, context=()):
+
+class LLMExtractor(MemoryExtractor):
+    def __init__(self, llm: LLMClient, *, max_candidates: int = 5) -> None:
+        self.llm = llm
+        self.max_candidates = max_candidates
+
+    def extract(self, message, context=()):
         if not worth_reading(message, context):
             return []
-        known = "\n".join(f'- id={m.id} [{m.kind}] "{m.content}"' for m in similar) or "(none)"
-        prompt = (f"Existing memories:\n{known}\n\n"
-                  f"RECENT CONVERSATION (context only):\n{_context_block(context)}\n\n"
+        prompt = (f"RECENT CONVERSATION (context only):\n{_context_block(context)}\n\n"
                   f"Student's NEW message: {message[:1500]}\n\nJSON:")
         try:
             data = extract_json(self.llm.complete(prompt, system=_SYSTEM, temperature=0.0).text)
         except Exception:
             return []
-        ops: list[MemoryOp] = []
-        by_id = {m.id: m for m in similar}
-        for raw in (data.get("ops") if isinstance(data, dict) else None) or []:
-            if not isinstance(raw, dict):
+        raw = data.get("facts") if isinstance(data, dict) else None
+        if raw is None and isinstance(data, dict):
+            raw = data.get("ops")                     # tolerate the v1 shape
+        out: list[Candidate] = []
+        for f in raw or []:
+            if not isinstance(f, dict) or f.get("kind") not in MEMORY_KINDS:
                 continue
-            kind = raw.get("kind")
-            target = raw.get("id")
-            if raw.get("op") in ("update", "delete") and target in by_id:
-                kind = kind if kind in MEMORY_KINDS else by_id[target].kind
-            try:
-                ops.append(MemoryOp(op=raw.get("op"), kind=kind if kind in MEMORY_KINDS else None,
-                                    content=str(raw.get("content") or "")[:300], target_id=target,
-                                    confidence=float(raw.get("confidence", 0.7))))
-            except Exception:  # noqa: S112 - one malformed op must not drop the others
+            content = " ".join(str(f.get("content") or "").split())[:300]
+            if not content:
                 continue
-        return ops
+            explicit = f.get("explicit") is True
+            out.append(Candidate(kind=f["kind"], content=content,
+                                 confidence=_unit(f.get("confidence"), 0.7),
+                                 importance=1.0 if explicit else _unit(f.get("importance"), 0.5),
+                                 explicit=explicit))
+            if len(out) >= self.max_candidates:
+                break
+        return out
 
 
 class NoExtractor(MemoryExtractor):
-    def extract(self, message, similar, context=()):
+    def extract(self, message, context=()):
         return []
 
 
-def build_extractor(provider: str, *, llm: LLMClient | None) -> MemoryExtractor:
+def build_extractor(provider: str, *, llm: LLMClient | None, max_candidates: int = 5) -> MemoryExtractor:
     if provider == "none" or llm is None:
         return NoExtractor()
     if provider == "llm":
-        return LLMExtractor(llm)
+        return LLMExtractor(llm, max_candidates=max_candidates)
     raise ValueError(f"unknown memory extractor {provider!r}; known: ['llm', 'none']")

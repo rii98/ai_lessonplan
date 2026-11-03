@@ -163,9 +163,11 @@ class ChatPipeline:
         if prep_error is not None:
             raise prep_error
 
-        # 5b. long-term memory: a few notes about the learner (personalise only)
+        # 5b. long-term memory: who the learner is (profile) + notes relevant to this
+        # question — personalise only, never a source
         if self.long_term is not None:
-            view.profile = self.long_term.notes_for(conversation.owner_id, transformed.standalone)
+            recalled = self.long_term.recall(conversation.owner_id, transformed.standalone)
+            view.profile, view.relevant = recalled.profile, recalled.relevant
 
         # 6. persist the user turn (with the scope actually used, for auditing).
         user_meta = {"mode": mode.value, "filters": filters}

@@ -1379,12 +1379,37 @@ export interface paths {
         /** List Memories */
         get: operations["list_memories_api_v1_me_memories_get"];
         put?: never;
-        post?: never;
+        /**
+         * Add Memory
+         * @description The learner adds a note themselves. Same policy as anything extracted (minors-
+         *     first), and reconciled — so "answer in English" replaces "answer in Nepali".
+         */
+        post: operations["add_memory_api_v1_me_memories_post"];
         /**
          * Forget All Memories
          * @description Clear every memory AND the mastery history (a fresh start).
          */
         delete: operations["forget_all_memories_api_v1_me_memories_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me/memories/recall": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview Recall
+         * @description Exactly what a question would bring back (transparency, and debugging).
+         */
+        get: operations["preview_recall_api_v1_me_memories_recall_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1404,7 +1429,8 @@ export interface paths {
         delete: operations["forget_memory_api_v1_me_memories__memory_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Edit Memory */
+        patch: operations["edit_memory_api_v1_me_memories__memory_id__patch"];
         trace?: never;
     };
     "/api/v1/me/memory-settings": {
@@ -2084,6 +2110,11 @@ export interface components {
             document: components["schemas"]["StoredDocument"];
             ldd: components["schemas"]["LessonDesignDocument"];
         };
+        /** EditMemory */
+        EditMemory: {
+            /** Content */
+            content: string;
+        };
         /**
          * FilterMode
          * @description The two retrieval modes. ``scoped`` applies the conversation's default tag
@@ -2284,6 +2315,17 @@ export interface components {
             source?: string | null;
             /** Statement */
             statement: string;
+        };
+        /** NewMemory */
+        NewMemory: {
+            /** Content */
+            content: string;
+            /**
+             * Kind
+             * @default preference
+             * @enum {string}
+             */
+            kind: "preference" | "learning_need" | "interest" | "goal" | "episode";
         };
         /**
          * NormalizedBrief
@@ -5223,6 +5265,41 @@ export interface operations {
             };
         };
     };
+    add_memory_api_v1_me_memories_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewMemory"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     forget_all_memories_api_v1_me_memories_delete: {
         parameters: {
             query?: never;
@@ -5241,6 +5318,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: number;
                     };
+                };
+            };
+        };
+    };
+    preview_recall_api_v1_me_memories_recall_get: {
+        parameters: {
+            query?: {
+                q?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -5264,6 +5374,43 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    edit_memory_api_v1_me_memories__memory_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                memory_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditMemory"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
                     };
                 };
             };

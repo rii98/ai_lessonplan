@@ -1,48 +1,73 @@
 """MemoryService — the long-term memory facade the chat and learn mode use.
 
-Read path (per turn, cheap): a small **profile slice** (preferences / needs / interests
-/ goals) plus the few items most **relevant** to the current question (cosine over the
-learner's own embeddings, lexical fallback). Returned as plain notes the prompts label
-"about the learner — personalise only".
+**Read path** (per turn, cheap — docs/MEMORY.md §3)::
 
-Write path (always via the job queue, never on the request path): extract → policy →
-store for chat turns; and, when a lesson ends, commit **mastery** (code only, with a
-forgetting-curve review schedule) plus an **episode** memory.
+    state (1 small lookup: switch, version, digest)
+      └─ snapshot (cached per version; rows re-read only after a change, in any replica)
+           ├─ PROFILE   valid digest (+ notes added since it was built)  |  ranked slice
+           └─ RELEVANT  hybrid relevance × recency × importance, diversity, char budget
 
-Every entry point checks the per-user switch and degrades to "no memory" on failure —
-memory is an enhancement, never a dependency of answering.
+**Write path** (always on the job queue, never on the request path — §2)::
+
+    extract (fast model: candidate facts from the learner's own words)
+      → policy  (minors-first denylist, BEFORE any second model sees it)
+      → neighbours (one batched embedding call; similar to each CANDIDATE)
+      → reconcile (add / update / retire / no-op; retry → rules fallback)
+      → policy  (merged sentences are new text)
+      → apply   (one atomic, per-learner-locked unit of work; re-validated)
+      → digest refresh when stale · periodic retention + re-embedding
+
+Lessons commit **mastery** (code only, with a forgetting-curve review schedule) plus an
+**episode** memory. Every entry point checks the per-user switch and degrades to "no
+memory" on failure — memory is an enhancement, never a dependency of answering.
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import threading
+import time
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 from ...config import LongTermMemoryConfig
 from ...domain.learning import LearningSession, kc_key
-from ...domain.memory import MasteryRecord, MemoryItem, MemoryOp, PriorTurn
+from ...domain.memory import (
+    ApplyResult,
+    Candidate,
+    MasteryRecord,
+    MemoryContext,
+    MemoryItem,
+    MemoryKind,
+    MemoryOp,
+    MemoryState,
+    PriorTurn,
+)
 from ...providers.base import Embedder
-from ...util import content_terms, overlap
+from ...util import content_terms
 from .extractor import MemoryExtractor
 from .jobs import MemoryJobQueue
 from .policy import MemoryPolicy
-from .store import MemoryStore
+from .profile import NoSynthesizer, ProfileSynthesizer, digest_lines, ranked_profile
+from .recall import (
+    Scoring,
+    Snapshot,
+    SnapshotCache,
+    embedder_id,
+    lexical,
+    rank,
+    relevance,
+    within_budget,
+)
+from .reconciler import MemoryReconciler, RulesReconciler
+from .store import Change, MemoryStore
 
 log = logging.getLogger("lessonforge.memory")
-
-PROFILE_KINDS = ("preference", "learning_need", "interest", "goal")
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
-
-
-def _cos(a: list[float], b: list[float]) -> float:
-    num = sum(x * y for x, y in zip(a, b, strict=False))
-    den = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
-    return num / den if den else 0.0
 
 
 _FRAME = {"what", "whats", "why", "how", "when", "where", "which", "who", "explain", "teach",
@@ -69,47 +94,121 @@ def same_concept(a: str, b: str) -> float:
     return min(_jaccard(_slug_terms(ta), _slug_terms(tb)), _jaccard(_slug_terms(oa), _slug_terms(ob)))
 
 
+_GROUNDED = 0.34      # a digest line must share ≥ 1/3 of its meaning words with some memory
+
+
+class MemoryRefused(ValueError):
+    """A note the learner typed that policy will not keep (the message says why)."""
+
+
 class MemoryService:
     def __init__(self, *, store: MemoryStore, extractor: MemoryExtractor, policy: MemoryPolicy,
                  jobs: MemoryJobQueue, config: LongTermMemoryConfig,
-                 embedder: Embedder | None = None) -> None:
+                 embedder: Embedder | None = None, reconciler: MemoryReconciler | None = None,
+                 synthesizer: ProfileSynthesizer | None = None) -> None:
         self.store, self.extractor, self.policy = store, extractor, policy
         self.jobs, self.config, self.embedder = jobs, config, embedder
+        self.reconciler = reconciler or RulesReconciler(duplicate_similarity=config.duplicate_similarity)
+        self.synthesizer = synthesizer or NoSynthesizer()
+        r = config.recall
+        self.scoring = Scoring(dense_min=r.dense_min, lexical_min=r.lexical_min,
+                               w_relevance=r.w_relevance, w_recency=r.w_recency,
+                               w_importance=r.w_importance, half_life_days=r.half_life_days,
+                               diversity=r.diversity)
+        self.cache = SnapshotCache(config.cache_owners)
+        self._model: str | None = None
+        self._model_known = False
+        self._maint_lock = threading.Lock()
+        self._last_maintenance = 0.0
+
+    # ── embeddings ───────────────────────────────────────────────────────────
+    @property
+    def model(self) -> str | None:
+        if not self._model_known:
+            self._model, self._model_known = embedder_id(self.embedder), True
+        return self._model
+
+    def _embed(self, texts: list[str]) -> list[list[float] | None]:
+        """One batched call; ``None`` per text on failure (lexical still works)."""
+        if self.embedder is None or not texts:
+            return [None] * len(texts)
+        try:
+            return [[float(x) for x in v] for v in self.embedder.embed(list(texts))]
+        except Exception:
+            log.warning("memory embedding failed; lexical only", exc_info=True)
+            return [None] * len(texts)
+
+    # ── snapshot ─────────────────────────────────────────────────────────────
+    def _snapshot(self, owner_id: str, state: MemoryState) -> Snapshot:
+        snap = self.cache.get(owner_id, state.version, self.model)
+        if snap is None:
+            snap = Snapshot.build(state.version, self.store.live(owner_id), self.model)
+            self.cache.put(owner_id, snap)
+        return snap
+
+    def _neighbours(self, text_vecs: list[tuple[str, list[float] | None]], snap: Snapshot,
+                    items: list[MemoryItem]) -> list[list[tuple[MemoryItem, float]]]:
+        out = []
+        for text, vec in text_vecs:
+            rel = relevance(text, items, snap.dense(vec), self.scoring)
+            hits = sorted(((i, rel[i.id]) for i in items if rel.get(i.id, 0) >= self.config.neighbour_min),
+                          key=lambda t: t[1], reverse=True)[: self.config.neighbours_k]
+            out.append(hits)
+        return out
 
     # ── read ─────────────────────────────────────────────────────────────────
-    def notes_for(self, owner_id: str, query: str | None = None) -> list[str]:
-        """Profile slice + the items most relevant to ``query``, as short notes."""
+    def recall(self, owner_id: str, query: str | None = None) -> MemoryContext:
+        """Profile + relevant notes for one turn. Never raises."""
         try:
-            if not self.store.enabled(owner_id):
-                return []
-            items = self.store.live(owner_id)
+            state = self.store.state(owner_id)
+            if not state.enabled:
+                return MemoryContext()
+            snap = self._snapshot(owner_id, state)
+            ctx = self._compose(snap, state, query)
         except Exception:
             log.exception("memory recall failed")
-            return []
-        profile = [i for i in items if i.kind in PROFILE_KINDS][: self.config.profile_slice]
-        chosen = {i.id: i for i in profile}
-        if query and len(items) > len(profile):
-            for i in self._relevant(query, [i for i in items if i.id not in chosen]):
-                chosen[i.id] = i
-        if chosen:
-            self.jobs.submit(self.store.touch, owner_id, list(chosen))
-        return [i.content for i in chosen.values()]
+            return MemoryContext()
+        if ctx.ids:
+            self.jobs.submit(self.store.touch, owner_id, list(ctx.ids))
+        return ctx
 
-    def _relevant(self, query: str, items: list[MemoryItem]) -> list[MemoryItem]:
-        k = self.config.recall_top_k
-        scored: list[tuple[float, MemoryItem]] = []
-        qv = None
-        if self.embedder is not None and any(i.embedding for i in items):
-            try:
-                qv = self.embedder.embed([query])[0]
-            except Exception:
-                qv = None
-        for i in items:
-            score = (_cos(qv, i.embedding) if qv is not None and i.embedding
-                     else max(overlap(query, i.content), overlap(i.content, query)))
-            if score >= (0.35 if qv is not None and i.embedding else 0.25):
-                scored.append((score, i))
-        return [i for _, i in sorted(scored, key=lambda t: t[0], reverse=True)[:k]]
+    def _compose(self, snap: Snapshot, state: MemoryState, query: str | None) -> MemoryContext:
+        now = _now()
+        items = [i for i in snap.items if i.is_live(now)]
+        cfg = self.config
+        shown: set[str] = set()
+        digest = bool(state.digest_valid and not isinstance(self.synthesizer, NoSynthesizer))
+        if digest:
+            built = state.profile.built_at
+            profile = digest_lines(state.profile.content)
+            fresh = [i for i in items if i.kind in cfg.profile_kinds and i.created_at > built]
+            for i in ranked_profile(fresh, kinds=cfg.profile_kinds, max_lines=cfg.profile_slice, now=now):
+                profile.append(i.content)
+                shown.add(i.id)
+            pool = [i for i in items if i.kind in cfg.situational_kinds and i.id not in shown]
+        else:
+            chosen = ranked_profile(items, kinds=cfg.profile_kinds, max_lines=cfg.profile_slice, now=now,
+                                    half_life_days=self.scoring.half_life_days)
+            profile = [i.content for i in chosen]
+            shown = {i.id for i in chosen}
+            pool = [i for i in items if i.id not in shown]
+        relevant: list[MemoryItem] = []
+        if query and pool:
+            [qvec] = self._embed([query]) if snap.has_vectors else [None]
+            rel = relevance(query, pool, snap.dense(qvec), self.scoring)
+            # the profile already says it (a digest paraphrases): don't repeat it
+            pool = [i for i in pool if max((lexical(i.content, p) for p in profile), default=0.0) < 0.8]
+            relevant = rank(pool, rel, snap, self.scoring, k=cfg.top_k, now=now)
+        budget = cfg.recall.budget_chars
+        profile = within_budget(profile, budget)
+        rest = budget - sum(len(p) + 1 for p in profile)
+        rel_lines = within_budget([i.content for i in relevant], max(0, rest))
+        used = shown | {i.id for i in relevant[: len(rel_lines)]}
+        return MemoryContext(profile=profile, relevant=rel_lines, ids=sorted(used), digest=digest)
+
+    def notes_for(self, owner_id: str, query: str | None = None) -> list[str]:
+        """Profile + relevant notes as one flat list (learn mode's shape)."""
+        return self.recall(owner_id, query).notes()
 
     def prior(self, owner_id: str, kc_refs: list[str]) -> dict[str, float]:
         """Forgetting-discounted mastery to seed a new lesson, keyed by the REQUESTED key
@@ -160,33 +259,67 @@ class MemoryService:
         self.jobs.submit(self._commit, session.model_copy(deep=True))
 
     def _extract(self, owner_id: str, conversation_id: str, message: str, message_id: str | None,
-                 context: Sequence[PriorTurn] = ()) -> None:
+                 context: Sequence[PriorTurn] = ()) -> ApplyResult:
         if not self.store.enabled(owner_id):
-            return
-        existing = self.store.live(owner_id)
-        similar = self._relevant(message, existing) or existing[:5]
-        for op in self.extractor.extract(message, similar, context):
-            if self.policy.allow(op, existing):
-                self._apply(owner_id, op, {"conversation_id": conversation_id, "message_id": message_id})
+            return ApplyResult()
+        candidates = self.extractor.extract(message, context)
+        return self.ingest(owner_id, candidates,
+                           {"conversation_id": conversation_id, "message_id": message_id})
 
-    def _apply(self, owner_id: str, op: MemoryOp, source: dict) -> None:
-        if op.op == "delete" and op.target_id:
-            self.store.delete(owner_id, op.target_id)
-            return
-        item = MemoryItem(owner_id=owner_id, kind=op.kind or "preference", content=op.content.strip(),
-                          confidence=op.confidence, source=source, embedding=self._embed(op.content))
-        if op.op == "update" and op.target_id:
-            self.store.supersede(owner_id, op.target_id, item)
-        else:
-            self.store.add(item)
+    def ingest(self, owner_id: str, candidates: list[Candidate], source: dict) -> ApplyResult:
+        """The write pipeline for candidate facts (see module doc). Synchronous — callers
+        on the request path go through :meth:`remember_turn` (queued)."""
+        candidates = [c for c in candidates if self.policy.candidate_reason(c) is None]
+        if not candidates:
+            return ApplyResult()
+        state = self.store.state(owner_id)
+        if not state.enabled:
+            return ApplyResult()
+        snap = self._snapshot(owner_id, state)
+        live = [i for i in snap.items if i.is_live()]
+        vecs = self._embed([c.content for c in candidates])
+        neighbours = self._neighbours([(c.content, v) for c, v in zip(candidates, vecs, strict=True)],
+                                      snap, live)
+        ops = [op for op in self.reconciler.reconcile(candidates, neighbours) if self.policy.allow(op, live)]
+        result = self._apply(owner_id, ops, source, known={c.content: v for c, v in zip(candidates, vecs, strict=True)})
+        if result.changed:
+            self._after_write(owner_id)
+        return result
 
-    def _embed(self, text: str) -> list[float] | None:
-        if self.embedder is None:
-            return None
+    def _apply(self, owner_id: str, ops: list[MemoryOp], source: dict,
+               known: dict[str, list[float] | None] | None = None) -> ApplyResult:
+        """Build rows for the approved ops (embedding new text in one call) and apply
+        them atomically."""
+        known = dict(known or {})
+        texts = [op.content for op in ops if op.op != "retire" and op.content not in known]
+        for t, v in zip(texts, self._embed(texts), strict=True):
+            known[t] = v
+        changes = []
+        for op in ops:
+            if op.op == "retire":
+                changes.append(Change("retire", target_id=op.target_id))
+                continue
+            vec = known.get(op.content)
+            item = MemoryItem(owner_id=owner_id, kind=op.kind or "preference", content=op.content.strip(),
+                              confidence=op.confidence, importance=op.importance,
+                              source={**source, **({"explicit": True} if op.explicit else {})},
+                              embedding=vec, embedding_model=self.model if vec is not None else None)
+            changes.append(Change(op.op, item=item, target_id=op.target_id))
+        result = self.store.apply(owner_id, changes, max_items=self.config.max_items_per_user)
+        if result.changed:
+            log.info("memory.apply owner=%s add=%d update=%d retire=%d evict=%d skip=%d", owner_id,
+                     len(result.added), len(result.updated), len(result.retired), len(result.evicted),
+                     result.skipped)
+        return result
+
+    def _after_write(self, owner_id: str) -> None:
+        """Upkeep that follows a change: the digest (if stale) and periodic maintenance.
+        Called from inside a job, so it is already off the request path."""
         try:
-            return [float(x) for x in self.embedder.embed([text])[0]]
+            self.refresh_profile(owner_id)
         except Exception:
-            return None
+            log.exception("memory profile refresh failed")
+        self._maybe_maintain()
 
     def _commit(self, session: LearningSession) -> None:
         """Mastery per objective (code only) + one episode memory for the lesson."""
@@ -223,21 +356,64 @@ class MemoryService:
         # learner model actually counts as mastered; the rest was worked through
         summary = (f"Studied {session.plan.topic} on {now:%d %b}: worked through {covered}/"
                    f"{len(states)} parts, mastered {mastered}"
-                   + (f"; found hard: {', '.join(stuck[:2])}" if stuck else ""))
-        self.store.add(MemoryItem(
-            owner_id=owner, kind="episode", content=summary[:300], confidence=1.0,
-            source={"session_id": session.id, "conversation_id": session.conversation_id},
-            embedding=self._embed(summary), expires_at=now + timedelta(days=self.config.episode_ttl_days)))
+                   + (f"; found hard: {', '.join(stuck[:2])}" if stuck else ""))[:300]
+        [vec] = self._embed([summary])
+        episode = MemoryItem(owner_id=owner, kind="episode", content=summary, confidence=1.0,
+                             importance=0.7 if stuck else 0.5,
+                             source={"session_id": session.id, "conversation_id": session.conversation_id},
+                             embedding=vec, embedding_model=self.model if vec is not None else None,
+                             expires_at=now + timedelta(days=self.config.episode_ttl_days))
+        if self.store.apply(owner, [Change("add", item=episode)],
+                            max_items=self.config.max_items_per_user).changed:
+            self._after_write(owner)
 
-    # ── the learner's own controls ───────────────────────────────────────────
+    # ── the learner's own controls (synchronous) ─────────────────────────────
+    def remember(self, owner_id: str, content: str, kind: MemoryKind = "preference") -> list[MemoryItem]:
+        """A note the learner adds themselves ("remember that …"). Reconciled like any
+        other fact (so it updates rather than duplicates); refused content raises
+        :class:`MemoryRefused` with the reason."""
+        cand = Candidate(kind=kind, content=" ".join(content.split()), confidence=1.0, importance=1.0,
+                         explicit=True)
+        why = self.policy.candidate_reason(cand)
+        if why:
+            raise MemoryRefused(why)
+        if not self.store.enabled(owner_id):
+            raise MemoryRefused("memory is switched off")
+        result = self.ingest(owner_id, [cand], {"explicit": True})
+        if not result.changed:
+            raise MemoryRefused("already remembered")
+        return result.written()
+
+    def edit(self, owner_id: str, item_id: str, content: str) -> MemoryItem:
+        """The learner rewrites one of their notes (kept as an explicit note)."""
+        live = self.store.live(owner_id)
+        target = next((i for i in live if i.id == item_id), None)
+        if target is None:
+            raise KeyError(item_id)
+        op = MemoryOp(op="update", target_id=item_id, kind=target.kind, content=" ".join(content.split()),
+                      confidence=1.0, importance=max(target.importance, 0.9), explicit=True)
+        why = self.policy.reason(op, live)
+        if why:
+            raise MemoryRefused(why)
+        result = self._apply(owner_id, [op], {"explicit": True})
+        if not result.updated:
+            raise MemoryRefused("nothing changed")
+        self._after_write(owner_id)
+        return result.updated[0]
+
     def list(self, owner_id: str) -> list[MemoryItem]:
         return self.store.live(owner_id)
 
     def forget(self, owner_id: str, item_id: str) -> bool:
-        return self.store.delete(owner_id, item_id)
+        ok = self.store.delete(owner_id, item_id)
+        if ok:   # the digest may mention it: it is hidden at once, and rebuilt without it
+            self.jobs.submit(self._safe_refresh, owner_id)
+        return ok
 
     def forget_all(self, owner_id: str) -> int:
-        return self.store.clear(owner_id)
+        n = self.store.clear(owner_id)
+        self.cache.drop(owner_id)
+        return n
 
     def enabled(self, owner_id: str) -> bool:
         return self.store.enabled(owner_id)
@@ -247,3 +423,83 @@ class MemoryService:
 
     def mastery(self, owner_id: str) -> list[MasteryRecord]:
         return sorted(self.store.mastery(owner_id), key=lambda r: r.due_at)
+
+    def profile_text(self, owner_id: str) -> str | None:
+        """The digest the learner's lessons currently see, if one is valid."""
+        state = self.store.state(owner_id)
+        return state.profile.content if state.digest_valid and state.profile else None
+
+    # ── the digest ───────────────────────────────────────────────────────────
+    def _safe_refresh(self, owner_id: str) -> None:
+        try:
+            self.refresh_profile(owner_id)
+        except Exception:
+            log.exception("memory profile refresh failed")
+
+    def refresh_profile(self, owner_id: str, *, force: bool = False) -> bool:
+        """Rebuild the digest when stale (or ``force``). Returns whether one was saved."""
+        if isinstance(self.synthesizer, NoSynthesizer):
+            return False
+        state = self.store.state(owner_id)
+        if not state.enabled:
+            return False
+        if not force and state.digest_valid and state.profile is not None:
+            p = state.profile
+            built = p.built_at if p.built_at.tzinfo else p.built_at.replace(tzinfo=UTC)
+            fresh_enough = (_now() - built) < timedelta(days=self.config.profile_max_age_days)
+            if fresh_enough and state.version - p.built_version < self.config.profile_refresh_writes:
+                return False
+        items = [i for i in self._snapshot(owner_id, state).items if i.is_live()]
+        if not items:
+            return False
+        items.sort(key=lambda i: (-i.importance, -i.created_at.timestamp()))
+        text = self.synthesizer.synthesize(items[:80], max_chars=self.config.profile_max_chars)
+        if not text:
+            return False
+        bullets = digest_lines(text)
+        # validate before storing: every line must be policy-clean AND grounded in some
+        # memory (a model that went off-task, or invented a fact, produces lines that
+        # share no meaning words with any source); mostly-ungrounded → reject it all
+        grounded = [b for b in bullets if self.policy.allow_line(b)
+                    and max((lexical(b, i.content) for i in items[:80]), default=0.0) >= _GROUNDED]
+        if not grounded or len(grounded) * 2 < len(bullets):
+            log.warning("memory digest rejected owner=%s (%d/%d lines grounded)", owner_id,
+                        len(grounded), len(bullets))
+            return False
+        lines = [f"- {b}" for b in grounded]
+        # built against ``state.version``: a removal that lands while synthesising bumps
+        # removal_version past it, so this digest is never shown (correct by construction)
+        self.store.save_profile(owner_id, "\n".join(lines), state.version)
+        return True
+
+    # ── maintenance ──────────────────────────────────────────────────────────
+    def _maybe_maintain(self) -> None:
+        interval = self.config.maintenance_interval_hours * 3600
+        if interval <= 0 or not self._maint_lock.acquire(blocking=False):
+            return
+        try:
+            if time.monotonic() - self._last_maintenance < interval and self._last_maintenance:
+                return
+            self._last_maintenance = time.monotonic()
+        finally:
+            self._maint_lock.release()
+        try:
+            self.maintain()
+        except Exception:
+            log.exception("memory maintenance failed")
+
+    def maintain(self, *, now: datetime | None = None, reembed_limit: int = 200) -> dict[str, int]:
+        """Idempotent hygiene, safe at any frequency: prune history and expired rows past
+        retention; re-embed live items whose vector is missing or from another embedder
+        (so swapping the embedding model in config heals itself)."""
+        pruned = self.store.prune(retention_days=self.config.retention_days, now=now)
+        reembedded = 0
+        if self.model is not None:
+            stale = self.store.stale_embeddings(self.model, limit=reembed_limit)
+            for item, vec in zip(stale, self._embed([i.content for i in stale]), strict=True):
+                if vec is not None and not any(math.isnan(x) for x in vec[:4]):
+                    self.store.set_embedding(item.owner_id, item.id, vec, self.model)
+                    reembedded += 1
+        if pruned or reembedded:
+            log.info("memory.maintenance pruned=%d reembedded=%d", pruned, reembedded)
+        return {"pruned": pruned, "reembedded": reembedded}

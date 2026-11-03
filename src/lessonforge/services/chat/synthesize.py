@@ -74,9 +74,15 @@ class AnswerSynthesizer:
     @staticmethod
     def _build_prompt(question: str, context: BuiltContext, memory: MemoryView) -> str:
         parts: list[str] = []
-        if memory.profile:   # personalises tone/examples only — never a source, never cited
-            notes = "; ".join(memory.profile)
-            parts.append(f"About the learner (use only to personalise, not as facts): {notes}")
+        # long-term memory personalises tone/examples only — never a source, never cited
+        if memory.profile or memory.relevant:
+            block = [("About the learner (use only to personalise how you answer — never as "
+                      "facts about the subject, never cite):")]
+            block += [f"- {n}" for n in memory.profile]
+            if memory.relevant:
+                block.append("Relevant to this question:")
+                block += [f"- {n}" for n in memory.relevant]
+            parts.append("\n".join(block))
         if memory.summary:
             parts.append(f"Summary of earlier conversation:\n{memory.summary}")
         if memory.recent:

@@ -182,13 +182,26 @@ chat:
     summary_trigger_turns: 12           # start summarizing once the thread exceeds this
     structured_summary: true            # sections: goals / facts / open questions / preferences
     jobs: threadpool                    # ← swap: threadpool | inline — memory upkeep off the request path
-    long_term:                          # L3 memory about the learner (docs/LEARN_MODE.md §7)
+    long_term:                          # L3 memory about the learner (docs/MEMORY.md)
       enabled: true                     # kill switch; learners can also switch it off themselves
-      extractor: llm                    # ← swap: llm | none
+      extractor: llm                    # ← swap: llm | none   — what is worth remembering
+      reconciler: llm                   # ← swap: llm | rules  — add / update / retire / no-op
+      profile: llm                      # ← swap: llm (digest) | ranked — the always-on profile
       min_confidence: 0.6
-      recall_top_k: 3
+      max_candidates: 5
+      recall:                           # score = 0.6·relevance + 0.2·recency + 0.2·importance
+        top_k: 3
+        dense_min: 0.65                 # calibrated for bge-small (unrelated ≤0.63); recalibrate on embedder swap
+        lexical_min: 0.25
+        half_life_days: 30
+        budget_chars: 900
       profile_slice: 5
+      profile_refresh_writes: 3         # rebuild the digest after N changes or …
+      profile_max_age_days: 7           # … when it is this old
+      max_items_per_user: 300           # at the cap the least valuable note is evicted
       episode_ttl_days: 180
+      retention_days: 30                # history (superseded / retired / expired) kept this long
+      maintenance_interval_hours: 6
   synthesis:
     temperature: 0.3
     require_citations: true             # instruct the model to cite [n] from the sources

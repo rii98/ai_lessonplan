@@ -357,20 +357,61 @@ class ChatContextConfig(BaseModel):
     compression: bool = False
 
 
+class MemoryRecallConfig(BaseModel):
+    """How the read path ranks memories: ``w_relevance·relevance + w_recency·recency +
+    w_importance·importance``; relevance = max(dense cosine, lexical overlap), each
+    counted only above its floor."""
+
+    top_k: int = 3
+    # embedder-specific: measured for BAAI/bge-small-en-v1.5, unrelated memory/query pairs
+    # score 0.40–0.63 and related ones 0.66–0.85 — recalibrate when swapping the embedder
+    dense_min: float = 0.65
+    lexical_min: float = 0.25
+    w_relevance: float = 0.6
+    w_recency: float = 0.2
+    w_importance: float = 0.2
+    half_life_days: float = 30.0
+    diversity: float = Field(default=0.9, ge=0.0, le=1.0)   # drop near-duplicates of a chosen note
+    budget_chars: int = 900             # profile + relevant notes, at most this many characters
+
+
 class LongTermMemoryConfig(BaseModel):
-    """L3 memory about the learner (docs/LEARN_MODE.md §7.3). Personalises only."""
+    """L3 memory about the learner (docs/MEMORY.md). Personalises only.
+
+    Write path: extractor → policy → reconciler → policy → atomic apply (off the request
+    path). Read path: profile (digest or ranked) + relevant notes, cached per version."""
 
     enabled: bool = True
     store: str | None = None            # memory | postgres; None → same as chat.store
     extractor: str = "llm"              # llm | none
+    reconciler: str = "llm"             # llm | rules — how candidates change the store
+    profile: str = "llm"                # llm (synthesised digest) | ranked (deterministic)
     min_confidence: float = 0.6
-    recall_top_k: int = 3
-    profile_slice: int = 5
-    max_items_per_user: int = 300
+    max_candidates: int = 5             # facts one message may propose
+    recall_top_k: int | None = None     # deprecated alias of recall.top_k
+    recall: MemoryRecallConfig = Field(default_factory=MemoryRecallConfig)
+    profile_slice: int = 5              # ranked profile: at most this many lines
+    profile_kinds: list[str] = Field(default_factory=lambda: ["preference", "goal", "interest", "learning_need"])
+    # with a digest, the relevant layer searches only these (the digest covers the rest)
+    situational_kinds: list[str] = Field(default_factory=lambda: ["learning_need", "episode"])
+    profile_max_chars: int = 600
+    profile_refresh_writes: int = 3     # rebuild the digest after this many changes …
+    profile_max_age_days: float = 7.0   # … or when it is this old
+    neighbours_k: int = 5               # existing memories shown to the reconciler per candidate
+    neighbour_min: float = 0.3          # … at least this similar
+    duplicate_similarity: float = 0.92  # rules fallback: this similar = already known
+    max_items_per_user: int = 300       # at the cap the least valuable note is evicted
     episode_ttl_days: int = 180
+    retention_days: int = 30            # superseded / retired / expired rows kept this long
+    maintenance_interval_hours: float = 6.0
+    cache_owners: int = 2048            # recall snapshots kept in memory (LRU)
     # a free-text lesson part is the same knowledge component as a stored one when topic
     # AND title agree at least this much ("What is ammonia?" ≈ "what's ammonia")
     concept_match: float = Field(default=0.75, ge=0.0, le=1.0)
+
+    @property
+    def top_k(self) -> int:
+        return self.recall_top_k if self.recall_top_k is not None else self.recall.top_k
 
 
 class ChatMemoryConfig(BaseModel):

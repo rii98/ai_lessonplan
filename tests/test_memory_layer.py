@@ -13,7 +13,7 @@ import pytest
 
 from lessonforge.config import ChatConfig, LongTermMemoryConfig
 from lessonforge.domain.chat import ChatMessageRequest, Conversation
-from lessonforge.domain.memory import MasteryRecord, MemoryItem, MemoryOp
+from lessonforge.domain.memory import Candidate, MasteryRecord, MemoryItem, MemoryOp
 from lessonforge.providers.base import LLMClient, LLMResult
 from lessonforge.rag.retriever import Retriever
 from lessonforge.services.chat.context import ContextBuilder
@@ -30,6 +30,7 @@ from lessonforge.services.learn.store import (
 from lessonforge.services.memory import InlineJobs, MemoryService
 from lessonforge.services.memory.extractor import LLMExtractor, MemoryExtractor
 from lessonforge.services.memory.policy import AllowlistPolicy, sensitive
+from lessonforge.services.memory.reconciler import MemoryReconciler
 from lessonforge.services.memory.store import MemoryMemoryStore, PostgresMemoryStore
 from tests.conftest import make_principal, pg_principal
 from tests.learn_fixtures import session as learn_session
@@ -59,7 +60,7 @@ def test_low_confidence_duplicates_and_foreign_targets_are_vetoed():
     have = [MemoryItem(owner_id="u", kind="interest", content="likes football")]
     assert not pol.allow(MemoryOp(op="add", kind="interest", content="likes football.", confidence=0.9), have)
     assert not pol.allow(MemoryOp(op="add", kind="interest", content="likes cricket", confidence=0.3), have)
-    assert not pol.allow(MemoryOp(op="delete", target_id="someone-elses"), have)
+    assert not pol.allow(MemoryOp(op="retire", target_id="someone-elses"), have)
 
 
 # ── extractor ────────────────────────────────────────────────────────────────
@@ -69,18 +70,21 @@ class OpsLLM(LLMClient):
 
     def complete(self, prompt, *, system=None, json_schema=None, temperature=None):
         self.calls += 1
-        return LLMResult(text=json.dumps({"ops": self.ops}), raw={})
+        return LLMResult(text=json.dumps({"facts": self.ops}), raw={})
 
     def health(self):
         return True
 
 
-def test_extractor_parses_ops_and_skips_trivial_messages():
-    llm = OpsLLM([{"op": "add", "kind": "interest", "content": "likes football", "confidence": 0.9},
-                  {"op": "nonsense"}, "garbage"])
-    ops = LLMExtractor(llm).extract("I love football, use it in examples", [])
-    assert [(o.op, o.kind, o.content) for o in ops] == [("add", "interest", "likes football")]
-    assert LLMExtractor(llm).extract("ok", []) == [] and llm.calls == 1
+def test_extractor_parses_candidates_and_skips_trivial_messages():
+    llm = OpsLLM([{"kind": "interest", "content": "likes football", "confidence": 0.9, "importance": 0.4},
+                  {"kind": "goal", "content": "wants answers in Nepali", "explicit": True},
+                  {"kind": "nonsense", "content": "x"}, "garbage"])
+    cands = LLMExtractor(llm).extract("I love football, use it in examples")
+    assert [(c.kind, c.content, c.importance) for c in cands] == [
+        ("interest", "likes football", 0.4), ("goal", "wants answers in Nepali", 1.0)]  # explicit → 1.0
+    assert cands[1].explicit
+    assert LLMExtractor(llm).extract("ok") == [] and llm.calls == 1
 
 
 # ── stores: same contract, memory and Postgres ───────────────────────────────
@@ -160,33 +164,45 @@ def test_learning_session_store_contract(learn_store):
 
 # ── the service ──────────────────────────────────────────────────────────────
 class FixedExtractor(MemoryExtractor):
-    def __init__(self, ops):
-        self.ops = ops
+    def __init__(self, cands):
+        self.cands = cands
 
-    def extract(self, message, similar, context=()):
+    def extract(self, message, context=()):
         self.seen = (message, list(context))
-        return [op(similar) if callable(op) else op for op in self.ops]
+        return list(self.cands)
 
 
-def _svc(ops=(), store=None) -> MemoryService:
-    return MemoryService(store=store or MemoryMemoryStore(), extractor=FixedExtractor(list(ops)),
-                         policy=AllowlistPolicy(), jobs=InlineJobs(), config=LongTermMemoryConfig())
+class SupersedeReconciler(MemoryReconciler):
+    """Updates the nearest neighbour when there is one (what an LLM reconciler does for
+    a changed preference)."""
+
+    def reconcile(self, candidates, neighbours):
+        return [MemoryOp(op="update", target_id=hits[0][0].id, kind=c.kind, content=c.content,
+                         confidence=c.confidence) if hits else
+                MemoryOp(op="add", kind=c.kind, content=c.content, confidence=c.confidence)
+                for c, hits in zip(candidates, neighbours, strict=True)]
+
+
+def _svc(cands=(), store=None, reconciler=None) -> MemoryService:
+    return MemoryService(store=store or MemoryMemoryStore(), extractor=FixedExtractor(list(cands)),
+                         policy=AllowlistPolicy(), jobs=InlineJobs(), config=LongTermMemoryConfig(),
+                         reconciler=reconciler)
 
 
 def test_remembering_a_turn_adds_then_updates_instead_of_duplicating():
-    svc = _svc([MemoryOp(op="add", kind="preference", content="wants answers in English", confidence=0.9)])
+    svc = _svc([Candidate(kind="preference", content="wants answers in English", confidence=0.9)],
+               reconciler=SupersedeReconciler())
     svc.remember_turn("u", "c", "please answer in English from now on")
     assert len(svc.list("u")) == 1
-    svc.extractor = FixedExtractor([lambda similar: MemoryOp(
-        op="update", target_id=similar[0].id, kind="preference", content="wants answers in Nepali",
-        confidence=0.9)])
+    svc.extractor = FixedExtractor([Candidate(kind="preference", content="wants answers in Nepali",
+                                              confidence=0.9)])
     svc.remember_turn("u", "c", "actually, answer in Nepali please")
     assert [i.content for i in svc.list("u")] == ["wants answers in Nepali"]
     assert svc.list("u")[0].source["conversation_id"] == "c"
 
 
 def test_switching_memory_off_stops_writes_and_reads():
-    svc = _svc([MemoryOp(op="add", kind="interest", content="likes football", confidence=0.9)])
+    svc = _svc([Candidate(kind="interest", content="likes football", confidence=0.9)])
     svc.set_enabled("u", False)
     svc.remember_turn("u", "c", "I love football so much")
     assert svc.list("u") == [] and svc.notes_for("u", "football") == []
@@ -389,7 +405,7 @@ def test_the_extractor_sees_the_previous_exchange_as_context_only():
     llm = Capture([])
     ctx = [PriorTurn(role="user", text="explain photosynthesis"),
            PriorTurn(role="assistant", text="- Leaves catch sunlight\n- Like steaming momos: heat in, food out")]
-    LLMExtractor(llm).extract("I like the above style, explain like this always", [], ctx)
+    LLMExtractor(llm).extract("I like the above style, explain like this always", ctx)
     assert "Tutor: - Leaves catch sunlight - Like steaming momos" in llm.prompt
     assert "Student's NEW message: I like the above style" in llm.prompt
     assert "SELF-CONTAINED" in llm.system and "never something the tutor said" in llm.system

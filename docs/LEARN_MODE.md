@@ -499,6 +499,10 @@ trust level. Mixing them is how memory systems end up wrong without anyone notic
 
 ### 7.3 Long-term memory (L3)
 
+> **Superseded by [`docs/MEMORY.md`](MEMORY.md) (memory v2, 2026-11-03):** separate
+> extract → reconcile stages, atomic per-learner apply, profile digest, versioned recall
+> cache, retention. The text below is the original v1 design.
+
 **Ports** (each with a registry entry and config):
 
 | Port | Default | Responsibility |

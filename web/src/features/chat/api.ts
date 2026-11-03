@@ -35,12 +35,12 @@ export function useEndLesson(conversationId: string | undefined) {
 }
 
 // ── the learner's long-term memory ("What LessonForge remembers about me") ──
-export interface MemoryItemView { id: string; kind: string; content: string; created_at: string; last_used_at?: string | null; expires_at?: string | null }
+export interface MemoryItemView { id: string; kind: string; content: string; importance?: number; origin?: "you" | "chat" | "lesson"; created_at: string; last_used_at?: string | null; expires_at?: string | null }
 export interface MasteryView { kc_ref: string; title: string; mastery: number; attempts: number; correct: number; due: boolean; due_at: string }
 
 export function useMemories(enabled: boolean) {
   const api = useApi();
-  return useQuery({ queryKey: chatKeys.memories, enabled, queryFn: ({ signal }) => api.get<{ enabled: boolean; items: MemoryItemView[] }>("/me/memories", undefined, signal) });
+  return useQuery({ queryKey: chatKeys.memories, enabled, queryFn: ({ signal }) => api.get<{ enabled: boolean; profile?: string | null; items: MemoryItemView[] }>("/me/memories", undefined, signal) });
 }
 
 export function useProgress(enabled: boolean) {
@@ -53,6 +53,7 @@ export function useMemoryMutations() {
   const qc = useQueryClient();
   const refresh = () => { void qc.invalidateQueries({ queryKey: chatKeys.memories }); void qc.invalidateQueries({ queryKey: chatKeys.progress }); };
   return {
+    add: useMutation({ mutationFn: (content: string) => api.post<{ items: MemoryItemView[] }>("/me/memories", { content }), onSuccess: refresh }),
     forget: useMutation({ mutationFn: (id: string) => api.request("DELETE", `/me/memories/${encodeURIComponent(id)}`), onSuccess: refresh }),
     forgetAll: useMutation({ mutationFn: () => api.request("DELETE", "/me/memories"), onSuccess: refresh }),
     setEnabled: useMutation({ mutationFn: (enabled: boolean) => api.request("PUT", "/me/memory-settings", { body: { enabled } }), onSuccess: refresh }),

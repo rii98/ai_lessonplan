@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Banner, Button, ConfirmDialog, Dialog, Icon, IconButton, Meter, SkeletonLines } from "@/ui";
+import { Banner, Button, ConfirmDialog, Dialog, Icon, IconButton, Meter, SkeletonLines, TextInput } from "@/ui";
 import { describeError } from "@/lib/api";
 import { useMemories, useMemoryMutations, useProgress } from "../api";
 import s from "./learn.module.css";
@@ -14,6 +14,12 @@ export function MemoryDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const progress = useProgress(open);
   const m = useMemoryMutations();
   const [clearing, setClearing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const addNote = () => {
+    const content = draft.trim();
+    if (content.length < 3) return;
+    m.add.mutate(content, { onSuccess: () => setDraft("") });
+  };
   const enabled = mem.data?.enabled ?? true;
   return (
     <Dialog open={open} onOpenChange={onOpenChange} title="What LessonForge remembers"
@@ -25,13 +31,21 @@ export function MemoryDialog({ open, onOpenChange }: { open: boolean; onOpenChan
       {mem.error && <Banner tone="danger">{describeError(mem.error)}</Banner>}
       {!enabled && <Banner tone="info">Memory is off — nothing new is remembered, and lessons won't use what's here.</Banner>}
       <h4 style={{ margin: "4px 0 8px" }}>Notes</h4>
+      {enabled && (
+        <form className={s.memAdd} onSubmit={(e) => { e.preventDefault(); addNote(); }}>
+          <TextInput value={draft} maxLength={200} onChange={(e) => setDraft(e.target.value)}
+            placeholder="Tell me something to remember, e.g. “use cricket examples”" aria-label="Add a note" />
+          <Button type="submit" busy={m.add.isPending} disabled={draft.trim().length < 3}>Remember</Button>
+        </form>
+      )}
+      {m.add.error && <Banner tone="danger">{describeError(m.add.error)}</Banner>}
       {mem.isPending ? <SkeletonLines lines={3} /> : !mem.data?.items.length
         ? <p className={s.muted} style={{ fontSize: "var(--text-sm)" }}>Nothing yet. Tell me how you like to learn (“use football examples”) and I'll remember.</p>
         : (
           <ul className={s.memList}>
             {mem.data.items.map((i) => (
               <li key={i.id} className={s.memItem}>
-                <span><div>{i.content}</div><div className={s.memKind}>{i.kind.replace("_", " ")}</div></span>
+                <span><div>{i.content}</div><div className={s.memKind}>{i.kind.replace("_", " ")}{i.origin === "you" ? " · you asked" : ""}</div></span>
                 <IconButton size="sm" label={`Forget “${i.content}”`} onClick={() => m.forget.mutate(i.id)}><Icon.Trash2 size={15} /></IconButton>
               </li>
             ))}

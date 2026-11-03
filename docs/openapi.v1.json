@@ -865,6 +865,21 @@
         "title": "DocumentView",
         "type": "object"
       },
+      "EditMemory": {
+        "properties": {
+          "content": {
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "EditMemory",
+        "type": "object"
+      },
       "FilterMode": {
         "description": "The two retrieval modes. ``scoped`` applies the conversation's default tag\nfilters (grade/subject/class/\u2026); ``broad`` ignores them and searches the\nwhole corpus. A message may override the conversation default with either.",
         "enum": [
@@ -1418,6 +1433,33 @@
           "correction"
         ],
         "title": "Misconception",
+        "type": "object"
+      },
+      "NewMemory": {
+        "properties": {
+          "content": {
+            "maxLength": 200,
+            "minLength": 3,
+            "title": "Content",
+            "type": "string"
+          },
+          "kind": {
+            "default": "preference",
+            "enum": [
+              "preference",
+              "learning_need",
+              "interest",
+              "goal",
+              "episode"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "title": "NewMemory",
         "type": "object"
       },
       "NormalizedBrief": {
@@ -6382,6 +6424,94 @@
         "tags": [
           "me"
         ]
+      },
+      "post": {
+        "description": "The learner adds a note themselves. Same policy as anything extracted (minors-\nfirst), and reconciled \u2014 so \"answer in English\" replaces \"answer in Nepali\".",
+        "operationId": "add_memory_api_v1_me_memories_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewMemory"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Add Memory Api V1 Me Memories Post",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Memory",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/api/v1/me/memories/recall": {
+      "get": {
+        "description": "Exactly what a question would bring back (transparency, and debugging).",
+        "operationId": "preview_recall_api_v1_me_memories_recall_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Preview Recall Api V1 Me Memories Recall Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Recall",
+        "tags": [
+          "me"
+        ]
       }
     },
     "/api/v1/me/memories/{memory_id}": {
@@ -6425,6 +6555,58 @@
           }
         },
         "summary": "Forget Memory",
+        "tags": [
+          "me"
+        ]
+      },
+      "patch": {
+        "operationId": "edit_memory_api_v1_me_memories__memory_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_id",
+            "required": true,
+            "schema": {
+              "title": "Memory Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditMemory"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Edit Memory Api V1 Me Memories  Memory Id  Patch",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Edit Memory",
         "tags": [
           "me"
         ]

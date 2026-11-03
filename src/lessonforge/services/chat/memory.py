@@ -31,7 +31,8 @@ from .store import ChatStore
 class MemoryView:
     recent: list[ChatMessage]  # the verbatim window, oldest-first
     summary: str               # rolling summary of everything older
-    profile: list[str] = field(default_factory=list)   # long-term notes about the learner (L3)
+    profile: list[str] = field(default_factory=list)    # L3: who the learner is (always on)
+    relevant: list[str] = field(default_factory=list)   # L3: notes relevant to this question
 
 
 _SUMMARY_SYSTEM = (
