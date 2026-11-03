@@ -14,7 +14,7 @@ import { MemoryDialog } from "./learn/MemoryDialog";
 import { ProgressPath } from "./learn/ProgressPath";
 import { QuickChips } from "./learn/QuickChips";
 import learnCss from "./learn/learn.module.css";
-import { AssistantMessage, UserMessage } from "./Message";
+import { AssistantMessage, UserMessage, userKind } from "./Message";
 import type { ArtifactSummary, ChatConfig, Citation, ConversationDetail, LearnAction, LearnFeedback, LearnWidget as Widget, Scope } from "./types";
 import { useChatTurn, type TurnInput } from "./useChatTurn";
 import s from "./chat.module.css";
@@ -131,6 +131,13 @@ export function ChatPage() {
   }, [messages, chat.turn?.feedback]);
   const pendingWidget = lessonActive ? learning.data?.widget ?? null : null;
   const lastAssistant = messages.reduce((n, m, i) => (m.role === "assistant" ? i : n), -1);
+  // name the speaker only where the mode changes (Q&A → lesson → Q&A), not on every turn
+  const skillOf = (m: { meta?: { intent?: { skill?: string } | null } }) => (m.meta?.intent?.skill && m.meta.intent.skill !== "qa" ? m.meta.intent.skill : "qa");
+  const speakerShown = useMemo(() => {
+    let prev: string | null = null;
+    return messages.map((m) => { if (m.role !== "assistant") return false; const k = skillOf(m); const show = k !== prev; prev = k; return show; });
+  }, [messages]);
+  const lastSkill = lastAssistant >= 0 ? skillOf(messages[lastAssistant]!) : null;
   const widgetOf = (meta: Record<string, unknown> | undefined): Widget | null => {
     const w = meta?.widget as Widget | undefined;
     if (w) return w;
@@ -202,8 +209,8 @@ export function ChatPage() {
               </div>
             )}
             {messages.map((m, i) => m.role === "user"
-              ? <UserMessage key={m.id ?? i} text={m.content} />
-              : <AssistantMessage key={m.id ?? i} content={m.content} citations={m.citations} skill={m.meta?.intent?.skill}
+              ? <UserMessage key={m.id ?? i} text={m.content} kind={userKind(m.meta)} />
+              : <AssistantMessage key={m.id ?? i} content={m.content} citations={m.citations} skill={m.meta?.intent?.skill} showName={speakerShown[i]}
                   artifacts={(m.meta?.artifact_ids ?? []).map((id) => artifactById.get(id)).filter(Boolean) as ArtifactSummary[]}
                   onCite={setCitation} onOpenArtifact={setCanvas}
                   onQuickAction={i === messages.length - 1 && !lessonActive ? (q) => void send(q) : undefined}
@@ -212,9 +219,9 @@ export function ChatPage() {
                   {learnExtras(m.meta, i === lastAssistant && !live, false)}
                 </AssistantMessage>)}
             {live && (<>
-              <UserMessage text={live.userText} />
+              <UserMessage text={live.userText} kind={userKind(live.userMeta)} />
               <AssistantMessage pending content={live.content} citations={live.citations} artifacts={live.artifacts} status={live.status ?? (live.skill ? "Working on it…" : null)}
-                skill={live.skill} onCite={setCitation} onOpenArtifact={setCanvas}>
+                skill={live.skill} showName={(live.skill ?? (live.userMeta?.mode === "learn" ? "learn" : lastSkill ?? "qa")) !== lastSkill} onCite={setCitation} onOpenArtifact={setCanvas}>
                 {live.widget && <LearnWidget widget={live.widget} feedback={null} busy />}
               </AssistantMessage>
             </>)}

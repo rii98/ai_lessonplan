@@ -13,6 +13,9 @@ export type TurnInput =
   | { kind: "start"; topic: string };
 
 const label = (i: TurnInput) => (i.kind === "message" ? i.text : i.kind === "start" ? `Teach me: ${i.topic}` : i.label);
+/** The user message's meta, as the server stores it — so a tap reads as a receipt, not speech. */
+const userMeta = (i: TurnInput): Record<string, unknown> | undefined => i.kind !== "learn" ? undefined
+  : i.widget ? { mode: "learn", widget_response: i.widget } : { mode: "learn", action: { name: i.action, value: i.value ?? null } };
 
 function filtersOf(scope: Scope): Record<string, unknown> {
   const f: Record<string, unknown> = {};
@@ -30,7 +33,7 @@ function filtersOf(scope: Scope): Record<string, unknown> {
 export function useChatTurn() {
   const api = useApi();
   const qc = useQueryClient();
-  const [turn, setTurn] = useState<(Turn & { userText: string; conversationId: string }) | null>(null);
+  const [turn, setTurn] = useState<(Turn & { userText: string; userMeta?: Record<string, unknown>; conversationId: string }) | null>(null);
   const abort = useRef<AbortController | null>(null);
 
   const run = useCallback(async (conversationId: string, input: TurnInput, scope: Scope) => {
@@ -38,9 +41,10 @@ export function useChatTurn() {
     const ctl = new AbortController();
     abort.current = ctl;
     const userText = label(input);
+    const um = userMeta(input);
     let t = emptyTurn();
     let frame = 0;
-    const flush = () => { frame = 0; setTurn({ ...t, userText, conversationId }); };
+    const flush = () => { frame = 0; setTurn({ ...t, userText, userMeta: um, conversationId }); };
     flush();
     const base = `/chat/conversations/${encodeURIComponent(conversationId)}`;
     const [path, body] = input.kind === "message"
@@ -72,7 +76,7 @@ export function useChatTurn() {
       qc.setQueryData<ConversationDetail>(chatKeys.detail(conversationId), (prev) => prev && ({
         ...prev,
         conversation: t.title ? { ...prev.conversation, title: t.title } : prev.conversation,
-        messages: [...prev.messages, { role: "user", content: userText, meta: t.feedback ? { feedback: t.feedback } : undefined }, ...reply],
+        messages: [...prev.messages, { role: "user", content: userText, meta: um || t.feedback ? { ...um, ...(t.feedback ? { feedback: t.feedback } : {}) } : undefined }, ...reply],
         artifacts: [...prev.artifacts, ...t.artifacts.filter((a) => !prev.artifacts.some((p) => p.id === a.id))],
       }));
       if (t.learn) {

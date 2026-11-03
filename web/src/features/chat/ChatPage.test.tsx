@@ -80,9 +80,14 @@ describe("chat", () => {
     expect(screen.getByRole("button", { name: "Hint" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /energy to make food/ }));
     await waitFor(() => expect(answered).toMatchObject({ widget_response: { widget_id: "O1.c1", response: 1 } }));
-    expect(await screen.findByText("Correct!")).toBeInTheDocument();
-    expect(screen.getByText("Answered: energy to make food")).toBeInTheDocument();
+    // graded: the check collapses to a compact result; the tap reads as a receipt, not a bubble
+    expect(await screen.findByText("Correct")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /warmth/ })).not.toBeInTheDocument();
+    expect(screen.getByText("Your answer")).toBeInTheDocument();
+    expect(screen.getByText("energy to make food")).toBeInTheDocument();
     expect(await screen.findByText(/Spot on!/)).toBeInTheDocument();
-    expect(screen.getByText("1/2")).toBeInTheDocument();
+    expect(screen.getByText("1 of 2 done")).toBeInTheDocument();
+    // the speaker is named once, where the lesson starts — not on every tutor turn
+    expect(screen.getAllByText("Lesson")).toHaveLength(1);
   });
 });

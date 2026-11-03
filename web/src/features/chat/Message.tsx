@@ -11,8 +11,29 @@ export function citationLabel(c: Citation): string {
   return trail || (!looksLikeId && c.source) || (c.collection ? c.collection.replace("_", " ") : "Source");
 }
 
-export function UserMessage({ text }: { text: string }) {
-  return <div className={`${s.msg} ${s.user}`}>{text}</div>;
+/**
+ * What a user turn *is*: typed speech, a tapped action (Hint, I know this…) or an
+ * answer to an inline check. Only speech gets a bubble — the other two are
+ * receipts, so the student's own words stand out from button presses.
+ */
+export type UserKind = "speech" | "action" | "answer";
+
+export function userKind(meta: Record<string, unknown> | undefined): UserKind {
+  if (meta?.widget_response) return "answer";
+  if (meta?.action) return "action";
+  return "speech";
+}
+
+export function UserMessage({ text, kind = "speech" }: { text: string; kind?: UserKind }) {
+  if (kind === "speech") return <div className={`${s.msg} ${s.user}`}>{text}</div>;
+  const answer = kind === "answer";
+  return (
+    <div className={s.receipt} data-kind={kind}>
+      {answer ? <Icon.CornerDownRight size={13} aria-hidden /> : <Icon.MousePointerClick size={13} aria-hidden />}
+      {answer && <span className={s.receiptLabel}>Your answer</span>}
+      <span className={s.receiptText}>{answer ? text.replace(/^Answered:\s*/, "") : text}</span>
+    </div>
+  );
 }
 
 export function ArtifactCard({ a, onOpen }: { a: ArtifactSummary; onOpen: () => void }) {
@@ -28,8 +49,12 @@ export function ArtifactCard({ a, onOpen }: { a: ArtifactSummary; onOpen: () => 
   );
 }
 
-export function AssistantMessage({ content, citations = [], artifacts = [], status, pending, skill, onCite, onOpenArtifact, onQuickAction, onTeach, children }: {
+const SKILL_NAMES: Record<string, string> = { learn: "Lesson", quiz: "Quiz" };
+
+export function AssistantMessage({ content, citations = [], artifacts = [], status, pending, skill, showName = true, onCite, onOpenArtifact, onQuickAction, onTeach, children }: {
   content: string; citations?: Citation[]; artifacts?: ArtifactSummary[]; status?: string | null; pending?: boolean; skill?: string | null;
+  /** Name the speaker only where the mode changes — a label on every turn is noise. */
+  showName?: boolean;
   onCite: (c: Citation) => void; onOpenArtifact: (id: string) => void; onQuickAction?: (text: string) => void;
   /** Offer a scaffolded lesson on what was just asked (learn mode). */
   onTeach?: () => void;
@@ -39,8 +64,13 @@ export function AssistantMessage({ content, citations = [], artifacts = [], stat
   const byN = new Map(citations.map((c) => [c.n, c]));
   return (
     <div className={`${s.msg} ${s.ai}`}>
-      <div className={s.aiName}>LessonForge{skill && skill !== "qa" && <span style={{ color: "var(--marigold-ink)" }}>· {skill === "learn" ? "lesson" : skill}</span>}</div>
-      {content ? <RichText text={content} onCite={(n) => { const c = byN.get(n); if (c) onCite(c); }} />
+      {showName && (
+        <div className={s.aiName}>
+          {skill === "learn" ? <Icon.GraduationCap size={14} aria-hidden /> : <Icon.BookOpen size={14} aria-hidden />}
+          {skill && skill !== "qa" ? SKILL_NAMES[skill] ?? skill : "LessonForge"}
+        </div>
+      )}
+      {content ? <div className={s.voice}><RichText text={content} onCite={(n) => { const c = byN.get(n); if (c) onCite(c); }} /></div>
         : pending && <div className={s.status}><span className={s.typing} aria-label="Thinking"><i /><i /><i /></span>{status}</div>}
       {content && pending && status && <div className={s.status}>{status}</div>}
       {citations.length > 0 && (

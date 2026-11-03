@@ -21,11 +21,28 @@
 .mobileOnly { } @media (min-width: 900px) { .mobileOnly { display: none !important; } }
 
 .scroll { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
-.thread { max-width: 760px; margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-6); display: grid; gap: var(--space-5); }
-.msg { display: grid; gap: 6px; }
-.user { justify-self: end; max-width: 85%; background: var(--sunken); border-radius: 16px 16px 4px 16px; padding: 10px 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.thread { max-width: 720px; margin: 0 auto; padding: var(--space-5) var(--space-4) var(--space-6); display: grid; gap: var(--space-6); }
+/* Gestalt proximity: a prompt and its reply are one exchange — tight inside, roomy between */
+.thread > .user + .ai, .thread > .receipt + .ai { margin-top: calc(-1 * var(--space-4)); }
+.thread > .ai + .receipt { margin-top: calc(-1 * var(--space-4)); }
+.msg { display: grid; gap: var(--space-3); }
+
+/* the student's own words: a quiet sans bubble, a step smaller than the tutor's voice */
+.user { justify-self: end; max-width: 80%; background: var(--sunken); color: var(--ink); border-radius: 18px 18px 4px 18px; padding: 9px 14px; font-size: var(--text-md); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* a tapped action or a check answer: a receipt, not speech */
+.receipt { justify-self: end; display: inline-flex; align-items: center; gap: 6px; max-width: 80%; font-size: var(--text-sm); color: var(--ink-3); }
+.receiptLabel { color: var(--ink-3); }
+.receiptText { color: var(--ink-2); font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.receipt[data-kind="action"] .receiptText { font-weight: 500; }
+
 .ai { min-width: 0; }
-.aiName { font-size: var(--text-xs); color: var(--ink-3); font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; display: flex; gap: 6px; align-items: center; }
+/* the tutor's voice: the document face (serif), the largest running text on the page */
+.voice { font-family: var(--font-serif); font-size: var(--text-lg); line-height: 1.65; color: var(--ink); }
+.voice :global(code), .voice :global(pre) { font-family: var(--font-mono); }
+/* speaker shown only where the mode changes — sentence case, not a shouting eyebrow */
+.aiName { font-size: var(--text-sm); color: var(--ink-2); font-weight: 600; display: flex; gap: 6px; align-items: center; margin-bottom: calc(-1 * var(--space-1)); }
+.aiName svg { color: var(--pine); }
 .typing { display: inline-flex; gap: 4px; align-items: center; height: 22px; }
 .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); animation: bounce 1.2s infinite ease-in-out; }
 .typing i:nth-child(2) { animation-delay: 0.15s; } .typing i:nth-child(3) { animation-delay: 0.3s; }
@@ -44,7 +61,7 @@
 .cardMeta { font-size: var(--text-xs); color: var(--ink-3); }
 
 .quick { display: flex; gap: 6px; flex-wrap: wrap; }
-.quick button { border: 1px solid var(--rule); background: transparent; border-radius: var(--radius-full); padding: 4px 10px; font-size: var(--text-xs); color: var(--ink-2); cursor: pointer; }
+.quick button { border: 1px solid var(--rule); background: transparent; border-radius: var(--radius-full); padding: 5px 12px; font-size: var(--text-sm); color: var(--ink-2); cursor: pointer; }
 .quick button:hover { border-color: var(--pine); color: var(--pine); }
 
 .welcome { text-align: center; display: grid; gap: var(--space-3); justify-items: center; padding-top: 8vh; }
@@ -55,12 +72,12 @@
 .suggest button:hover { border-color: var(--pine); color: var(--ink); }
 
 .composer { padding: var(--space-2) var(--space-4) var(--space-3); }
-.box { max-width: 760px; margin: 0 auto; display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; border: 1px solid var(--rule-strong); border-radius: 18px; padding: 6px 6px 6px 14px; background: var(--paper); box-shadow: 0 1px 2px rgb(0 0 0 / 0.04); }
+.box { max-width: 688px; margin: 0 auto; display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; border: 1px solid var(--rule-strong); border-radius: 18px; padding: 6px 6px 6px 14px; background: var(--paper); box-shadow: 0 1px 2px rgb(0 0 0 / 0.04); }
 .box:focus-within { border-color: var(--pine); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pine) 14%, transparent); }
 .input { border: 0; background: transparent; resize: none; padding: 8px 0; max-height: 200px; font-size: 16px; line-height: 1.5; color: var(--ink); }
 .input:focus { outline: none; }
 .send { width: 38px; height: 38px; border-radius: 50%; padding: 0; }
-.hint { max-width: 760px; margin: 6px auto 0; font-size: var(--text-xs); color: var(--ink-3); display: flex; gap: 10px; justify-content: space-between; flex-wrap: wrap; }
+.hint { max-width: 688px; margin: 6px auto 0; font-size: var(--text-xs); color: var(--ink-3); display: flex; gap: 10px; justify-content: space-between; flex-wrap: wrap; }
 
 .canvas { display: none; border-left: 1px solid var(--rule); background: var(--canvas); flex-direction: column; min-height: 0; }
 @media (min-width: 900px) { .canvasOpen .canvas { display: flex; } }

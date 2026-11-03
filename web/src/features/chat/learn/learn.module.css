@@ -1,37 +1,65 @@
 /* Learn mode — the plan-book language: pine = action/progress, marigold = AI attention only. */
 
-.path { border-bottom: 1px solid var(--rule); background: var(--canvas); padding: 8px var(--space-4) 10px; }
-.pathHead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; max-width: 760px; margin: 0 auto; }
-.pathTitle { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.path { border-bottom: 1px solid var(--rule); background: var(--paper); padding: 8px var(--space-4) 10px; }
+.pathHead { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; max-width: 688px; margin: 0 auto; min-height: var(--control-h-sm); }
+.pathTitle { display: inline-flex; align-items: center; gap: 6px; font-weight: 650; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pathTitle svg { color: var(--pine); flex: none; }
 .pathCount { font-size: var(--text-xs); color: var(--ink-3); font-variant-numeric: tabular-nums; }
-.stones { list-style: none; margin: 8px auto 0; padding: 0; display: flex; gap: 6px; max-width: 760px; overflow-x: auto; scrollbar-width: none; }
-.stone { display: flex; align-items: center; gap: 6px; flex: 1 1 0; min-width: 90px; padding: 4px 8px 4px 4px; border-radius: var(--radius-full); border: 1px solid var(--rule); font-size: var(--text-xs); color: var(--ink-3); background: var(--paper); }
-.stone[data-status="mastered"] { color: var(--pine); border-color: color-mix(in srgb, var(--pine) 35%, var(--rule)); background: var(--pine-tint); }
-.stone[data-status="left"] { border-style: dashed; }
-.stone[data-current] { color: var(--ink); border-color: var(--pine); box-shadow: 0 0 0 2px color-mix(in srgb, var(--pine) 14%, transparent); }
-.dot { flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 600; background: var(--canvas); border: 1px solid var(--rule-strong); }
-.stone[data-status="mastered"] .dot { background: var(--pine); border-color: var(--pine); color: var(--on-pine); }
-.stone[data-current] .dot { border-color: var(--pine); color: var(--pine); }
-.stoneText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.widget { border: 1px solid var(--rule-strong); border-radius: var(--radius-lg); background: var(--paper); padding: 12px 14px; display: grid; gap: 10px; margin-top: 4px; }
-.widget[data-purpose="challenge"] { border-color: color-mix(in srgb, var(--marigold) 55%, var(--rule)); }
-.widget[data-state="ok"] { border-color: color-mix(in srgb, var(--ok) 55%, var(--rule)); }
-.widget[data-state="no"] { border-color: color-mix(in srgb, var(--brick) 45%, var(--rule)); }
-.widgetHead { display: flex; align-items: center; gap: 8px; }
-.widgetLabel { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--pine); }
+/* stepper: segment bars carry state; only the current label is at full strength */
+.steps { list-style: none; margin: 6px auto 0; padding: 0; display: flex; gap: 6px; max-width: 688px; }
+.step { flex: 1 1 0; min-width: 0; display: grid; gap: 5px; }
+.seg { height: 4px; border-radius: var(--radius-full); background: var(--sunken); }
+.step[data-status="mastered"] .seg { background: var(--pine); }
+.step[data-status="left"] .seg { background: repeating-linear-gradient(90deg, var(--rule-strong) 0 6px, transparent 6px 10px); }
+.step[data-current] .seg { background: linear-gradient(90deg, var(--pine) 0 40%, color-mix(in srgb, var(--pine) 28%, var(--sunken)) 40%); }
+.stepLabel { display: flex; align-items: center; gap: 5px; font-size: var(--text-xs); color: var(--ink-3); min-width: 0; }
+.step[data-status="mastered"] .stepLabel { color: var(--ink-3); }
+.step[data-status="mastered"] .stepLabel svg { color: var(--pine); flex: none; }
+.step[data-current] .stepLabel { color: var(--ink); font-weight: 600; }
+.stepN { font-variant-numeric: tabular-nums; flex: none; }
+.stepText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* phones: names of the other steps go — the bars still show where you are */
+@media (max-width: 639px) { .step:not([data-current]) .stepText { display: none; } .step[data-current] { flex-grow: 3; } }
+
+/* an open check is the page's focal point: raised, pine-edged, the largest prompt */
+.widget { border: 1px solid var(--rule); border-radius: var(--radius-lg); background: var(--paper); padding: 14px 16px 16px; display: grid; gap: 12px; margin-top: 4px; }
+.widget[data-open] { border-color: color-mix(in srgb, var(--pine) 55%, var(--rule)); box-shadow: inset 3px 0 0 var(--pine), 0 1px 2px rgb(29 26 22 / 0.05), 0 8px 24px -12px rgb(29 26 22 / 0.18); }
+.widget[data-open][data-purpose="challenge"] { border-color: color-mix(in srgb, var(--marigold) 60%, var(--rule)); box-shadow: inset 3px 0 0 var(--marigold), 0 1px 2px rgb(29 26 22 / 0.05), 0 8px 24px -12px rgb(29 26 22 / 0.18); }
+.widgetHead { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.widgetLabel { display: inline-flex; align-items: center; gap: 5px; font-size: var(--text-xs); font-weight: 600; color: var(--pine); }
 .widget[data-purpose="challenge"] .widgetLabel { color: var(--marigold-ink); }
-.widgetPrompt { font-weight: 560; }
+.yourTurn { font-size: var(--text-xs); font-weight: 600; color: var(--on-pine); background: var(--pine); border-radius: var(--radius-full); padding: 2px 9px; }
+.widget[data-purpose="challenge"] .yourTurn { background: var(--marigold-tint); color: var(--marigold-ink); }
+.widgetPrompt { font-family: var(--font-serif); font-size: var(--text-xl); font-weight: 600; line-height: 1.4; color: var(--ink); }
+.widget:not([data-open]) .widgetPrompt { font-size: var(--text-lg); }
 .sure { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: var(--text-xs); color: var(--ink-3); }
 .sure span { margin-right: 4px; }
 .sure button { border: 1px solid var(--rule); background: transparent; border-radius: var(--radius-full); padding: 2px 8px; font-size: var(--text-xs); color: var(--ink-2); cursor: pointer; }
 .sure button[data-on] { border-color: var(--pine); background: var(--pine-tint); color: var(--pine); }
+
+/* a graded check is history: a compact, quiet result — outcome first */
+.graded { border: 1px solid var(--rule); border-left-width: 3px; border-radius: var(--radius-md); background: var(--canvas); padding: 10px 14px; display: grid; gap: 6px; font-size: var(--text-sm); margin-top: 4px; }
+.graded[data-tone="ok"] { border-left-color: var(--ok); }
+.graded[data-tone="miss"] { border-left-color: var(--marigold); }
+.gradedHead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.verdict { display: inline-flex; align-items: center; gap: 5px; font-weight: 650; color: var(--ink); }
+.graded[data-tone="ok"] .verdict { color: var(--ok); }
+.graded[data-tone="miss"] .verdict { color: var(--marigold-ink); }
+.gradedKind { font-size: var(--text-xs); color: var(--ink-3); }
+.gradedPrompt { color: var(--ink-2); }
+.gradedAnswer { display: flex; gap: 8px; align-items: baseline; }
+.gradedAnswer > span { font-size: var(--text-xs); color: var(--ink-3); flex: none; }
+.gradedAnswerText { font-weight: 650; color: var(--ink); }
+.gradedNote { color: var(--ink-2); }
 .feedback { font-size: var(--text-sm); display: grid; gap: 4px; }
 .muted { color: var(--ink-2); }
 .reveal { display: flex; gap: 6px; align-items: flex-start; padding: 8px 10px; border-radius: var(--radius-md); background: var(--marigold-tint); color: var(--ink); }
 
 .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
-.chips button { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--rule); background: transparent; border-radius: var(--radius-full); padding: 5px 11px; font-size: var(--text-xs); color: var(--ink-2); cursor: pointer; }
+.chips button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; border: 1px solid var(--rule); background: var(--paper); border-radius: var(--radius-full); padding: 4px 12px; font-size: var(--text-sm); color: var(--ink-2); cursor: pointer; }
+.chips button svg { color: var(--ink-3); }
+.chips button:hover svg { color: var(--pine); }
 .chips button:hover { border-color: var(--pine); color: var(--pine); }
 .chips .choice { border-color: var(--pine); color: var(--pine); background: var(--pine-tint); font-weight: 560; }
 
